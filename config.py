@@ -13,7 +13,7 @@ A股自选股智能分析系统 - 配置管理模块
 import os
 from pathlib import Path
 from typing import List, Optional
-from dotenv import load_dotenv
+from dotenv import load_dotenv, dotenv_values
 from dataclasses import dataclass, field
 
 
@@ -76,9 +76,17 @@ class Config:
     email_password: Optional[str] = None  # 邮箱密码/授权码
     email_receivers: List[str] = field(default_factory=list)  # 收件人列表（留空则发给自己）
     
+    # Pushover 配置（手机/桌面推送通知）
+    pushover_user_key: Optional[str] = None  # 用户 Key（https://pushover.net 获取）
+    pushover_api_token: Optional[str] = None  # 应用 API Token
+    
     # 自定义 Webhook（支持多个，逗号分隔）
     # 适用于：钉钉、Discord、Slack、自建服务等任意支持 POST JSON 的 Webhook
     custom_webhook_urls: List[str] = field(default_factory=list)
+    custom_webhook_bearer_token: Optional[str] = None  # Bearer Token（用于需要认证的 Webhook）
+    
+    # 单股推送模式：每分析完一只股票立即推送，而不是汇总后推送
+    single_stock_notify: bool = False
     
     # 消息长度限制（字节）- 超长自动分批发送
     feishu_max_bytes: int = 20000  # 飞书限制约 20KB，默认 20000 字节
@@ -112,6 +120,11 @@ class Config:
     max_retries: int = 3
     retry_base_delay: float = 1.0
     retry_max_delay: float = 30.0
+    
+    # === WebUI 配置 ===
+    webui_enabled: bool = False
+    webui_host: str = "127.0.0.1"
+    webui_port: int = 8000
     
     # 单例实例存储
     _instance: Optional['Config'] = None
@@ -191,7 +204,11 @@ class Config:
             email_sender=os.getenv('EMAIL_SENDER'),
             email_password=os.getenv('EMAIL_PASSWORD'),
             email_receivers=[r.strip() for r in os.getenv('EMAIL_RECEIVERS', '').split(',') if r.strip()],
+            pushover_user_key=os.getenv('PUSHOVER_USER_KEY'),
+            pushover_api_token=os.getenv('PUSHOVER_API_TOKEN'),
             custom_webhook_urls=[u.strip() for u in os.getenv('CUSTOM_WEBHOOK_URLS', '').split(',') if u.strip()],
+            custom_webhook_bearer_token=os.getenv('CUSTOM_WEBHOOK_BEARER_TOKEN'),
+            single_stock_notify=os.getenv('SINGLE_STOCK_NOTIFY', 'false').lower() == 'true',
             feishu_max_bytes=int(os.getenv('FEISHU_MAX_BYTES', '20000')),
             wechat_max_bytes=int(os.getenv('WECHAT_MAX_BYTES', '4000')),
             database_path=os.getenv('DATABASE_PATH', './data/stock_analysis.db'),
@@ -202,12 +219,44 @@ class Config:
             schedule_enabled=os.getenv('SCHEDULE_ENABLED', 'false').lower() == 'true',
             schedule_time=os.getenv('SCHEDULE_TIME', '18:00'),
             market_review_enabled=os.getenv('MARKET_REVIEW_ENABLED', 'true').lower() == 'true',
+            webui_enabled=os.getenv('WEBUI_ENABLED', 'false').lower() == 'true',
+            webui_host=os.getenv('WEBUI_HOST', '127.0.0.1'),
+            webui_port=int(os.getenv('WEBUI_PORT', '8000')),
         )
     
     @classmethod
     def reset_instance(cls) -> None:
         """重置单例（主要用于测试）"""
         cls._instance = None
+
+    def refresh_stock_list(self) -> None:
+        """
+        热读取 STOCK_LIST 环境变量并更新配置中的自选股列表
+        
+        支持两种配置方式：
+        1. .env 文件（本地开发、定时任务模式） - 修改后下次执行自动生效
+        2. 系统环境变量（GitHub Actions、Docker） - 启动时固定，运行中不变
+        """
+        # 若 .env 中配置了 STOCK_LIST，则以 .env 为准；否则回退到系统环境变量
+        env_path = Path(__file__).parent / '.env'
+        stock_list_str = ''
+        if env_path.exists():
+            env_values = dotenv_values(env_path)
+            stock_list_str = (env_values.get('STOCK_LIST') or '').strip()
+
+        if not stock_list_str:
+            stock_list_str = os.getenv('STOCK_LIST', '')
+
+        stock_list = [
+            code.strip()
+            for code in stock_list_str.split(',')
+            if code.strip()
+        ]
+
+        if not stock_list:        
+            stock_list = ['000001']
+
+        self.stock_list = stock_list
     
     def validate(self) -> List[str]:
         """
@@ -237,7 +286,8 @@ class Config:
             self.wechat_webhook_url or 
             self.feishu_webhook_url or
             (self.telegram_bot_token and self.telegram_chat_id) or
-            (self.email_sender and self.email_password)
+            (self.email_sender and self.email_password) or
+            (self.pushover_user_key and self.pushover_api_token)
         )
         if not has_notification:
             warnings.append("提示：未配置通知渠道，将不发送推送通知")
