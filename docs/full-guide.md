@@ -4,8 +4,27 @@
 
 > 💡 快速上手请参考 [README.md](../README.md)，本文档为进阶配置。
 
+## � 项目结构
+
+```
+daily_stock_analysis/
+├── main.py              # 主程序入口
+├── src/                 # 核心业务逻辑
+│   ├── analyzer.py      # AI 分析器
+│   ├── config.py        # 配置管理
+│   ├── notification.py  # 消息推送
+│   └── ...
+├── data_provider/       # 多数据源适配器
+├── bot/                 # 机器人交互模块
+├── web/                 # WebUI 模块
+├── docker/              # Docker 配置
+├── docs/                # 项目文档
+└── .github/workflows/   # GitHub Actions
+```
+
 ## 📑 目录
 
+- [项目结构](#项目结构)
 - [GitHub Actions 详细配置](#github-actions-详细配置)
 - [环境变量完整列表](#环境变量完整列表)
 - [Docker 部署](#docker-部署)
@@ -51,14 +70,25 @@
 | `FEISHU_WEBHOOK_URL` | 飞书 Webhook URL | 可选 |
 | `TELEGRAM_BOT_TOKEN` | Telegram Bot Token（@BotFather 获取） | 可选 |
 | `TELEGRAM_CHAT_ID` | Telegram Chat ID | 可选 |
+| `DISCORD_WEBHOOK_URL` | Discord Webhook URL（[创建方法](https://support.discord.com/hc/en-us/articles/228383668)） | 可选 |
+| `DISCORD_BOT_TOKEN` | Discord Bot Token（与 Webhook 二选一） | 可选 |
+| `DISCORD_CHANNEL_ID` | Discord Channel ID（使用 Bot 时需要） | 可选 |
 | `EMAIL_SENDER` | 发件人邮箱（如 `xxx@qq.com`） | 可选 |
 | `EMAIL_PASSWORD` | 邮箱授权码（非登录密码） | 可选 |
 | `EMAIL_RECEIVERS` | 收件人邮箱（多个用逗号分隔，留空则发给自己） | 可选 |
+| `PUSHPLUS_TOKEN` | PushPlus Token（[获取地址](https://www.pushplus.plus)，国内推送服务） | 可选 |
 | `CUSTOM_WEBHOOK_URLS` | 自定义 Webhook（支持钉钉等，多个用逗号分隔） | 可选 |
 | `CUSTOM_WEBHOOK_BEARER_TOKEN` | 自定义 Webhook 的 Bearer Token（用于需要认证的 Webhook） | 可选 |
-| `SINGLE_STOCK_NOTIFY` | 单股推送模式：设为 `true` 则每分析完一只股票立即推送 | 可选 |
 
 > *注：至少配置一个渠道，配置多个则同时推送
+
+#### 推送行为配置
+
+| Secret 名称 | 说明 | 必填 |
+|------------|------|:----:|
+| `SINGLE_STOCK_NOTIFY` | 单股推送模式：设为 `true` 则每分析完一只股票立即推送 | 可选 |
+| `REPORT_TYPE` | 报告类型：`simple`(精简) 或 `full`(完整)，Docker环境推荐设为 `full` | 可选 |
+| `ANALYSIS_DELAY` | 个股分析和大盘分析之间的延迟（秒），避免API限流，如 `10` | 可选 |
 
 #### 其他配置
 
@@ -67,8 +97,8 @@
 | `STOCK_LIST` | 自选股代码，如 `600519,300750,002594` | ✅ |
 | `TAVILY_API_KEYS` | [Tavily](https://tavily.com/) 搜索 API（新闻搜索） | 推荐 |
 | `BOCHA_API_KEYS` | [博查搜索](https://open.bocha.cn/) Web Search API（中文搜索优化，支持AI摘要，多个key用逗号分隔） | 可选 |
-| `SERPAPI_API_KEYS` | [SerpAPI](https://serpapi.com/) 备用搜索 | 可选 |
-| `TUSHARE_TOKEN` | [Tushare Pro](https://tushare.pro/) Token | 可选 |
+| `SERPAPI_API_KEYS` | [SerpAPI](https://serpapi.com/baidu-search-api?utm_source=github_daily_stock_analysis) 备用搜索 | 可选 |
+| `TUSHARE_TOKEN` | [Tushare Pro](https://tushare.pro/weborder/#/login?reg=834638 ) Token | 可选 |
 
 #### ✅ 最小配置示例
 
@@ -124,6 +154,9 @@
 | `FEISHU_WEBHOOK_URL` | 飞书机器人 Webhook URL | 可选 |
 | `TELEGRAM_BOT_TOKEN` | Telegram Bot Token | 可选 |
 | `TELEGRAM_CHAT_ID` | Telegram Chat ID | 可选 |
+| `DISCORD_WEBHOOK_URL` | Discord Webhook URL | 可选 |
+| `DISCORD_BOT_TOKEN` | Discord Bot Token（与 Webhook 二选一） | 可选 |
+| `DISCORD_CHANNEL_ID` | Discord Channel ID（使用 Bot 时需要） | 可选 |
 | `EMAIL_SENDER` | 发件人邮箱 | 可选 |
 | `EMAIL_PASSWORD` | 邮箱授权码（非登录密码） | 可选 |
 | `EMAIL_RECEIVERS` | 收件人邮箱（逗号分隔，留空发给自己） | 可选 |
@@ -131,6 +164,7 @@
 | `CUSTOM_WEBHOOK_BEARER_TOKEN` | 自定义 Webhook Bearer Token | 可选 |
 | `PUSHOVER_USER_KEY` | Pushover 用户 Key | 可选 |
 | `PUSHOVER_API_TOKEN` | Pushover API Token | 可选 |
+| `PUSHPLUS_TOKEN` | PushPlus Token（国内推送服务） | 可选 |
 
 #### 飞书云文档配置（可选，解决消息截断问题）
 
@@ -187,24 +221,24 @@ cp .env.example .env
 vim .env  # 填入 API Key 和配置
 
 # 3. 启动容器
-docker-compose up -d webui      # WebUI 模式（推荐）
-docker-compose up -d analyzer   # 定时任务模式
-docker-compose up -d            # 同时启动两种模式
+docker-compose -f ./docker/docker-compose.yml up -d webui      # WebUI 模式（推荐）
+docker-compose -f ./docker/docker-compose.yml up -d analyzer   # 定时任务模式
+docker-compose -f ./docker/docker-compose.yml up -d            # 同时启动两种模式
 
 # 4. 访问 WebUI
 # http://localhost:8000
 
 # 5. 查看日志
-docker-compose logs -f webui
+docker-compose -f ./docker/docker-compose.yml logs -f webui
 ```
 
 ### 运行模式说明
 
 | 命令 | 说明 | 端口 |
 |------|------|------|
-| `docker-compose up -d webui` | WebUI 模式，手动触发分析 | 8000 |
-| `docker-compose up -d analyzer` | 定时任务模式，每日自动执行 | - |
-| `docker-compose up -d` | 同时启动两种模式 | 8000 |
+| `docker-compose -f ./docker/docker-compose.yml up -d webui` | WebUI 模式，手动触发分析 | 8000 |
+| `docker-compose -f ./docker/docker-compose.yml up -d analyzer` | 定时任务模式，每日自动执行 | - |
+| `docker-compose -f ./docker/docker-compose.yml up -d` | 同时启动两种模式 | 8000 |
 
 ### Docker Compose 配置
 
@@ -245,17 +279,17 @@ services:
 
 ```bash
 # 查看运行状态
-docker-compose ps
+docker-compose -f ./docker/docker-compose.yml ps
 
 # 查看日志
-docker-compose logs -f webui
+docker-compose -f ./docker/docker-compose.yml logs -f webui
 
 # 停止服务
-docker-compose down
+docker-compose -f ./docker/docker-compose.yml down
 
 # 重建镜像（代码更新后）
-docker-compose build --no-cache
-docker-compose up -d webui
+docker-compose -f ./docker/docker-compose.yml build --no-cache
+docker-compose -f ./docker/docker-compose.yml up -d webui
 ```
 
 ### 手动构建镜像
@@ -374,6 +408,33 @@ crontab -e
 - 自建服务
 
 设置 `CUSTOM_WEBHOOK_URLS`，多个用逗号分隔。
+
+### Discord
+
+Discord 支持两种方式推送：
+
+**方式一：Webhook（推荐，简单）**
+
+1. 在 Discord 频道设置中创建 Webhook
+2. 复制 Webhook URL
+3. 配置环境变量：
+
+```bash
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/xxx/yyy
+```
+
+**方式二：Bot API（需要更多权限）**
+
+1. 在 [Discord Developer Portal](https://discord.com/developers/applications) 创建应用
+2. 创建 Bot 并获取 Token
+3. 邀请 Bot 到服务器
+4. 获取频道 ID（开发者模式下右键频道复制）
+5. 配置环境变量：
+
+```bash
+DISCORD_BOT_TOKEN=your_bot_token
+DISCORD_CHANNEL_ID=your_channel_id
+```
 
 ### Pushover（iOS/Android 推送）
 
