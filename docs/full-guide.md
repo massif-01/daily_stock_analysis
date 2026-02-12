@@ -485,6 +485,19 @@ PUSHOVER_API_TOKEN=your_api_token
 - 免费额度足够个人使用（每月 10,000 条）
 - 消息可保留 7 天
 
+### Markdown 转图片（可选）
+
+配置 `MARKDOWN_TO_IMAGE_CHANNELS` 可将报告以图片形式发送至不支持 Markdown 的渠道（telegram, wechat, custom, email）。
+
+**依赖安装**：
+
+1. **imgkit**：已包含在 `requirements.txt`，执行 `pip install -r requirements.txt` 时会自动安装
+2. **wkhtmltopdf**：系统级依赖，需手动安装：
+   - **macOS**：`brew install wkhtmltopdf`
+   - **Debian/Ubuntu**：`apt install wkhtmltopdf`
+
+未安装或安装失败时，将自动回退为 Markdown 文本发送。
+
 ---
 
 ## 数据源配置
