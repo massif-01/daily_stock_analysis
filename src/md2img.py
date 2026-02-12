@@ -6,6 +6,11 @@ Markdown 转图片工具模块
 
 将 Markdown 转为 PNG 图片（用于不支持 Markdown 的通知渠道）。
 基于 wkhtmltoimage (imgkit)，复用 formatters.markdown_to_html_document。
+
+Security note: imgkit passes HTML to wkhtmltoimage via stdin, not argv, so
+command injection from content is not applicable. Output is rasterized to PNG
+(no script execution). Input is from system-generated reports, not raw user
+input. Risk is considered low for the current use case.
 """
 
 import logging
