@@ -23,7 +23,7 @@ from src.config import get_config, Config
 from src.storage import get_db
 from data_provider import DataFetcherManager
 from data_provider.realtime_types import ChipDistribution
-from src.analyzer import LLMAnalyzer, AnalysisResult, STOCK_NAME_MAP
+from src.analyzer import GeminiAnalyzer, AnalysisResult, STOCK_NAME_MAP
 from src.notification import NotificationService, NotificationChannel
 from src.search_service import SearchService
 from src.enums import ReportType
@@ -74,7 +74,7 @@ class StockAnalysisPipeline:
         self.fetcher_manager = DataFetcherManager()
         # 不再单独创建 akshare_fetcher，统一使用 fetcher_manager 获取增强数据
         self.trend_analyzer = StockTrendAnalyzer()  # 趋势分析器
-        self.analyzer = LLMAnalyzer()
+        self.analyzer = GeminiAnalyzer()
         self.notifier = NotificationService(source_message=source_message)
         
         # 初始化搜索服务

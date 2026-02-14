@@ -207,7 +207,7 @@ def test_llm():
     """测试 LLM 调用"""
     print_header("4. LLM (Gemini) 调用测试")
     
-    from src.analyzer import LLMAnalyzer
+    from src.analyzer import GeminiAnalyzer
     from src.config import get_config
     import time
     
@@ -230,7 +230,7 @@ def test_llm():
         print(f"  提示: 可以设置环境变量 HTTPS_PROXY=http://your-proxy:port")
         return False
     
-    analyzer = LLMAnalyzer()
+    analyzer = GeminiAnalyzer()
     
     print_section("模型初始化")
     if analyzer.is_available():

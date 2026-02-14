@@ -485,7 +485,7 @@ def main() -> int:
 
         # 模式1: 仅大盘复盘
         if args.market_review:
-            from src.analyzer import LLMAnalyzer
+            from src.analyzer import GeminiAnalyzer
             from src.core.market_review import run_market_review
             from src.notification import NotificationService
             from src.search_service import SearchService
@@ -506,7 +506,7 @@ def main() -> int:
                 )
 
             if config.gemini_api_key or config.openai_api_key:
-                analyzer = LLMAnalyzer(api_key=config.gemini_api_key)
+                analyzer = GeminiAnalyzer(api_key=config.gemini_api_key)
                 if not analyzer.is_available():
                     logger.warning("AI 分析器初始化后不可用，请检查 API Key 配置")
                     analyzer = None

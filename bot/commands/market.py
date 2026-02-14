@@ -76,7 +76,7 @@ class MarketCommand(BotCommand):
             from src.notification import NotificationService
             from src.market_analyzer import MarketAnalyzer
             from src.search_service import SearchService
-            from src.analyzer import LLMAnalyzer
+            from src.analyzer import GeminiAnalyzer
 
             config = get_config()
             notifier = NotificationService(source_message=message)
@@ -94,7 +94,7 @@ class MarketCommand(BotCommand):
             # 初始化 AI 分析器
             analyzer = None
             if config.gemini_api_key or config.openai_api_key:
-                analyzer = LLMAnalyzer()
+                analyzer = GeminiAnalyzer()
 
             # 执行复盘
             market_analyzer = MarketAnalyzer(

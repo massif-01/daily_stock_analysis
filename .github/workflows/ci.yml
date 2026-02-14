@@ -60,7 +60,7 @@ jobs:
           python -c "from src.storage import DatabaseManager; print('✅ storage')"
           python -c "from src.notification import NotificationService; print('✅ notification')"
           python -c "from data_provider import DataFetcherManager; print('✅ data_provider')"
-          python -c "from src.analyzer import LLMAnalyzer; print('✅ analyzer')"
+          python -c "from src.analyzer import GeminiAnalyzer; print('✅ analyzer')"
           echo "✅ 所有模块导入成功"
 
   # ==================== Docker 构建测试 ====================

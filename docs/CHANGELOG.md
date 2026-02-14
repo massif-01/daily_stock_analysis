@@ -31,7 +31,6 @@
   - 大盘复盘发往所有配置的邮箱
 
 ### 优化
-- `GeminiAnalyzer` 重命名为 `LLMAnalyzer`，反映其支持 Gemini/Anthropic/OpenAI 多后端
 - 图片识别限流支持 Redis 分布式模式：配置 `REDIS_URL` 后可跨多实例共享限流状态
 - 图片识别 API 仅保留 `file` 表单字段，移除 `image` 字段以统一接口
 - 图片识别 API 限流支持反向代理：`TRUST_X_FORWARDED_FOR=true` 时从 `X-Forwarded-For` 获取真实 IP
