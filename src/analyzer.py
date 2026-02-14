@@ -544,10 +544,9 @@ class GeminiAnalyzer:
             logger.warning("No AI API Key configured, AI analysis will be unavailable")
 
     def _try_anthropic_then_openai(self) -> None:
-        """优先尝试 Anthropic，其次 OpenAI 作为备选。"""
+        """优先尝试 Anthropic，其次 OpenAI 作为备选。两者均初始化以供运行时互为故障转移（如 Anthropic 429 时切 OpenAI）。"""
         self._init_anthropic_fallback()
-        if not self._anthropic_client:
-            self._init_openai_fallback()
+        self._init_openai_fallback()
 
     def _init_anthropic_fallback(self) -> None:
         """
@@ -878,10 +877,6 @@ class GeminiAnalyzer:
         Returns:
             响应文本
         """
-        # 若已在使用 OpenAI，直接调用
-        if self._use_openai:
-            return self._call_openai_api(prompt, generation_config)
-
         # 若使用 Anthropic，调用 Anthropic（失败时回退到 OpenAI）
         if self._use_anthropic:
             try:
@@ -893,6 +888,10 @@ class GeminiAnalyzer:
                     )
                     return self._call_openai_api(prompt, generation_config)
                 raise anthropic_error
+
+        # 若使用 OpenAI（仅当无 Anthropic 时为主选）
+        if self._use_openai:
+            return self._call_openai_api(prompt, generation_config)
 
         config = get_config()
         max_retries = config.gemini_max_retries

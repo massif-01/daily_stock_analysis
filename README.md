@@ -223,7 +223,6 @@ python main.py
 - 需配置 `GEMINI_API_KEY`、`ANTHROPIC_API_KEY` 或 `OPENAI_API_KEY` 中至少一个（Vision 能力模型）
 - 支持 JPG、PNG、WebP、GIF，单张最大 5MB
 - 限流：每 IP 每分钟 10 次；请求超时 60 秒
-- 多实例部署可配置 `REDIS_URL` 启用分布式限流
 
 **API 调用**：`POST /api/v1/stocks/extract-from-image`，表单字段 `file`，返回 `{ "codes": ["600519", "300750", ...] }`。详见 [完整指南](docs/full-guide.md)。
 
