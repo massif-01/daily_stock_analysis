@@ -11,10 +11,9 @@
 """
 
 import logging
-import os
 from typing import Optional
 
-from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 
 from api.v1.schemas.stocks import (
     ExtractFromImageResponse,
@@ -28,7 +27,6 @@ from src.services.image_stock_extractor import (
     MAX_SIZE_BYTES,
     extract_stock_codes_from_image,
 )
-from src.services.rate_limiter import RateLimitExceeded, get_extract_rate_limiter
 from src.services.stock_service import StockService
 
 logger = logging.getLogger(__name__)
@@ -38,21 +36,6 @@ router = APIRouter()
 # 须在 /{stock_code} 路由之前定义
 ALLOWED_MIME_STR = ", ".join(ALLOWED_MIME)
 
-# Rate limit: 10 req/min per client IP for image extraction (cost control)
-_EXTRACT_RATE_LIMIT = 10
-_EXTRACT_RATE_WINDOW = 60  # seconds
-
-
-def _get_client_ip(request: Request) -> str:
-    """Get client IP. Use X-Forwarded-For only when TRUST_X_FORWARDED_FOR=true (behind proxy)."""
-    trust_proxy = os.getenv("TRUST_X_FORWARDED_FOR", "false").lower() == "true"
-    forwarded = request.headers.get("X-Forwarded-For")
-    if trust_proxy and forwarded:
-        return forwarded.split(",")[0].strip()
-    if request.client:
-        return request.client.host
-    return "unknown"
-
 
 @router.post(
     "/extract-from-image",
@@ -60,14 +43,12 @@ def _get_client_ip(request: Request) -> str:
     responses={
         200: {"description": "提取的股票代码"},
         400: {"description": "图片无效", "model": ErrorResponse},
-        429: {"description": "请求过于频繁", "model": ErrorResponse},
         500: {"description": "服务器错误", "model": ErrorResponse},
     },
     summary="从图片提取股票代码",
     description="上传截图/图片，通过 Vision LLM 提取股票代码。支持 JPEG、PNG、WebP、GIF，最大 5MB。",
 )
 def extract_from_image(
-    request: Request,
     file: Optional[UploadFile] = File(None, description="图片文件（表单字段名 file）"),
     include_raw: bool = Query(False, description="是否在结果中包含原始 LLM 响应"),
 ) -> ExtractFromImageResponse:
@@ -75,19 +56,7 @@ def extract_from_image(
     从上传的图片中提取股票代码（使用 Vision LLM）。
 
     表单字段请使用 file 上传图片。优先级：Gemini / Anthropic / OpenAI（首个可用）。
-    限流：每 IP 每分钟最多 10 次，防止滥用产生 Vision API 费用。
     """
-    client_ip = _get_client_ip(request)
-    try:
-        get_extract_rate_limiter().check_rate_limit(
-            client_ip, _EXTRACT_RATE_LIMIT, _EXTRACT_RATE_WINDOW
-        )
-    except RateLimitExceeded as e:
-        raise HTTPException(
-            status_code=429,
-            detail={"error": "rate_limit", "message": e.message},
-        )
-
     if not file or not file.filename:
         raise HTTPException(
             status_code=400,
