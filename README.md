@@ -70,16 +70,19 @@
 
 `Settings` → `Secrets and variables` → `Actions` → `New repository secret`
 
-**AI 模型配置（二选一）**
+**AI 模型配置（三选一，至少配置一个）**
 
 | Secret 名称 | 说明 | 必填 |
 |------------|------|:----:|
 | `GEMINI_API_KEY` | [Google AI Studio](https://aistudio.google.com/) 获取免费 Key | ✅* |
+| `ANTHROPIC_API_KEY` | [Anthropic Claude](https://console.anthropic.com/) API Key | 可选 |
+| `ANTHROPIC_MODEL` | Claude 模型（如 `claude-3-5-sonnet-20241022`） | 可选 |
 | `OPENAI_API_KEY` | OpenAI 兼容 API Key（支持 DeepSeek、通义千问等） | 可选 |
 | `OPENAI_BASE_URL` | OpenAI 兼容 API 地址（如 `https://api.deepseek.com/v1`） | 可选 |
 | `OPENAI_MODEL` | 模型名称（如 `deepseek-chat`） | 可选 |
+| `OPENAI_VISION_MODEL` | 图片识别专用模型（部分第三方模型不支持图像；不填则用 `OPENAI_MODEL`） | 可选 |
 
-> 注：`GEMINI_API_KEY` 和 `OPENAI_API_KEY` 至少配置一个
+> 注：AI 优先级 Gemini > Anthropic > OpenAI，至少配置一个。图片识别需 Vision 能力模型，每次调用消耗 API 额度。
 
 <details>
 <summary><b>通知渠道配置</b>（点击展开，至少配置一个）</summary>
