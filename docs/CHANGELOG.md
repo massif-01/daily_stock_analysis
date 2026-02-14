@@ -5,6 +5,13 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### 新增
+- 📧 **个股与大盘复盘合并推送** (Issue #190)
+  - 支持 `MERGE_EMAIL_NOTIFICATION` 环境变量，设为 `true` 时将个股分析和大盘复盘合并为一次推送
+  - 默认 `false`，减少邮件数量、降低被识别为垃圾邮件的风险
+
 ## [3.0.5] - 2026-02-08
 
 ### 修复
