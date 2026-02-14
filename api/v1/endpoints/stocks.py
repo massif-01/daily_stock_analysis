@@ -12,9 +12,6 @@
 
 import logging
 import os
-import threading
-import time
-from collections import defaultdict
 from typing import Optional
 
 from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
@@ -31,6 +28,7 @@ from src.services.image_stock_extractor import (
     MAX_SIZE_BYTES,
     extract_stock_codes_from_image,
 )
+from src.services.rate_limiter import RateLimitExceeded, get_extract_rate_limiter
 from src.services.stock_service import StockService
 
 logger = logging.getLogger(__name__)
@@ -43,8 +41,6 @@ ALLOWED_MIME_STR = ", ".join(ALLOWED_MIME)
 # Rate limit: 10 req/min per client IP for image extraction (cost control)
 _EXTRACT_RATE_LIMIT = 10
 _EXTRACT_RATE_WINDOW = 60  # seconds
-_extract_request_times: dict[str, list[float]] = defaultdict(list)
-_extract_lock = threading.Lock()
 
 
 def _get_client_ip(request: Request) -> str:
@@ -56,24 +52,6 @@ def _get_client_ip(request: Request) -> str:
     if request.client:
         return request.client.host
     return "unknown"
-
-
-def _check_extract_rate_limit(client_ip: str) -> None:
-    """Raise 429 if client exceeds rate limit for image extraction (thread-safe)."""
-    now = time.time()
-    cutoff = now - _EXTRACT_RATE_WINDOW
-    with _extract_lock:
-        times = _extract_request_times[client_ip]
-        times[:] = [t for t in times if t > cutoff]
-        if len(times) >= _EXTRACT_RATE_LIMIT:
-            raise HTTPException(
-                status_code=429,
-                detail={
-                    "error": "rate_limit",
-                    "message": f"图片识别请求过于频繁，请 {_EXTRACT_RATE_WINDOW} 秒后再试",
-                },
-            )
-        times.append(now)
 
 
 @router.post(
@@ -90,27 +68,33 @@ def _check_extract_rate_limit(client_ip: str) -> None:
 )
 def extract_from_image(
     request: Request,
-    file: Optional[UploadFile] = File(None, description="图片文件（字段名 file）"),
-    image: Optional[UploadFile] = File(None, description="图片文件（字段名 image，与 file 二选一）"),
+    file: Optional[UploadFile] = File(None, description="图片文件（表单字段名 file）"),
     include_raw: bool = Query(False, description="是否在结果中包含原始 LLM 响应"),
 ) -> ExtractFromImageResponse:
     """
     从上传的图片中提取股票代码（使用 Vision LLM）。
 
-    表单字段支持 file 或 image（二选一）。优先级：Gemini / Anthropic / OpenAI（首个可用）。
+    表单字段请使用 file 上传图片。优先级：Gemini / Anthropic / OpenAI（首个可用）。
     限流：每 IP 每分钟最多 10 次，防止滥用产生 Vision API 费用。
     """
     client_ip = _get_client_ip(request)
-    _check_extract_rate_limit(client_ip)
-
-    upload = file or image
-    if not upload or not upload.filename:
+    try:
+        get_extract_rate_limiter().check_rate_limit(
+            client_ip, _EXTRACT_RATE_LIMIT, _EXTRACT_RATE_WINDOW
+        )
+    except RateLimitExceeded as e:
         raise HTTPException(
-            status_code=400,
-            detail={"error": "bad_request", "message": "未提供文件，请使用表单字段 file 或 image 上传图片"},
+            status_code=429,
+            detail={"error": "rate_limit", "message": e.message},
         )
 
-    content_type = (upload.content_type or "").split(";")[0].strip().lower()
+    if not file or not file.filename:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "bad_request", "message": "未提供文件，请使用表单字段 file 上传图片"},
+        )
+
+    content_type = (file.content_type or "").split(";")[0].strip().lower()
     if content_type not in ALLOWED_MIME:
         raise HTTPException(
             status_code=400,
@@ -122,8 +106,8 @@ def extract_from_image(
 
     try:
         # 先读取限定大小，再检查是否还有剩余（语义清晰：超出则拒绝）
-        data = upload.file.read(MAX_SIZE_BYTES)
-        if upload.file.read(1):
+        data = file.file.read(MAX_SIZE_BYTES)
+        if file.file.read(1):
             raise HTTPException(
                 status_code=400,
                 detail={

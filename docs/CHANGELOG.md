@@ -13,12 +13,12 @@
   - 邮件为内联附件，增强对不支持 HTML 客户端的兼容性
   - 需安装 `wkhtmltopdf` 和 `imgkit`
 - 🤖 **Anthropic Claude API 支持** (Issue #257)
-  - 支持 `ANTHROPIC_API_KEY`、`ANTHROPIC_MODEL`、`ANTHROPIC_TEMPERATURE` 环境变量
+  - 支持 `ANTHROPIC_API_KEY`、`ANTHROPIC_MODEL`、`ANTHROPIC_TEMPERATURE`、`ANTHROPIC_MAX_TOKENS` 环境变量
   - AI 分析优先级：Gemini > Anthropic > OpenAI
 - 📷 **从图片识别股票代码** (Issue #257)
   - 上传自选股截图，通过 Vision LLM 自动提取股票代码
   - 设置页「基础设置」中新增「从图片添加」区块
-  - API: `POST /api/v1/stocks/extract-from-image`（表单字段 `file` 或 `image`）
+  - API: `POST /api/v1/stocks/extract-from-image`（表单字段 `file`）
   - 支持 JPEG/PNG/WebP/GIF，最大 5MB；限流 10 次/分钟/IP（控制 Vision API 费用）
   - 支持 `OPENAI_VISION_MODEL` 单独配置图片识别模型（部分第三方模型不支持图像）
 - ⚙️ **通达信数据源手动配置** (Issue #257)
@@ -31,8 +31,9 @@
   - 大盘复盘发往所有配置的邮箱
 
 ### 优化
+- 图片识别限流支持 Redis 分布式模式：配置 `REDIS_URL` 后可跨多实例共享限流状态
+- 图片识别 API 仅保留 `file` 表单字段，移除 `image` 字段以统一接口
 - 图片识别 API 限流支持反向代理：`TRUST_X_FORWARDED_FOR=true` 时从 `X-Forwarded-For` 获取真实 IP
-- 图片识别限流加锁，避免并发竞态
 - 图片识别 Vision API 超时 60 秒，前端请求超时 60 秒
 - 配置冲突（409）时自动刷新并提示用户再次合并
 - 请求超时/超频时展示专属错误提示

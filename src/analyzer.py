@@ -727,7 +727,7 @@ class GeminiAnalyzer:
         temperature = generation_config.get(
             'temperature', config.anthropic_temperature
         )
-        max_tokens = generation_config.get('max_output_tokens', 8192)
+        max_tokens = generation_config.get('max_output_tokens', config.anthropic_max_tokens)
 
         for attempt in range(max_retries):
             try:
