@@ -130,6 +130,9 @@ class Config:
     # 报告类型：simple(精简) 或 full(完整)
     report_type: str = "simple"
 
+    # 仅分析结果摘要：true 时只推送汇总，不含个股详情（Issue #262）
+    report_summary_only: bool = False
+
     # PushPlus 推送配置
     pushplus_token: Optional[str] = None  # PushPlus Token
 
@@ -395,6 +398,7 @@ class Config:
             astrbot_token=os.getenv('ASTRBOT_TOKEN'),
             single_stock_notify=os.getenv('SINGLE_STOCK_NOTIFY', 'false').lower() == 'true',
             report_type=os.getenv('REPORT_TYPE', 'simple').lower(),
+            report_summary_only=os.getenv('REPORT_SUMMARY_ONLY', 'false').lower() == 'true',
             analysis_delay=float(os.getenv('ANALYSIS_DELAY', '0')),
             feishu_max_bytes=int(os.getenv('FEISHU_MAX_BYTES', '20000')),
             wechat_max_bytes=wechat_max_bytes,
