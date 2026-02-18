@@ -14,6 +14,7 @@ import logging
 from datetime import datetime
 from typing import Optional
 
+from src.config import get_config
 from src.notification import NotificationService
 from src.market_analyzer import MarketAnalyzer
 from src.search_service import SearchService
@@ -44,15 +45,38 @@ def run_market_review(
         复盘报告文本
     """
     logger.info("开始执行大盘复盘分析...")
-    
+    config = get_config()
+    region = getattr(config, 'market_review_region', 'cn') or 'cn'
+    if region not in ('cn', 'us', 'both'):
+        region = 'cn'
+
     try:
-        market_analyzer = MarketAnalyzer(
-            search_service=search_service,
-            analyzer=analyzer
-        )
-        
-        # 执行复盘
-        review_report = market_analyzer.run_daily_review()
+        if region == 'both':
+            # 顺序执行 A 股 + 美股，合并报告
+            cn_analyzer = MarketAnalyzer(
+                search_service=search_service, analyzer=analyzer, region='cn'
+            )
+            us_analyzer = MarketAnalyzer(
+                search_service=search_service, analyzer=analyzer, region='us'
+            )
+            cn_report = cn_analyzer.run_daily_review()
+            us_report = us_analyzer.run_daily_review()
+            review_report = ''
+            if cn_report:
+                review_report = f"# A股大盘复盘\n\n{cn_report}"
+            if us_report:
+                if review_report:
+                    review_report += "\n\n---\n\n"
+                review_report += f"# 美股大盘复盘\n\n{us_report}"
+            if not review_report:
+                review_report = None
+        else:
+            market_analyzer = MarketAnalyzer(
+                search_service=search_service,
+                analyzer=analyzer,
+                region=region,
+            )
+            review_report = market_analyzer.run_daily_review()
         
         if review_report:
             # 保存报告到文件

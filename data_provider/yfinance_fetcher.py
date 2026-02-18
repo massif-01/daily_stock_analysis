@@ -231,12 +231,16 @@ class YfinanceFetcher(BaseFetcher):
         
         return df
 
-    def get_main_indices(self) -> Optional[List[Dict[str, Any]]]:
+    def get_main_indices(self, region: str = "cn") -> Optional[List[Dict[str, Any]]]:
         """
-        获取主要指数行情 (Yahoo Finance)
+        获取主要指数行情 (Yahoo Finance)，支持 A 股与美股
         """
         import yfinance as yf
 
+        # region=us 时使用美股指数
+        if region == "us":
+            return self._get_us_main_indices(yf)
+        # region=cn 时使用 A 股指数
         # 映射关系：akshare代码 -> (yfinance代码, 名称)
         yf_mapping = {
             'sh000001': ('000001.SS', '上证指数'),
@@ -297,6 +301,55 @@ class YfinanceFetcher(BaseFetcher):
         except Exception as e:
             logger.error(f"[Yfinance] 获取指数行情失败: {e}")
 
+        return None
+
+    def _get_us_main_indices(self, yf) -> Optional[List[Dict[str, Any]]]:
+        """获取美股主要指数行情（SPX、IXIC、DJI、VIX）"""
+        # 大盘复盘需要的核心指数
+        us_indices = ['SPX', 'IXIC', 'DJI', 'VIX']
+        results = []
+        try:
+            for code in us_indices:
+                yf_symbol, name = get_us_index_yf_symbol(code)
+                if not yf_symbol:
+                    continue
+                try:
+                    ticker = yf.Ticker(yf_symbol)
+                    hist = ticker.history(period='2d')
+                    if hist.empty:
+                        continue
+                    today = hist.iloc[-1]
+                    prev = hist.iloc[-2] if len(hist) > 1 else today
+                    price = float(today['Close'])
+                    prev_close = float(prev['Close'])
+                    change = price - prev_close
+                    change_pct = (change / prev_close) * 100 if prev_close else 0
+                    high = float(today['High'])
+                    low = float(today['Low'])
+                    amplitude = ((high - low) / prev_close * 100) if prev_close else 0
+                    results.append({
+                        'code': code,
+                        'name': name,
+                        'current': price,
+                        'change': change,
+                        'change_pct': change_pct,
+                        'open': float(today['Open']),
+                        'high': high,
+                        'low': low,
+                        'prev_close': prev_close,
+                        'volume': float(today['Volume']),
+                        'amount': 0.0,
+                        'amplitude': amplitude,
+                    })
+                    logger.debug(f"[Yfinance] 获取美股指数 {name} 成功")
+                except Exception as e:
+                    logger.warning(f"[Yfinance] 获取美股指数 {name} 失败: {e}")
+                    continue
+            if results:
+                logger.info(f"[Yfinance] 成功获取 {len(results)} 个美股指数行情")
+                return results
+        except Exception as e:
+            logger.error(f"[Yfinance] 获取美指行情失败: {e}")
         return None
 
     def _is_us_stock(self, stock_code: str) -> bool:

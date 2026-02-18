@@ -20,6 +20,7 @@ import pandas as pd
 
 from src.config import get_config
 from src.search_service import SearchService
+from src.core.market_profile import get_profile, MarketProfile
 from data_provider.base import DataFetcherManager
 
 logger = logging.getLogger(__name__)
@@ -87,18 +88,26 @@ class MarketAnalyzer:
     5. 生成大盘复盘报告
     """
     
-    def __init__(self, search_service: Optional[SearchService] = None, analyzer=None):
+    def __init__(
+        self,
+        search_service: Optional[SearchService] = None,
+        analyzer=None,
+        region: str = "cn",
+    ):
         """
         初始化大盘分析器
 
         Args:
             search_service: 搜索服务实例
             analyzer: AI分析器实例（用于调用LLM）
+            region: 市场区域 cn=A股 us=美股
         """
         self.config = get_config()
         self.search_service = search_service
         self.analyzer = analyzer
         self.data_manager = DataFetcherManager()
+        self.region = region if region in ("cn", "us") else "cn"
+        self.profile: MarketProfile = get_profile(self.region)
 
     def get_market_overview(self) -> MarketOverview:
         """
@@ -110,14 +119,16 @@ class MarketAnalyzer:
         today = datetime.now().strftime('%Y-%m-%d')
         overview = MarketOverview(date=today)
         
-        # 1. 获取主要指数行情
+        # 1. 获取主要指数行情（按 region 切换 A 股/美股）
         overview.indices = self._get_main_indices()
-        
-        # 2. 获取涨跌统计
-        self._get_market_statistics(overview)
-        
-        # 3. 获取板块涨跌榜
-        self._get_sector_rankings(overview)
+
+        # 2. 获取涨跌统计（A 股有，美股无等效数据）
+        if self.profile.has_market_stats:
+            self._get_market_statistics(overview)
+
+        # 3. 获取板块涨跌榜（A 股有，美股暂无）
+        if self.profile.has_sector_rankings:
+            self._get_sector_rankings(overview)
         
         # 4. 获取北向资金（可选）
         # self._get_north_flow(overview)
@@ -132,9 +143,8 @@ class MarketAnalyzer:
         try:
             logger.info("[大盘] 获取主要指数实时行情...")
 
-            # 使用 DataFetcherManager 获取指数行情
-            # Manager 会自动尝试：Akshare -> Tushare -> Yfinance
-            data_list = self.data_manager.get_main_indices()
+            # 使用 DataFetcherManager 获取指数行情（按 region 切换）
+            data_list = self.data_manager.get_main_indices(region=self.region)
 
             if data_list:
                 for item in data_list:
@@ -239,12 +249,8 @@ class MarketAnalyzer:
         today = datetime.now()
         date_str = today.strftime('%Y年%m月%d日')
 
-        # 多维度搜索
-        search_queries = [
-            "A股 大盘 复盘",
-            "股市 行情 分析",
-            "A股 市场 热点 板块",
-        ]
+        # 按 region 使用不同的新闻搜索词
+        search_queries = self.profile.news_queries
         
         try:
             logger.info("[大盘] 开始搜索市场新闻...")
@@ -428,6 +434,24 @@ class MarketAnalyzer:
                 snippet = n.get('snippet', '')[:100]
             news_text += f"{i}. {title}\n   {snippet}\n"
         
+        # 按 region 组装市场概况与板块区块（美股无涨跌家数、板块数据）
+        stats_block = ""
+        if self.profile.has_market_stats:
+            stats_block = f"""## 市场概况
+- 上涨: {overview.up_count} 家 | 下跌: {overview.down_count} 家 | 平盘: {overview.flat_count} 家
+- 涨停: {overview.limit_up_count} 家 | 跌停: {overview.limit_down_count} 家
+- 两市成交额: {overview.total_amount:.0f} 亿元"""
+        else:
+            stats_block = "## 市场概况\n（美股暂无涨跌家数等统计）"
+
+        sector_block = ""
+        if self.profile.has_sector_rankings:
+            sector_block = f"""## 板块表现
+领涨: {top_sectors_text if top_sectors_text else "暂无数据"}
+领跌: {bottom_sectors_text if bottom_sectors_text else "暂无数据"}"""
+        else:
+            sector_block = "## 板块表现\n（美股暂无板块涨跌数据）"
+
         prompt = f"""你是一位专业的A/H/美股市场分析师，请根据以下数据生成一份简洁的大盘复盘报告。
 
 【重要】输出要求：
@@ -446,14 +470,9 @@ class MarketAnalyzer:
 ## 主要指数
 {indices_text if indices_text else "暂无指数数据（接口异常）"}
 
-## 市场概况
-- 上涨: {overview.up_count} 家 | 下跌: {overview.down_count} 家 | 平盘: {overview.flat_count} 家
-- 涨停: {overview.limit_up_count} 家 | 跌停: {overview.limit_down_count} 家
-- 两市成交额: {overview.total_amount:.0f} 亿元
+{stats_block}
 
-## 板块表现
-领涨: {top_sectors_text if top_sectors_text else "暂无数据"}
-领跌: {bottom_sectors_text if bottom_sectors_text else "暂无数据"}
+{sector_block}
 
 ## 市场新闻
 {news_text if news_text else "暂无相关新闻"}
@@ -464,13 +483,13 @@ class MarketAnalyzer:
 
 # 输出格式模板（请严格按此格式输出）
 
-## 📊 {overview.date} 大盘复盘
+## {overview.date} 大盘复盘
 
 ### 一、市场总结
 （2-3句话概括今日市场整体表现，包括指数涨跌、成交量变化）
 
 ### 二、指数点评
-（分析上证、深证、创业板等各指数走势特点）
+（{self.profile.prompt_index_hint}）
 
 ### 三、资金动向
 （解读成交额流向的含义）
@@ -492,15 +511,22 @@ class MarketAnalyzer:
     
     def _generate_template_review(self, overview: MarketOverview, news: List) -> str:
         """使用模板生成复盘报告（无大模型时的备选方案）"""
-        
-        # 判断市场走势
-        sh_index = next((idx for idx in overview.indices if idx.code == '000001'), None)
-        if sh_index:
-            if sh_index.change_pct > 1:
+        mood_code = self.profile.mood_index_code
+        # 根据 mood_index_code 查找对应指数（cn 用 000001/sh000001，us 用 SPX）
+        mood_index = next(
+            (
+                idx
+                for idx in overview.indices
+                if idx.code == mood_code or mood_code in idx.code
+            ),
+            None,
+        )
+        if mood_index:
+            if mood_index.change_pct > 1:
                 market_mood = "强势上涨"
-            elif sh_index.change_pct > 0:
+            elif mood_index.change_pct > 0:
                 market_mood = "小幅上涨"
-            elif sh_index.change_pct > -1:
+            elif mood_index.change_pct > -1:
                 market_mood = "小幅下跌"
             else:
                 market_mood = "明显下跌"
@@ -517,14 +543,10 @@ class MarketAnalyzer:
         top_text = "、".join([s['name'] for s in overview.top_sectors[:3]])
         bottom_text = "、".join([s['name'] for s in overview.bottom_sectors[:3]])
         
-        report = f"""## 📊 {overview.date} 大盘复盘
-
-### 一、市场总结
-今日A股市场整体呈现**{market_mood}**态势。
-
-### 二、主要指数
-{indices_text}
-
+        # 按 region 决定是否包含涨跌统计和板块（美股无）
+        stats_section = ""
+        if self.profile.has_market_stats:
+            stats_section = f"""
 ### 三、涨跌统计
 | 指标 | 数值 |
 |------|------|
@@ -533,11 +555,24 @@ class MarketAnalyzer:
 | 涨停 | {overview.limit_up_count} |
 | 跌停 | {overview.limit_down_count} |
 | 两市成交额 | {overview.total_amount:.0f}亿 |
-
+"""
+        sector_section = ""
+        if self.profile.has_sector_rankings and (top_text or bottom_text):
+            sector_section = f"""
 ### 四、板块表现
 - **领涨**: {top_text}
 - **领跌**: {bottom_text}
+"""
+        market_label = "A股" if self.region == "cn" else "美股"
+        report = f"""## {overview.date} 大盘复盘
 
+### 一、市场总结
+今日{market_label}市场整体呈现**{market_mood}**态势。
+
+### 二、主要指数
+{indices_text}
+{stats_section}
+{sector_section}
 ### 五、风险提示
 市场有风险，投资需谨慎。以上数据仅供参考，不构成投资建议。
 
