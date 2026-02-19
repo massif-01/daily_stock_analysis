@@ -150,7 +150,7 @@ const HomePage: React.FC = () => {
   // 初始加载 - 自动选择第一条
   useEffect(() => {
     fetchHistory(true);
-  }, []);
+  }, [fetchHistory]);
 
   // 点击历史项加载报告
   const handleHistoryClick = async (queryId: string) => {
