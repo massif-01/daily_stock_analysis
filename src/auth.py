@@ -100,6 +100,7 @@ def _load_session_secret() -> Optional[bytes]:
         try:
             with open(secret_path, "xb") as f:
                 f.write(new_secret)
+            secret_path.chmod(0o600)
         except FileExistsError:
             _session_secret = secret_path.read_bytes()
         else:
