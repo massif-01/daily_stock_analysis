@@ -122,6 +122,7 @@ export interface DuplicateTaskError {
 
 /** 历史记录摘要（列表展示用） */
 export interface HistoryItem {
+  id?: number;
   queryId: string;
   stockCode: string;
   stockName?: string;

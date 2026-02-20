@@ -16,7 +16,8 @@ from pydantic import BaseModel, Field
 
 class HistoryItem(BaseModel):
     """历史记录摘要（列表展示用）"""
-    
+
+    id: Optional[int] = Field(None, description="记录主键，用于精确获取详情（query_id 重复时必备）")
     query_id: str = Field(..., description="分析记录唯一标识")
     stock_code: str = Field(..., description="股票代码")
     stock_name: Optional[str] = Field(None, description="股票名称")

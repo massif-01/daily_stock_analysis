@@ -44,10 +44,14 @@ export const historyApi = {
 
   /**
    * 获取历史报告详情
-   * @param queryId 分析记录唯一标识
+   * @param idOrQueryId 记录主键(id)或 query_id，优先用 id 以应对 query_id 重复场景
    */
-  getDetail: async (queryId: string): Promise<AnalysisReport> => {
-    const response = await apiClient.get<Record<string, unknown>>(`/api/v1/history/${queryId}`);
+  getDetail: async (idOrQueryId: number | string): Promise<AnalysisReport> => {
+    const url =
+      typeof idOrQueryId === 'number'
+        ? `/api/v1/history/by-id/${idOrQueryId}`
+        : `/api/v1/history/${idOrQueryId}`;
+    const response = await apiClient.get<Record<string, unknown>>(url);
     return toCamelCase<AnalysisReport>(response.data);
   },
 

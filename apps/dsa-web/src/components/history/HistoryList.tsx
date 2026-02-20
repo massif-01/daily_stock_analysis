@@ -9,8 +9,9 @@ interface HistoryListProps {
   isLoading: boolean;
   isLoadingMore: boolean;
   hasMore: boolean;
-  selectedQueryId?: string;
-  onItemClick: (queryId: string) => void;
+  /** 当前选中项：record id（number）或 queryId（string），用于高亮 */
+  selectedItemId?: number | string;
+  onItemClick: (idOrQueryId: number | string) => void;
   onLoadMore: () => void;
   className?: string;
 }
@@ -24,7 +25,7 @@ export const HistoryList: React.FC<HistoryListProps> = ({
   isLoading,
   isLoadingMore,
   hasMore,
-  selectedQueryId,
+  selectedItemId,
   onItemClick,
   onLoadMore,
   className = '',
@@ -86,13 +87,20 @@ export const HistoryList: React.FC<HistoryListProps> = ({
           </div>
         ) : (
           <div className="space-y-1.5">
-            {items.map((item) => (
+            {items.map((item) => {
+              const idOrQueryId: number | string = item.id ?? item.queryId;
+              const isActive =
+                typeof selectedItemId === 'number'
+                  ? item.id === selectedItemId
+                  : typeof selectedItemId === 'string'
+                    ? item.queryId === selectedItemId
+                    : false;
+              return (
               <button
-                key={item.queryId}
+                key={item.id != null ? `id-${item.id}` : `q-${item.queryId}-${item.stockCode}`}
                 type="button"
-                onClick={() => onItemClick(item.queryId)}
-                className={`history-item w-full text-left ${selectedQueryId === item.queryId ? 'active' : ''
-                  }`}
+                onClick={() => onItemClick(idOrQueryId)}
+                className={`history-item w-full text-left ${isActive ? 'active' : ''}`}
               >
                 <div className="flex items-center gap-2 w-full">
                   {/* 情感分数指示条 */}
@@ -130,11 +138,11 @@ export const HistoryList: React.FC<HistoryListProps> = ({
                       <span className="text-xs text-muted">
                         {formatDateTime(item.createdAt)}
                       </span>
-                    </div>
-                  </div>
                 </div>
-              </button>
-            ))}
+              </div>
+            </div>
+          </button>
+            );})}
 
             {/* 加载更多触发器 */}
             <div ref={loadMoreTriggerRef} className="h-4" />

@@ -839,9 +839,25 @@ class DatabaseManager:
                 .limit(limit)
             )
             results = session.execute(data_query).scalars().all()
-            
+
             return list(results), total
-    
+
+    def get_analysis_history_by_id(self, record_id: int) -> Optional[AnalysisHistory]:
+        """
+        Query a single analysis history record by primary key.
+
+        Args:
+            record_id: analysis_history.id (primary key)
+
+        Returns:
+            AnalysisHistory or None
+        """
+        with self.get_session() as session:
+            result = session.execute(
+                select(AnalysisHistory).where(AnalysisHistory.id == record_id)
+            ).scalars().first()
+            return result
+
     def get_data_range(
         self, 
         code: str, 

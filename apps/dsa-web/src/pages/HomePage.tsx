@@ -31,8 +31,9 @@ const HomePage: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 20;
 
-  // 报告详情状态
+  // 报告详情状态（selectedIdOrQueryId 用于列表高亮，应对 query_id 重复场景）
   const [selectedReport, setSelectedReport] = useState<AnalysisReport | null>(null);
+  const [selectedIdOrQueryId, setSelectedIdOrQueryId] = useState<number | string | null>(null);
   const [isLoadingReport, setIsLoadingReport] = useState(false);
 
   // 任务队列状态
@@ -124,8 +125,10 @@ const HomePage: React.FC = () => {
         const firstItem = response.items[0];
         setIsLoadingReport(true);
         try {
-          const report = await historyApi.getDetail(firstItem.queryId);
+          const idOrQueryId = firstItem.id ?? firstItem.queryId;
+          const report = await historyApi.getDetail(idOrQueryId);
           setSelectedReport(report);
+          setSelectedIdOrQueryId(idOrQueryId);
         } catch (err) {
           console.error('Failed to fetch first report:', err);
         } finally {
@@ -152,15 +155,16 @@ const HomePage: React.FC = () => {
     fetchHistory(true);
   }, []);
 
-  // 点击历史项加载报告
-  const handleHistoryClick = async (queryId: string) => {
+  // 点击历史项加载报告（优先用 id 以应对 query_id 重复）
+  const handleHistoryClick = async (idOrQueryId: number | string) => {
     // 取消当前分析请求的结果显示（通过递增 requestId）
     analysisRequestIdRef.current += 1;
 
     setIsLoadingReport(true);
     try {
-      const report = await historyApi.getDetail(queryId);
+      const report = await historyApi.getDetail(idOrQueryId);
       setSelectedReport(report);
+      setSelectedIdOrQueryId(idOrQueryId);
     } catch (err) {
       console.error('Failed to fetch report:', err);
     } finally {
@@ -270,18 +274,15 @@ const HomePage: React.FC = () => {
 
       {/* 主内容区 */}
       <main className="flex-1 flex overflow-hidden p-3 gap-3">
-{/* 左侧：任务面板 + 历史列表 */}
+        {/* 左侧：任务面板 + 历史列表 */}
         <div className="flex flex-col gap-3 w-64 flex-shrink-0 overflow-hidden">
-          {/* 任务面板 */}
           <TaskPanel tasks={activeTasks} />
-
-          {/* 历史列表 */}
           <HistoryList
             items={historyItems}
             isLoading={isLoadingHistory}
             isLoadingMore={isLoadingMore}
             hasMore={hasMore}
-            selectedQueryId={selectedReport?.meta.queryId}
+            selectedItemId={selectedIdOrQueryId ?? undefined}
             onItemClick={handleHistoryClick}
             onLoadMore={handleLoadMore}
             className="max-h-[62vh] overflow-hidden"
