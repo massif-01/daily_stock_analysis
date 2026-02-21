@@ -23,10 +23,10 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional, Dict, Set, List, Callable, Any, TYPE_CHECKING
 
-from data_provider.base import canonical_stock_code
-
 if TYPE_CHECKING:
     from asyncio import Queue as AsyncQueue
+
+from data_provider.base import canonical_stock_code
 
 logger = logging.getLogger(__name__)
 
