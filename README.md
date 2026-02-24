@@ -89,6 +89,7 @@
 | `OPENAI_BASE_URL` | OpenAI 兼容 API 地址（如 `https://api.deepseek.com/v1`） | 可选 |
 | `OPENAI_MODEL` | 模型名称（如 `gemini-3.1-pro-preview`、`gemini-3-flash-preview`、`gpt-5.2`） | 可选 |
 | `OPENAI_VISION_MODEL` | 图片识别专用模型（部分第三方模型不支持图像；不填则用 `OPENAI_MODEL`） | 可选 |
+| `OPENAI_THINKING_ENABLED` | 启用 DeepSeek 思考模式（仅 deepseek-chat 需此项；deepseek-reasoner 自动启用；第三方代理请勿开启） | 可选 |
 
 > 注：AI 优先级 Gemini > Anthropic > OpenAI（含 AIHubmix），至少配置一个。`AIHUBMIX_KEY` 无需配置 `OPENAI_BASE_URL`，系统自动适配。图片识别需 Vision 能力模型。
 

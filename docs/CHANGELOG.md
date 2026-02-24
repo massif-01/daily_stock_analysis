@@ -28,6 +28,11 @@
   - 扩展 `analysis_tools` 与 `data_tools`，优化策略问股的工具调用链路与分析覆盖
 
 ### 修复（#patch）
+- 🐛 **支持 DeepSeek 思考模式**（Issue #379）
+  - 根因：Agent 模式（tool calls）下使用 DeepSeek 思考模式时，未在 assistant 消息中回传 `reasoning_content`，导致 API 返回 400
+  - 修复：`llm_adapter._call_openai` 解析并透传 `reasoning_content`；`executor` 在 assistant_msg 中写入该字段
+  - 新增配置：`OPENAI_THINKING_ENABLED`（供 deepseek-chat 显式启用；deepseek-reasoner 模型自动启用，无需配置）
+  - 兼容性：非 DeepSeek 提供商不受影响；默认 false，无破坏性变更
 - 🐛 **修复 HTTP 非安全上下文下 /chat 页面黑屏**（Issue #377）
   - `crypto.randomUUID()` 仅在 HTTPS/localhost 安全上下文中可用，通过 `http://IP:port` 访问时页面崩溃黑屏
   - 新增 `apps/dsa-web/src/utils/uuid.ts`，提供带 fallback 的 `generateUUID()` 工具函数

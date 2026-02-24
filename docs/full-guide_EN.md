@@ -61,6 +61,7 @@ Go to your forked repo → `Settings` → `Secrets and variables` → `Actions` 
 | `OPENAI_API_KEY` | OpenAI-compatible API Key (supports DeepSeek, Qwen, etc.) | Optional |
 | `OPENAI_BASE_URL` | OpenAI-compatible API endpoint (e.g., `https://api.deepseek.com/v1`) | Optional |
 | `OPENAI_MODEL` | Model name (e.g., `deepseek-chat`) | Optional |
+| `OPENAI_THINKING_ENABLED` | Enable DeepSeek thinking mode (deepseek-chat only; deepseek-reasoner auto-enables) | Optional |
 
 > *Note: Configure at least one of `GEMINI_API_KEY` or `OPENAI_API_KEY`
 
@@ -148,6 +149,7 @@ Default schedule: Every weekday at **18:00 (Beijing Time)** automatic execution.
 | `OPENAI_API_KEY` | OpenAI-compatible API Key | - | Optional |
 | `OPENAI_BASE_URL` | OpenAI-compatible API endpoint | - | Optional |
 | `OPENAI_MODEL` | OpenAI model name | `gpt-4o` | Optional |
+| `OPENAI_THINKING_ENABLED` | Enable DeepSeek thinking mode (deepseek-chat only; deepseek-reasoner auto-enables; do not enable for third-party proxies) | `false` | Optional |
 
 > *Note: Configure at least one of `GEMINI_API_KEY` or `OPENAI_API_KEY`
 
@@ -515,6 +517,7 @@ GEMINI_MODEL=gemini-3-flash-preview
 OPENAI_API_KEY=xxx
 OPENAI_BASE_URL=https://api.deepseek.com/v1
 OPENAI_MODEL=deepseek-chat
+# OPENAI_THINKING_ENABLED=true  # thinking mode for deepseek-chat; not needed for deepseek-reasoner
 ```
 
 ### Debug Mode

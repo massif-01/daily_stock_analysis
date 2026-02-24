@@ -185,6 +185,7 @@ PROXY_PORT=10809
 OPENAI_API_KEY=sk-xxxxxxxx
 OPENAI_BASE_URL=https://api.deepseek.com/v1
 OPENAI_MODEL=deepseek-chat
+# Thinking mode: deepseek-reasoner auto-enables; deepseek-chat needs OPENAI_THINKING_ENABLED=true
 ```
 
 Supported model services:

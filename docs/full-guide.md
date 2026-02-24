@@ -61,6 +61,7 @@ daily_stock_analysis/
 | `OPENAI_API_KEY` | OpenAI 兼容 API Key（支持 DeepSeek、通义千问等） | 可选 |
 | `OPENAI_BASE_URL` | OpenAI 兼容 API 地址（如 `https://api.deepseek.com/v1`） | 可选 |
 | `OPENAI_MODEL` | 模型名称（如 `gemini-3.1-pro-preview`、`deepseek-chat`、`gpt-5.2`） | 可选 |
+| `OPENAI_THINKING_ENABLED` | 启用 DeepSeek 思考模式（仅 deepseek-chat 需此项；deepseek-reasoner 自动启用） | 可选 |
 
 > *注：`GEMINI_API_KEY` 和 `OPENAI_API_KEY` 至少配置一个
 
@@ -155,6 +156,7 @@ daily_stock_analysis/
 | `OPENAI_API_KEY` | OpenAI 兼容 API Key | - | 可选 |
 | `OPENAI_BASE_URL` | OpenAI 兼容 API 地址 | - | 可选 |
 | `OPENAI_MODEL` | OpenAI 模型名称（AIHubmix 用户可填如 `gemini-3.1-pro-preview`、`gemini-3-flash-preview`、`gpt-5.2`） | `gpt-5.2` | 可选 |
+| `OPENAI_THINKING_ENABLED` | 启用 DeepSeek 思考模式（仅 deepseek-chat 需此项；deepseek-reasoner 自动启用；第三方代理请勿开启） | `false` | 可选 |
 | `ANTHROPIC_API_KEY` | Anthropic Claude API Key | - | 可选 |
 | `ANTHROPIC_MODEL` | Claude 模型名称 | `claude-3-5-sonnet-20241022` | 可选 |
 | `ANTHROPIC_TEMPERATURE` | Claude 温度参数（0.0-1.0） | `0.7` | 可选 |
@@ -605,6 +607,7 @@ GEMINI_MODEL=gemini-3-flash-preview
 OPENAI_API_KEY=xxx
 OPENAI_BASE_URL=https://api.deepseek.com/v1
 OPENAI_MODEL=deepseek-chat
+# OPENAI_THINKING_ENABLED=true  # deepseek-chat 思考模式；deepseek-reasoner 无需此项
 ```
 
 ### 调试模式

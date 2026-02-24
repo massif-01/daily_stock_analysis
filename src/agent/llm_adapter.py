@@ -35,6 +35,7 @@ class LLMResponse:
     """Normalized response from any LLM provider."""
     content: Optional[str] = None          # text response (final answer)
     tool_calls: List[ToolCall] = field(default_factory=list)  # tool calls to execute
+    reasoning_content: Optional[str] = None  # DeepSeek thinking mode CoT; None for all other providers
     usage: Dict[str, Any] = field(default_factory=dict)       # token usage info
     provider: str = ""                     # which provider handled this call
     raw: Any = None                        # raw provider response for debugging
@@ -341,11 +342,14 @@ class LLMToolAdapter:
                             "arguments": json.dumps(tc["arguments"]),
                         }
                     })
-                openai_messages.append({
+                openai_msg = {
                     "role": "assistant",
                     "content": msg.get("content"),
                     "tool_calls": openai_tc,
-                })
+                }
+                if msg.get("reasoning_content") is not None:
+                    openai_msg["reasoning_content"] = msg["reasoning_content"]
+                openai_messages.append(openai_msg)
             else:
                 openai_messages.append({
                     "role": msg["role"],
@@ -357,6 +361,8 @@ class LLMToolAdapter:
             "messages": openai_messages,
             "temperature": config.openai_temperature,
         }
+        if config.openai_thinking_enabled:
+            call_kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
         if tools:
             call_kwargs["tools"] = tools
 
@@ -366,6 +372,8 @@ class LLMToolAdapter:
         choice = response.choices[0]
         tool_calls = []
         text_content = choice.message.content
+        # DeepSeek-specific extension field; not in openai SDK type, accessed via getattr for safety
+        reasoning_content = getattr(choice.message, 'reasoning_content', None)
 
         if choice.message.tool_calls:
             for tc in choice.message.tool_calls:
@@ -392,6 +400,7 @@ class LLMToolAdapter:
         return LLMResponse(
             content=text_content,
             tool_calls=tool_calls,
+            reasoning_content=reasoning_content,
             usage=usage,
             provider="openai",
             raw=response,

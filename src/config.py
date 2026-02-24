@@ -82,7 +82,8 @@ class Config:
     openai_model: str = "gpt-4o-mini"  # OpenAI 兼容模型名称
     openai_vision_model: Optional[str] = None  # Vision 专用模型（可选，不配置则用 openai_model；部分模型如 DeepSeek 不支持图像）
     openai_temperature: float = 0.7  # OpenAI 温度参数（0.0-2.0，默认0.7）
-    
+    openai_thinking_enabled: bool = False  # Enable DeepSeek thinking mode via extra_body (deepseek-chat only; deepseek-reasoner auto-enables)
+
     # === 搜索引擎配置（支持多 Key 负载均衡）===
     bocha_api_keys: List[str] = field(default_factory=list)  # Bocha API Keys
     tavily_api_keys: List[str] = field(default_factory=list)  # Tavily API Keys
@@ -411,6 +412,7 @@ class Config:
             openai_model=os.getenv('OPENAI_MODEL', 'gpt-4o-mini'),
             openai_vision_model=os.getenv('OPENAI_VISION_MODEL') or None,
             openai_temperature=float(os.getenv('OPENAI_TEMPERATURE', '0.7')),
+            openai_thinking_enabled=os.getenv('OPENAI_THINKING_ENABLED', 'false').lower() == 'true',
             bocha_api_keys=bocha_api_keys,
             tavily_api_keys=tavily_api_keys,
             brave_api_keys=brave_api_keys,

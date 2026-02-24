@@ -82,6 +82,7 @@ Go to your forked repo → `Settings` → `Secrets and variables` → `Actions` 
 | `OPENAI_API_KEY` | OpenAI-compatible API Key (supports DeepSeek, Qwen, etc.) | Optional |
 | `OPENAI_BASE_URL` | OpenAI-compatible API endpoint (e.g., `https://api.deepseek.com/v1`) | Optional |
 | `OPENAI_MODEL` | Model name (e.g., `deepseek-chat`) | Optional |
+| `OPENAI_THINKING_ENABLED` | Enable DeepSeek thinking mode (deepseek-chat only; deepseek-reasoner auto-enables) | Optional |
 
 > *Note: Configure at least one of `GEMINI_API_KEY` or `OPENAI_API_KEY`
 

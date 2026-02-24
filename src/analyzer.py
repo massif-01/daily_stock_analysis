@@ -810,6 +810,8 @@ class GeminiAnalyzer:
                 ],
                 "temperature": generation_config.get('temperature', config.openai_temperature),
             }
+            if config.openai_thinking_enabled:
+                kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
             return kwargs
 
         def _is_unsupported_param_error(error_message: str, param_name: str) -> bool:

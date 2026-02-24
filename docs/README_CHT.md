@@ -82,6 +82,7 @@
 | `OPENAI_API_KEY` | OpenAI 兼容 API Key（支持 DeepSeek、通義千問等） | 可選 |
 | `OPENAI_BASE_URL` | OpenAI 兼容 API 地址（如 `https://api.deepseek.com/v1`） | 可選 |
 | `OPENAI_MODEL` | 模型名稱（如 `deepseek-chat`） | 可選 |
+| `OPENAI_THINKING_ENABLED` | 啟用 DeepSeek 思考模式（僅 deepseek-chat 需此項；deepseek-reasoner 自動啟用） | 可選 |
 
 > *注：`GEMINI_API_KEY` 和 `OPENAI_API_KEY` 至少配置一個
 
