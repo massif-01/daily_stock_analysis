@@ -41,6 +41,37 @@ class LLMResponse:
     raw: Any = None                        # raw provider response for debugging
 
 
+# Models that auto-return reasoning_content; do NOT send extra_body (may cause 400).
+_AUTO_THINKING_MODELS: List[str] = ["deepseek-reasoner", "deepseek-r1", "qwq"]
+
+# Models that need explicit opt-in via extra_body; payload decoupled from model name.
+_OPT_IN_THINKING_MODELS: Dict[str, dict] = {
+    "deepseek-chat": {"thinking": {"type": "enabled"}},
+}
+
+
+def _model_matches(model: str, entries: List[str]) -> bool:
+    """Check if model name matches any entry (exact or prefix with version suffix)."""
+    if not model:
+        return False
+    m = model.lower().strip()
+    for e in entries:
+        if m == e or m.startswith(e + "-"):
+            return True
+    return False
+
+
+def _get_opt_in_payload(model: str, opt_in: Dict[str, dict]) -> Optional[dict]:
+    """Return extra_body payload for opt-in thinking models, or None."""
+    if not model:
+        return None
+    m = model.lower().strip()
+    for key, payload in opt_in.items():
+        if m == key or m.startswith(key + "-"):
+            return payload
+    return None
+
+
 # ============================================================
 # LLM Tool Adapter
 # ============================================================
@@ -356,13 +387,18 @@ class LLMToolAdapter:
                     "content": msg["content"],
                 })
 
+        model_name = config.openai_model or "gpt-4o-mini"
         call_kwargs = {
-            "model": config.openai_model or "gpt-4o-mini",
+            "model": model_name,
             "messages": openai_messages,
             "temperature": config.openai_temperature,
         }
-        if config.openai_thinking_enabled:
-            call_kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
+        # Auto-thinking models: do NOT send extra_body (may cause 400).
+        # Opt-in models: send payload from _OPT_IN_THINKING_MODELS.
+        if not _model_matches(model_name, _AUTO_THINKING_MODELS):
+            payload = _get_opt_in_payload(model_name, _OPT_IN_THINKING_MODELS)
+            if payload:
+                call_kwargs["extra_body"] = payload
         if tools:
             call_kwargs["tools"] = tools
 
