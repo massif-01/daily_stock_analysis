@@ -75,10 +75,13 @@ def _get_opt_in_payload(model: str, opt_in: Dict[str, dict]) -> Optional[dict]:
 def get_thinking_extra_body(model: str) -> Optional[dict]:
     """Return extra_body for thinking mode, or None.
 
-    - Auto-thinking models (deepseek-reasoner, deepseek-r1, qwq, etc.) return None:
-      they send reasoning_content automatically and extra_body would cause 400.
-    - Opt-in models (deepseek-chat) return the activation payload.
-    - All other models return None (no thinking mode).
+    - Auto-thinking models (_AUTO_THINKING_MODELS: deepseek-reasoner, deepseek-r1, qwq):
+      These models automatically return reasoning_content in API responses; sending
+      extra_body would cause 400 because the API already enables thinking by default.
+      Return None to avoid duplicate activation.
+    - Opt-in models (_OPT_IN_THINKING_MODELS: deepseek-chat): Return the activation
+      payload to explicitly enable thinking mode.
+    - All other models: Return None (no thinking mode).
     """
     if _model_matches(model, _AUTO_THINKING_MODELS):
         return None
