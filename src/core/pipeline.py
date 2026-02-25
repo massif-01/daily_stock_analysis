@@ -679,7 +679,8 @@ class StockAnalysisPipeline:
         pct = getattr(realtime_quote, 'change_pct', None)
 
         if last_date >= date.today():
-            # Update last row with realtime close
+            # Update last row with realtime close (copy to avoid mutating caller's df)
+            df = df.copy()
             idx = df.index[-1]
             df.loc[idx, 'close'] = price
             if open_p is not None:
