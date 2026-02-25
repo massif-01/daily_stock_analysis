@@ -35,7 +35,7 @@ class LLMResponse:
     """Normalized response from any LLM provider."""
     content: Optional[str] = None          # text response (final answer)
     tool_calls: List[ToolCall] = field(default_factory=list)  # tool calls to execute
-    reasoning_content: Optional[str] = None  # DeepSeek thinking mode CoT; None for all other providers
+    reasoning_content: Optional[str] = None  # Chain-of-thought (CoT) from DeepSeek thinking mode; must be passed back in multi-turn assistant messages; None for other providers
     usage: Dict[str, Any] = field(default_factory=dict)       # token usage info
     provider: str = ""                     # which provider handled this call
     raw: Any = None                        # raw provider response for debugging
@@ -70,6 +70,19 @@ def _get_opt_in_payload(model: str, opt_in: Dict[str, dict]) -> Optional[dict]:
         if m == key or m.startswith(key + "-"):
             return payload
     return None
+
+
+def get_thinking_extra_body(model: str) -> Optional[dict]:
+    """Return extra_body for thinking mode, or None.
+
+    - Auto-thinking models (deepseek-reasoner, deepseek-r1, qwq, etc.) return None:
+      they send reasoning_content automatically and extra_body would cause 400.
+    - Opt-in models (deepseek-chat) return the activation payload.
+    - All other models return None (no thinking mode).
+    """
+    if _model_matches(model, _AUTO_THINKING_MODELS):
+        return None
+    return _get_opt_in_payload(model, _OPT_IN_THINKING_MODELS)
 
 
 # ============================================================
@@ -393,12 +406,9 @@ class LLMToolAdapter:
             "messages": openai_messages,
             "temperature": config.openai_temperature,
         }
-        # Auto-thinking models: do NOT send extra_body (may cause 400).
-        # Opt-in models: send payload from _OPT_IN_THINKING_MODELS.
-        if not _model_matches(model_name, _AUTO_THINKING_MODELS):
-            payload = _get_opt_in_payload(model_name, _OPT_IN_THINKING_MODELS)
-            if payload:
-                call_kwargs["extra_body"] = payload
+        payload = get_thinking_extra_body(model_name)
+        if payload:
+            call_kwargs["extra_body"] = payload
         if tools:
             call_kwargs["tools"] = tools
 

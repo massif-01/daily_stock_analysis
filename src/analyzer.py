@@ -17,12 +17,7 @@ from dataclasses import dataclass
 from typing import Optional, Dict, Any, List
 from json_repair import repair_json
 
-from src.agent.llm_adapter import (
-    _AUTO_THINKING_MODELS,
-    _OPT_IN_THINKING_MODELS,
-    _get_opt_in_payload,
-    _model_matches,
-)
+from src.agent.llm_adapter import get_thinking_extra_body
 from src.config import get_config
 
 logger = logging.getLogger(__name__)
@@ -808,6 +803,7 @@ class GeminiAnalyzer:
         base_delay = config.gemini_retry_delay
 
         def _build_base_request_kwargs() -> dict:
+            # OpenAI-compatible path (DeepSeek, Qwen, etc.): add extra_body for thinking models
             model_name = self._current_model_name
             kwargs = {
                 "model": model_name,
@@ -817,10 +813,9 @@ class GeminiAnalyzer:
                 ],
                 "temperature": generation_config.get('temperature', config.openai_temperature),
             }
-            if not _model_matches(model_name, _AUTO_THINKING_MODELS):
-                payload = _get_opt_in_payload(model_name, _OPT_IN_THINKING_MODELS)
-                if payload:
-                    kwargs["extra_body"] = payload
+            payload = get_thinking_extra_body(model_name)
+            if payload:
+                kwargs["extra_body"] = payload
             return kwargs
 
         def _is_unsupported_param_error(error_message: str, param_name: str) -> bool:
