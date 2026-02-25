@@ -82,7 +82,7 @@ class Config:
     openai_model: str = "gpt-4o-mini"  # OpenAI 兼容模型名称
     openai_vision_model: Optional[str] = None  # Vision 专用模型（可选，不配置则用 openai_model；部分模型如 DeepSeek 不支持图像）
     openai_temperature: float = 0.7  # OpenAI 温度参数（0.0-2.0，默认0.7）
-    
+
     # === 搜索引擎配置（支持多 Key 负载均衡）===
     bocha_api_keys: List[str] = field(default_factory=list)  # Bocha API Keys
     tavily_api_keys: List[str] = field(default_factory=list)  # Tavily API Keys
@@ -152,6 +152,7 @@ class Config:
 
     # PushPlus 推送配置
     pushplus_token: Optional[str] = None  # PushPlus Token
+    pushplus_topic: Optional[str] = None  # PushPlus 群组编码（一对多推送）
 
     # Server酱3 推送配置
     serverchan3_sendkey: Optional[str] = None  # Server酱3 SendKey
@@ -436,6 +437,7 @@ class Config:
             pushover_user_key=os.getenv('PUSHOVER_USER_KEY'),
             pushover_api_token=os.getenv('PUSHOVER_API_TOKEN'),
             pushplus_token=os.getenv('PUSHPLUS_TOKEN'),
+            pushplus_topic=os.getenv('PUSHPLUS_TOPIC'),
             serverchan3_sendkey=os.getenv('SERVERCHAN3_SENDKEY'),
             custom_webhook_urls=[u.strip() for u in os.getenv('CUSTOM_WEBHOOK_URLS', '').split(',') if u.strip()],
             custom_webhook_bearer_token=os.getenv('CUSTOM_WEBHOOK_BEARER_TOKEN'),

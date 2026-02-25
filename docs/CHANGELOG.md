@@ -14,6 +14,7 @@
   - 报告「今日行情」与「均线系统」与当前价格一致，多头排列判断不再滞后
   - 配置项：`ENABLE_REALTIME_TECHNICAL_INDICATORS`（默认 `true`）；设为 `false` 可回退为昨日收盘逻辑
   - 非交易日或 `enable_realtime_quote` 关闭时保持原有行为
+- 📢 **PushPlus 群组推送**：新增 `PUSHPLUS_TOPIC` 配置项，支持一对多群组推送，配置群组编码后消息推送给群组所有订阅用户
 - 📅 **交易日判断**（Issue #373）
   - 默认非交易日不执行分析，按 A 股 / 港股 / 美股各自交易日历区分
   - 混合持仓时，每只股票只在其市场开市日分析，休市股票当日跳过
@@ -34,6 +35,15 @@
   - 扩展 `analysis_tools` 与 `data_tools`，优化策略问股的工具调用链路与分析覆盖
 
 ### 修复（#patch）
+- 🐛 **支持 DeepSeek 思考模式**（Issue #379）
+  - 根因：Agent 模式（tool calls）下使用 DeepSeek 思考模式时，未在 assistant 消息中回传 `reasoning_content`，导致 API 返回 400
+  - 修复：`llm_adapter._call_openai` 解析并透传 `reasoning_content`；`executor` 在 assistant_msg 中写入该字段
+  - 按模型名自动识别：`deepseek-reasoner`、`deepseek-r1`、`qwq` 等自动返回 reasoning_content，不发送 extra_body；`deepseek-chat` 需显式启用，系统自动处理
+  - 兼容性：非 DeepSeek 提供商不受影响；用户无需配置，无破坏性变更
+- 🐛 **Agent 模式下报告页「相关资讯」为空**（Issue #396）
+  - 根因：Agent 工具结果仅用于 LLM 上下文，未写入 `news_intel`，前端 `GET /api/v1/history/{query_id}/news` 查询不到数据
+  - 修复：在 `_analyze_with_agent` 中 Agent 运行结束后，调用 `search_stock_news` 并持久化（仅 1 次 API 调用，与 Agent 工具逻辑一致，无额外延迟）
+  - 兼容性：无破坏性变更，Agent 模式下报告页「相关资讯」可正常展示
 - 🐛 **修复 HTTP 非安全上下文下 /chat 页面黑屏**（Issue #377）
   - `crypto.randomUUID()` 仅在 HTTPS/localhost 安全上下文中可用，通过 `http://IP:port` 访问时页面崩溃黑屏
   - 新增 `apps/dsa-web/src/utils/uuid.ts`，提供带 fallback 的 `generateUUID()` 工具函数
