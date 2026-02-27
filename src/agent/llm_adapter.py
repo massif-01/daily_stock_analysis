@@ -296,7 +296,7 @@ class LLMToolAdapter:
                     contents.append(genai_types.Content(role="model", parts=parts))
             elif msg["role"] == "tool":
                 contents.append(genai_types.Content(
-                    role="user",
+                    role="tool",
                     parts=[genai_types.Part.from_function_response(
                         name=msg["name"],
                         response={"result": msg["content"]},
