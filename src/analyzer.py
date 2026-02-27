@@ -21,7 +21,7 @@ from json_repair import repair_json
 from litellm import Router
 
 from src.agent.llm_adapter import get_thinking_extra_body
-from src.config import get_config
+from src.config import Config, get_config
 
 logger = logging.getLogger(__name__)
 
@@ -534,7 +534,7 @@ class GeminiAnalyzer:
             logger.warning("No LLM configured (LITELLM_MODEL / API keys), AI analysis will be unavailable")
 
     @staticmethod
-    def _get_api_keys_for_model(model: str, config) -> List[str]:
+    def _get_api_keys_for_model(model: str, config: Config) -> List[str]:
         """Return API keys for a litellm model based on provider prefix."""
         if model.startswith("gemini/") or model.startswith("vertex_ai/"):
             return [k for k in config.gemini_api_keys if k and len(k) >= 8]
@@ -543,7 +543,7 @@ class GeminiAnalyzer:
         return [k for k in config.openai_api_keys if k and len(k) >= 8]
 
     @staticmethod
-    def _extra_litellm_params(model: str, config) -> dict:
+    def _extra_litellm_params(model: str, config: Config) -> dict:
         """Build extra litellm params (api_base, headers) for OpenAI-compatible models."""
         params: Dict[str, Any] = {}
         if not model.startswith("gemini/") and not model.startswith("anthropic/") and not model.startswith("vertex_ai/"):
@@ -652,7 +652,7 @@ class GeminiAnalyzer:
                 last_error = e
                 continue
 
-        raise last_error or Exception("All LLM models failed")
+        raise Exception(f"All LLM models failed (tried {len(models_to_try)} model(s)). Last error: {last_error}")
     
     def analyze(
         self, 

@@ -18,7 +18,7 @@ from typing import List, Optional, Tuple
 
 import litellm
 
-from src.config import get_config
+from src.config import Config, get_config
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +142,7 @@ def _resolve_vision_model() -> str:
     return model
 
 
-def _get_api_key_for_model(model: str, cfg) -> Optional[str]:
+def _get_api_key_for_model(model: str, cfg: Config) -> Optional[str]:
     """Return the first available API key for the given litellm model."""
     if model.startswith("gemini/") or model.startswith("vertex_ai/"):
         keys = [k for k in cfg.gemini_api_keys if k and len(k) >= 8]
