@@ -51,6 +51,11 @@
   - OpenAI 兼容 API Key 长度校验放宽为 `>= 8`，支持 LiteLLM 本地开发常用短 Key
 
 ### 修复（#patch）
+- 🐛 **Bocha 搜索瞬时 SSL/网络错误重试**
+  - 现象：用户报 SSLError(SSLEOFError) 导致博查搜索一次失败即返回
+  - 根因：对瞬时 SSL/网络错误（SSLError、ConnectionError、Timeout 等）无重试
+  - 修复：新增 `_post_with_retry` 辅助函数，使用 tenacity 对博查 HTTP 请求做最多 3 次重试（指数退避 1–10s）
+  - 兼容性：无破坏性变更，行为对用户透明
 - 🐛 **修复桌面端打包后 FastAPI 缺少 `python-multipart`**
   - 现象：桌面客户端启动时报错 `Form data requires "python-multipart" to be installed`
   - 根因：`python-multipart` 由 FastAPI 在运行时检查，且 Windows 打包脚本中 `pip` 与 `pyinstaller` 可能来自不同 Python 环境，导致 `multipart` 未被收录
