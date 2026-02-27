@@ -16,6 +16,8 @@ import logging
 import re
 from typing import List, Optional, Tuple
 
+import litellm
+
 from src.config import get_config
 
 logger = logging.getLogger(__name__)
@@ -153,8 +155,6 @@ def _get_api_key_for_model(model: str, cfg) -> Optional[str]:
 
 def _call_litellm_vision(image_b64: str, mime_type: str) -> str:
     """Extract stock codes from an image using litellm (all providers via OpenAI vision format)."""
-    import litellm
-
     cfg = get_config()
     model = _resolve_vision_model()
     if not model:

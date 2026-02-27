@@ -12,6 +12,9 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+import litellm
+from litellm import Router
+
 from src.config import get_config
 
 logger = logging.getLogger(__name__)
@@ -144,7 +147,6 @@ class LLMToolAdapter:
         self._litellm_available = True
 
         if len(keys) > 1:
-            from litellm import Router
             extra_params = self._extra_litellm_params(litellm_model)
             model_list = [
                 {
@@ -224,8 +226,6 @@ class LLMToolAdapter:
         model: str,
     ) -> LLMResponse:
         """Call a specific litellm model with OpenAI-format messages and tools."""
-        import litellm
-
         openai_messages = self._convert_messages(messages)
 
         # Use short model name (without provider prefix) for thinking model lookup

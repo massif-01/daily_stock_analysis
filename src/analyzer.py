@@ -15,7 +15,10 @@ import logging
 import time
 from dataclasses import dataclass
 from typing import Optional, Dict, Any, List
+
+import litellm
 from json_repair import repair_json
+from litellm import Router
 
 from src.agent.llm_adapter import get_thinking_extra_body
 from src.config import get_config
@@ -566,7 +569,6 @@ class GeminiAnalyzer:
         self._litellm_available = True
 
         if len(keys) > 1:
-            from litellm import Router
             extra_params = self._extra_litellm_params(litellm_model, config)
             model_list = [
                 {
@@ -602,7 +604,6 @@ class GeminiAnalyzer:
         Returns:
             Response text from LLM.
         """
-        import litellm
         config = get_config()
         max_tokens = (
             generation_config.get('max_output_tokens')
