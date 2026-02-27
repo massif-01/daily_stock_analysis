@@ -71,27 +71,27 @@ class Config:
 
     # Legacy single-key fields (kept for backward compatibility; gemini_api_keys[0] when set)
     gemini_api_key: Optional[str] = None
-    gemini_model: str = "gemini-3-flash-preview"  # used for backward-compat inference of litellm_model
-    gemini_model_fallback: str = "gemini-2.5-flash"
-    gemini_temperature: float = 0.7
+    gemini_model: str = "gemini-3-flash-preview"  # 主模型
+    gemini_model_fallback: str = "gemini-2.5-flash"  # 备选模型
+    gemini_temperature: float = 0.7  # 温度参数（0.0-2.0，控制输出随机性，默认0.7）
 
     # Gemini API 请求配置（防止 429 限流）
-    gemini_request_delay: float = 2.0
-    gemini_max_retries: int = 5
-    gemini_retry_delay: float = 5.0
+    gemini_request_delay: float = 2.0  # 请求间隔（秒）
+    gemini_max_retries: int = 5  # 最大重试次数
+    gemini_retry_delay: float = 5.0  # 重试基础延时（秒）
 
-    # Anthropic Claude API
+    # Anthropic Claude API（备选，当 Gemini 不可用时使用）
     anthropic_api_key: Optional[str] = None
-    anthropic_model: str = "claude-3-5-sonnet-20241022"
-    anthropic_temperature: float = 0.7
-    anthropic_max_tokens: int = 8192
+    anthropic_model: str = "claude-3-5-sonnet-20241022"  # Claude model name
+    anthropic_temperature: float = 0.7  # Anthropic temperature (0.0-1.0, default 0.7)
+    anthropic_max_tokens: int = 8192  # Max tokens for Anthropic responses
 
-    # OpenAI 兼容 API
+    # OpenAI 兼容 API（备选，当 Gemini/Anthropic 不可用时使用）
     openai_api_key: Optional[str] = None
-    openai_base_url: Optional[str] = None  # e.g. https://api.openai.com/v1
-    openai_model: str = "gpt-4o-mini"
-    openai_vision_model: Optional[str] = None  # Vision-specific model (optional)
-    openai_temperature: float = 0.7
+    openai_base_url: Optional[str] = None  # 如: https://api.openai.com/v1
+    openai_model: str = "gpt-4o-mini"  # OpenAI 兼容模型名称
+    openai_vision_model: Optional[str] = None  # Vision 专用模型（可选，不配置则用 openai_model；部分模型如 DeepSeek 不支持图像）
+    openai_temperature: float = 0.7  # OpenAI 温度参数（0.0-2.0，默认0.7）
 
     # === 搜索引擎配置（支持多 Key 负载均衡）===
     bocha_api_keys: List[str] = field(default_factory=list)  # Bocha API Keys
