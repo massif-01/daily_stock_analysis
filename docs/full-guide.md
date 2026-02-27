@@ -613,14 +613,23 @@ OPENAI_MODEL=deepseek-chat
 # 思考模式：deepseek-reasoner、deepseek-r1、qwq 等自动识别；deepseek-chat 系统按模型名自动启用
 ```
 
-### LiteLLM Proxy（统一多模型网关）
+### LiteLLM 直接集成（多模型 + 多 Key 负载均衡）
 
-通过 LiteLLM Proxy 可在一个 OpenAI 兼容接口后统一路由 Gemini、DeepSeek、Claude 等模型，并自动处理 Reasoning 模型（Gemini 3 等）的 `thought_signature` 透传，避免多轮工具调用 400 错误。
+本项目通过 [LiteLLM](https://github.com/BerriAI/litellm) 统一调用所有 LLM，无需单独启动 Proxy 服务。
 
-详见 [LiteLLM Proxy 接入指南](LITELLM_PROXY_SETUP.md)。
+**多 Key 配置示例**：
 
-> ⚠️ 使用 LiteLLM Proxy 时须清空 `GEMINI_API_KEY`、`ANTHROPIC_API_KEY`、`AIHUBMIX_KEY`，
-> 仅保留 `OPENAI_BASE_URL` + `OPENAI_API_KEY` + `OPENAI_MODEL`，否则系统优先走原生 SDK 绕过 Proxy。
+```env
+# 多个 Gemini Key 自动轮换（防 429 限流）
+GEMINI_API_KEYS=key1,key2,key3
+LITELLM_MODEL=gemini/gemini-3-flash-preview
+
+# 跨模型降级（主模型全部失败时自动切换）
+LITELLM_FALLBACK_MODELS=anthropic/claude-3-5-sonnet-20241022,openai/gpt-4o-mini
+```
+
+> ⚠️ `LITELLM_MODEL` 必须包含 provider 前缀（如 `gemini/`、`anthropic/`、`openai/`），
+> 否则系统无法识别应使用哪组 API Key。旧格式的 `GEMINI_MODEL`（无前缀）仅用于未配置 `LITELLM_MODEL` 时的自动推断。
 
 ### 调试模式
 

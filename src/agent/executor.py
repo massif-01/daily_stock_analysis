@@ -334,12 +334,8 @@ class AgentExecutor:
             skills_section = f"## 激活的交易策略\n\n{self.skill_instructions}"
         system_prompt = AGENT_SYSTEM_PROMPT.format(skills_section=skills_section)
 
-        # Build tool declarations for all providers
-        tool_decls = {
-            "gemini": self.tool_registry.to_gemini_declarations(),
-            "openai": self.tool_registry.to_openai_tools(),
-            "anthropic": self.tool_registry.to_anthropic_tools(),
-        }
+        # Build tool declarations in OpenAI format (litellm handles all providers)
+        tool_decls = self.tool_registry.to_openai_tools()
 
         # Initialize conversation
         messages: List[Dict[str, Any]] = [
@@ -373,12 +369,8 @@ class AgentExecutor:
             skills_section = f"## 激活的交易策略\n\n{self.skill_instructions}"
         system_prompt = CHAT_SYSTEM_PROMPT.format(skills_section=skills_section)
 
-        # Build tool declarations for all providers
-        tool_decls = {
-            "gemini": self.tool_registry.to_gemini_declarations(),
-            "openai": self.tool_registry.to_openai_tools(),
-            "anthropic": self.tool_registry.to_anthropic_tools(),
-        }
+        # Build tool declarations in OpenAI format (litellm handles all providers)
+        tool_decls = self.tool_registry.to_openai_tools()
 
         # Get conversation history
         session = conversation_manager.get_or_create(session_id)
