@@ -48,9 +48,9 @@ _SEARCH_TRANSIENT_EXCEPTIONS = (
     retry=retry_if_exception_type(_SEARCH_TRANSIENT_EXCEPTIONS),
     before_sleep=before_sleep_log(logger, logging.WARNING),
 )
-def _post_with_retry(url: str, *, headers: Dict[str, str], json_payload: Dict[str, Any], timeout: int) -> requests.Response:
+def _post_with_retry(url: str, *, headers: Dict[str, str], json: Dict[str, Any], timeout: int) -> requests.Response:
     """POST with retry on transient SSL/network errors."""
-    return requests.post(url, headers=headers, json=json_payload, timeout=timeout)
+    return requests.post(url, headers=headers, json=json, timeout=timeout)
 
 
 def fetch_url_content(url: str, timeout: int = 5) -> str:
@@ -585,7 +585,7 @@ class BochaSearchProvider(BaseSearchProvider):
             }
             
             # 执行搜索（带瞬时 SSL/网络错误重试）
-            response = _post_with_retry(url, headers=headers, json_payload=payload, timeout=10)
+            response = _post_with_retry(url, headers=headers, json=payload, timeout=10)
             
             # 检查HTTP状态码
             if response.status_code != 200:
