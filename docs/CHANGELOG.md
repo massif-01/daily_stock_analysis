@@ -7,6 +7,17 @@
 
 ## [Unreleased]
 
+### 修复（#patch）
+- 🐛 **Web 服务启动自动构建前端静态资源**
+  - `main.py` 在 `--serve/--serve-only`（含 `--webui/--webui-only`）模式启动前，自动执行 `apps/dsa-web` 下的 `npm install && npm run build`
+  - 新增环境变量 `WEBUI_AUTO_BUILD`（默认 `true`），可关闭自动构建并改为手动构建
+- 🐛 **首页历史记录列表滚动跳回顶部**（Issue #429）
+  - `fetchHistory` 引用不稳定导致加载更多后 useEffect 重新执行 reset 列表
+  - 改用 `useRef` 追踪易变状态，稳定 `fetchHistory` 引用；后台刷新合并新增项而非替换整个列表
+- 🐛 **设置页保存按钮误亮**（Issue #417）
+  - Chrome 自动填充密码到 `type="password"` 输入框，触发 dirty 状态误判
+  - 密码输入框初始设为 readOnly，用户聚焦时解除，阻止浏览器自动填充
+
 ### 新增（#minor）
 - 🚀 **桌面端 CI 自动发布到 GitHub Releases**
   - 新增 `.github/workflows/desktop-release.yml`
@@ -59,6 +70,16 @@
   - 回滚方案：将 `litellm>=1.80.10` 替换回原生 SDK 并还原此 commit
 
 ### 修复（#patch）
+- 🐛 **Bocha 搜索瞬时 SSL/网络错误重试**
+  - 现象：用户报 SSLError(SSLEOFError) 导致博查搜索一次失败即返回
+  - 根因：对瞬时 SSL/网络错误（SSLError、ConnectionError、Timeout 等）无重试
+  - 修复：新增 `_post_with_retry` 辅助函数，使用 tenacity 对博查 HTTP 请求做最多 3 次重试（指数退避 1–10s）
+  - 兼容性：无破坏性变更，行为对用户透明
+- 🐛 **移动端首页无法滑动查看溢出内容**（Issue #419）
+  - 现象：手机浏览器访问首页时，报告内容超出屏幕但无法左右滑动，也没有滚动条
+  - 根因：外层容器 `overflow-hidden` 禁止所有溢出滚动；5 列 CSS Grid 为固定宽度，无移动端断点适配
+  - 修复：移动端改为单列 Flex 布局，左侧边栏改为抽屉式弹出（与问股页面一致），报告区域添加 `overflow-x-auto` 允许横向滚动
+  - 兼容性：桌面端布局无变化
 - 🐛 **修复桌面端打包后 FastAPI 缺少 `python-multipart`**
   - 现象：桌面客户端启动时报错 `Form data requires "python-multipart" to be installed`
   - 根因：`python-multipart` 由 FastAPI 在运行时检查，且 Windows 打包脚本中 `pip` 与 `pyinstaller` 可能来自不同 Python 环境，导致 `multipart` 未被收录
