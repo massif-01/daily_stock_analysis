@@ -422,7 +422,7 @@ class AgentExecutor:
 
         return result
 
-    def _run_loop(self, messages: List[Dict[str, Any]], tool_decls: Dict[str, Any], start_time: float, tool_calls_log: List[Dict[str, Any]], total_tokens: int, parse_dashboard: bool, progress_callback: Optional[Callable] = None) -> AgentResult:
+    def _run_loop(self, messages: List[Dict[str, Any]], tool_decls: List[Dict[str, Any]], start_time: float, tool_calls_log: List[Dict[str, Any]], total_tokens: int, parse_dashboard: bool, progress_callback: Optional[Callable] = None) -> AgentResult:
         provider_used = ""
 
         for step in range(self.max_steps):
