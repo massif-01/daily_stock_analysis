@@ -416,7 +416,16 @@ class Config:
 
         # LITELLM_FALLBACK_MODELS: comma-separated list of fallback models
         _fallback_str = os.getenv('LITELLM_FALLBACK_MODELS', '')
-        litellm_fallback_models = [m.strip() for m in _fallback_str.split(',') if m.strip()]
+        if _fallback_str.strip():
+            litellm_fallback_models = [m.strip() for m in _fallback_str.split(',') if m.strip()]
+        else:
+            # Backward compat: use gemini_model_fallback when primary is gemini
+            _gemini_fallback = os.getenv('GEMINI_MODEL_FALLBACK', 'gemini-2.5-flash').strip()
+            if litellm_model.startswith('gemini/') and _gemini_fallback:
+                _fb = f'gemini/{_gemini_fallback}' if '/' not in _gemini_fallback else _gemini_fallback
+                litellm_fallback_models = [_fb]
+            else:
+                litellm_fallback_models = []
 
         # 解析搜索引擎 API Keys（支持多个 key，逗号分隔）
         bocha_keys_str = os.getenv('BOCHA_API_KEYS', '')
@@ -716,7 +725,10 @@ class Config:
         if not has_any_llm_key:
             warnings.append("警告：未配置任何 LLM API Key（GEMINI_API_KEY/ANTHROPIC_API_KEY/OPENAI_API_KEY），AI 分析功能将不可用")
         elif not self.litellm_model:
-            warnings.append("提示：LITELLM_MODEL 未配置，将自动从可用 API Key 推断模型")
+            warnings.append(
+                "提示：LITELLM_MODEL 未配置，将自动从可用 API Key 推断模型。"
+                "gemini_model 等 legacy 字段将在未来版本弃用，建议尽早配置 LITELLM_MODEL（格式如 gemini/gemini-2.5-flash）"
+            )
         
         if not self.bocha_api_keys and not self.tavily_api_keys and not self.brave_api_keys and not self.serpapi_keys:
             warnings.append("提示：未配置搜索引擎 API Key (Bocha/Tavily/Brave/SerpAPI)，新闻搜索功能将不可用")
