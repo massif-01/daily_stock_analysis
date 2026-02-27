@@ -586,7 +586,8 @@ class GeminiAnalyzer:
                 routing_strategy="simple-shuffle",
                 num_retries=2,
             )
-            logger.info(f"Analyzer LLM: Router initialized with {len(keys)} keys for {litellm_model}")
+            models_in_router = list(dict.fromkeys(m["litellm_params"]["model"] for m in model_list))
+            logger.info(f"Analyzer LLM: Router initialized with {len(keys)} keys for {litellm_model} (models: {models_in_router})")
         else:
             logger.info(f"Analyzer LLM: litellm initialized (model={litellm_model})")
 
