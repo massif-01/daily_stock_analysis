@@ -34,6 +34,18 @@ class HistoryService:
             db_manager: 数据库管理器（可选，默认使用单例）
         """
         self.db = db_manager or DatabaseManager.get_instance()
+
+    @staticmethod
+    def _normalize_model_used(value: Any) -> Optional[str]:
+        """Normalize placeholder model values to None for user-facing responses."""
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        if text.lower() in {"unknown", "error", "none", "null", "n/a"}:
+            return None
+        return text
     
     def get_history_list(
         self,
@@ -198,10 +210,18 @@ class HistoryService:
         """
         raw_result = None
         if record.raw_result:
-            try:
-                raw_result = json.loads(record.raw_result)
-            except json.JSONDecodeError:
+            if isinstance(record.raw_result, str):
+                try:
+                    raw_result = json.loads(record.raw_result)
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    raw_result = record.raw_result
+            elif isinstance(record.raw_result, dict):
                 raw_result = record.raw_result
+            else:
+                raw_result = record.raw_result
+
+        model_used = (raw_result or {}).get("model_used") if isinstance(raw_result, dict) else None
+        model_used = self._normalize_model_used(model_used)
 
         context_snapshot = None
         if record.context_snapshot:
@@ -217,6 +237,7 @@ class HistoryService:
             "stock_name": record.name,
             "report_type": record.report_type,
             "created_at": record.created_at.isoformat() if record.created_at else None,
+            "model_used": model_used,
             "analysis_summary": record.analysis_summary,
             "operation_advice": record.operation_advice,
             "trend_prediction": record.trend_prediction,
