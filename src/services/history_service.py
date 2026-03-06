@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 
 from src.storage import DatabaseManager
+from src.utils.data_processing import normalize_model_used, parse_json_field
 
 logger = logging.getLogger(__name__)
 
@@ -34,18 +35,6 @@ class HistoryService:
             db_manager: 数据库管理器（可选，默认使用单例）
         """
         self.db = db_manager or DatabaseManager.get_instance()
-
-    @staticmethod
-    def _normalize_model_used(value: Any) -> Optional[str]:
-        """Normalize placeholder model values to None for user-facing responses."""
-        if value is None:
-            return None
-        text = str(value).strip()
-        if not text:
-            return None
-        if text.lower() in {"unknown", "error", "none", "null", "n/a"}:
-            return None
-        return text
     
     def get_history_list(
         self,
@@ -208,20 +197,10 @@ class HistoryService:
         """
         Convert an AnalysisHistory ORM record to a detail response dict.
         """
-        raw_result = None
-        if record.raw_result:
-            if isinstance(record.raw_result, str):
-                try:
-                    raw_result = json.loads(record.raw_result)
-                except (json.JSONDecodeError, TypeError, ValueError):
-                    raw_result = record.raw_result
-            elif isinstance(record.raw_result, dict):
-                raw_result = record.raw_result
-            else:
-                raw_result = record.raw_result
+        raw_result = parse_json_field(record.raw_result)
 
         model_used = (raw_result or {}).get("model_used") if isinstance(raw_result, dict) else None
-        model_used = self._normalize_model_used(model_used)
+        model_used = normalize_model_used(model_used)
 
         context_snapshot = None
         if record.context_snapshot:

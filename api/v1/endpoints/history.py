@@ -10,7 +10,7 @@
 """
 
 import logging
-from typing import Any, Optional
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Depends
 
@@ -29,21 +29,11 @@ from api.v1.schemas.history import (
 from api.v1.schemas.common import ErrorResponse
 from src.storage import DatabaseManager
 from src.services.history_service import HistoryService
+from src.utils.data_processing import normalize_model_used
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-
-def _normalize_model_used(value: Any) -> Optional[str]:
-    if value is None:
-        return None
-    text = str(value).strip()
-    if not text:
-        return None
-    if text.lower() in {"unknown", "error", "none", "null", "n/a"}:
-        return None
-    return text
 
 
 @router.get(
@@ -198,7 +188,7 @@ def get_history_detail(
             created_at=result.get("created_at"),
             current_price=current_price,
             change_pct=change_pct,
-            model_used=_normalize_model_used(result.get("model_used"))
+            model_used=normalize_model_used(result.get("model_used"))
         )
         
         summary = ReportSummary(

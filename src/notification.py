@@ -22,6 +22,7 @@ from enum import Enum
 from src.config import get_config
 from src.analyzer import AnalysisResult
 from bot.models import BotMessage
+from src.utils.data_processing import normalize_model_used
 from src.notification_sender import (
     AstrbotSender,
     CustomWebhookSender,
@@ -155,22 +156,10 @@ class NotificationService(
             channel_names.extend(self._context_channels)
             logger.info(f"已配置 {len(channel_names)} 个通知渠道：{', '.join(channel_names)}")
 
-    @staticmethod
-    def _normalize_model_used(value: Any) -> Optional[str]:
-        """Normalize placeholder model values to None for display."""
-        if value is None:
-            return None
-        text = str(value).strip()
-        if not text:
-            return None
-        if text.lower() in {"unknown", "error", "none", "null", "n/a"}:
-            return None
-        return text
-
     def _collect_models_used(self, results: List[AnalysisResult]) -> List[str]:
         models: List[str] = []
         for result in results:
-            model = self._normalize_model_used(getattr(result, "model_used", None))
+            model = normalize_model_used(getattr(result, "model_used", None))
             if model:
                 models.append(model)
         return list(dict.fromkeys(models))
@@ -1299,7 +1288,7 @@ class NotificationService(
             ])
         
         lines.append("---")
-        model_used = self._normalize_model_used(getattr(result, "model_used", None))
+        model_used = normalize_model_used(getattr(result, "model_used", None))
         if model_used:
             lines.append(f"*分析模型: {model_used}*")
         lines.append("*AI生成，仅供参考，不构成投资建议*")
