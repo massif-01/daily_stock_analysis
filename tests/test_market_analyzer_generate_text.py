@@ -149,7 +149,11 @@ class TestMarketAnalyzerBypassFix:
 
         src = pathlib.Path("src/market_analyzer.py").read_text()
         tree = ast.parse(src)
-        forbidden = {"_model", "_router", "_use_openai", "_use_anthropic"}
+        forbidden = {
+            "_model", "_router", "_use_openai", "_use_anthropic",  # historical
+            "_call_litellm",      # use generate_text() instead
+            "_litellm_available", # use is_available() instead
+        }
 
         violations = []
         for node in ast.walk(tree):
