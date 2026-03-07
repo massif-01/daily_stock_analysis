@@ -26,23 +26,29 @@ logger = logging.getLogger(__name__)
 
 EXTRACT_PROMPT = """请分析这张股票市场截图或图片，提取其中所有可见的股票代码及名称。
 
+重要：若图中同时显示股票名称和代码（如自选股列表、ETF 列表），必须同时提取两者，每个元素必须包含 code 和 name 字段。
+
 输出格式：仅返回有效的 JSON 数组，不要 markdown、不要解释。
-每个元素为对象：{"code":"股票代码","name":"股票名称（如有）","confidence":"high|medium|low"}
-- code: 必填，股票代码（A股6位、港股5位、美股1-5字母）
-- name: 选填，股票中文名称，若图中无名称可省略
+每个元素为对象：{"code":"股票代码","name":"股票名称","confidence":"high|medium|low"}
+- code: 必填，股票代码（A股6位、港股5位、美股1-5字母、ETF 如 159887/512880）
+- name: 若图中有名称则必填（如 贵州茅台、银行ETF、证券ETF），与代码一一对应；仅当图中确实无名称时可省略
 - confidence: 必填，识别置信度，high=确定、medium=较确定、low=不确定
 
-示例：
-- A股：600519 贵州茅台、300750 宁德时代
+示例（图中同时有名称和代码时）：
+- 个股：600519 贵州茅台、300750 宁德时代
 - 港股：00700 腾讯控股、09988 阿里巴巴
 - 美股：AAPL 苹果、TSLA 特斯拉
+- ETF：159887 银行ETF、512880 证券ETF、512000 券商ETF、512480 半导体ETF、515030 新能源车ETF
 
-输出示例：[{"code":"600519","name":"贵州茅台","confidence":"high"},{"code":"00700","name":"腾讯控股","confidence":"high"}]
+输出示例：[{"code":"600519","name":"贵州茅台","confidence":"high"},{"code":"159887","name":"银行ETF","confidence":"high"}]
 
-若未找到任何股票代码，返回：[]"""
+禁止只返回代码数组如 ["159887","512880"]，必须使用对象格式。若未找到任何股票代码，返回：[]"""
 
 # Valid confidence values; invalid ones normalized to medium
 _VALID_CONFIDENCE = frozenset({"high", "medium", "low"})
+
+# LLM sometimes returns JSON field names or markdown labels as "code"; filter these out
+_FAKE_CODES = frozenset({"CODE", "NAME", "HIGH", "LOW", "MEDIUM", "CONFIDENCE", "JSON"})
 
 ALLOWED_MIME = frozenset({"image/jpeg", "image/png", "image/webp", "image/gif"})
 MAX_SIZE_BYTES = 5 * 1024 * 1024  # 5MB
@@ -98,12 +104,12 @@ def _parse_codes_from_text(text: str) -> List[str]:
     seen: set[str] = set()
     result: List[str] = []
 
-    # 优先尝试 JSON 数组
+    # 优先尝试 JSON 数组；只移除开头的 markdown 围栏，避免 find("```") 误删结尾导致清空
     cleaned = text.strip()
     for start in ("```json", "```"):
-        if start in cleaned:
-            idx = cleaned.find(start)
-            cleaned = cleaned[idx + len(start) :].strip()
+        if cleaned.startswith(start):
+            cleaned = cleaned[len(start) :].strip()
+            break
     end_idx = cleaned.rfind("```")
     if end_idx >= 0:
         cleaned = cleaned[:end_idx].strip()
@@ -114,7 +120,7 @@ def _parse_codes_from_text(text: str) -> List[str]:
             for item in data:
                 if isinstance(item, str):
                     c = _normalize_code(item)
-                    if c and c not in seen:
+                    if c and c not in seen and c not in _FAKE_CODES:
                         seen.add(c)
                         result.append(c)
             return result
@@ -124,7 +130,7 @@ def _parse_codes_from_text(text: str) -> List[str]:
     # 兜底：查找 5-6 位数字及美股代码
     for m in re.finditer(r"\b([0-9]{5,6}|[A-Z]{1,5}(\.[A-Z])?)\b", text, re.IGNORECASE):
         c = _normalize_code(m.group(1))
-        if c and c not in seen:
+        if c and c not in seen and c not in _FAKE_CODES:
             seen.add(c)
             result.append(c)
 
@@ -138,9 +144,9 @@ def _parse_items_from_text(text: str) -> List[Tuple[str, Optional[str], str]]:
     """
     cleaned = text.strip()
     for start in ("```json", "```"):
-        if start in cleaned:
-            idx = cleaned.find(start)
-            cleaned = cleaned[idx + len(start) :].strip()
+        if cleaned.startswith(start):
+            cleaned = cleaned[len(start) :].strip()
+            break
     end_idx = cleaned.rfind("```")
     if end_idx >= 0:
         cleaned = cleaned[:end_idx].strip()
@@ -168,7 +174,7 @@ def _parse_items_from_text(text: str) -> List[Tuple[str, Optional[str], str]]:
             if not code_raw:
                 continue
             code = _normalize_code(code_raw)
-            if not code or code in seen:
+            if not code or code in seen or code in _FAKE_CODES:
                 continue
             seen.add(code)
             name = item.get("name")
@@ -304,6 +310,7 @@ def extract_stock_codes_from_image(
         try:
             key = random.choice(keys) if keys else None
             raw = _call_litellm_vision(image_b64, mime_type, api_key=key)
+            logger.debug("[ImageExtractor] raw LLM response:\n%s", raw)
             items = _parse_items_from_text(raw)
             logger.info(
                 f"[ImageExtractor] {model} 提取 {len(items)} 个: "

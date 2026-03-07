@@ -133,7 +133,11 @@ def parse_import_from_bytes(data: bytes, filename: Optional[str] = None) -> List
         except Exception as e:
             # If bytes strongly indicate xlsx container, treat as real Excel parse failure.
             if looks_like_zip:
-                raise ValueError(f"Excel 解析失败: {e}") from e
+                hint = (
+                    "请确认：(1) 文件为 .xlsx 格式；(2) 工作表不为空；(3) 文件未损坏。"
+                    "若为 .xls 格式，请另存为 .xlsx 后重试。"
+                )
+                raise ValueError(f"Excel 解析失败: {e}。{hint}") from e
             # For extension-only mismatch (e.g. csv named .xlsx), fallback to text parsing.
             logger.warning(f"扩展名为 .xlsx 但未解析为 Excel，将回退文本解析: {e}")
 
@@ -173,6 +177,11 @@ def parse_import_from_bytes(data: bytes, filename: Optional[str] = None) -> List
                 df.columns = df.iloc[0]
                 df = df.iloc[1:].reset_index(drop=True)
             return _parse_dataframe(df)
+    except pd.errors.ParserError as e:
+        raise ValueError(
+            f"CSV 解析失败：请检查分隔符是否一致、列数是否匹配。"
+            f"常见原因：引号未闭合、某行列数与其他行不一致。原始错误: {e}"
+        ) from e
     except Exception:
         pass
 

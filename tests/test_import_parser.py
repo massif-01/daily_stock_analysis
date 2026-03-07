@@ -104,6 +104,15 @@ class TestParseImportFromBytesExcel:
         with pytest.raises(ValueError, match="仅支持 .xlsx"):
             parse_import_from_bytes(data, "a.xls")
 
+    def test_excel_error_includes_actionable_hint(self):
+        """Excel parse failure should include hints for common causes."""
+        # Invalid/corrupt xlsx (zip magic but bad content)
+        data = b"PK\x03\x04" + b"x" * 100
+        with pytest.raises(ValueError) as exc_info:
+            parse_import_from_bytes(data, "a.xlsx")
+        msg = str(exc_info.value)
+        assert "请确认" in msg or ".xlsx" in msg
+
 
 # ---------------------------------------------------------------------------
 # Limits and encoding
@@ -119,6 +128,15 @@ class TestParseImportLimits:
         text = "x" * (MAX_TEXT_BYTES + 1)
         with pytest.raises(ValueError, match="超过"):
             parse_import_from_text(text)
+
+    def test_csv_parser_error_raises_helpful_message(self):
+        """Malformed CSV (e.g. unclosed quote) should raise with actionable hint."""
+        data = 'code,name\n600519,"贵州茅台'.encode("utf-8")
+        with pytest.raises(ValueError) as exc_info:
+            parse_import_from_bytes(data, "a.csv")
+        msg = str(exc_info.value)
+        assert "CSV 解析失败" in msg
+        assert "分隔符" in msg or "引号" in msg
 
     def test_accepts_gbk_encoded_csv(self):
         # Build CSV with Chinese in GBK encoding

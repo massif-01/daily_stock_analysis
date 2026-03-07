@@ -230,6 +230,18 @@ class TestParseCodesFromText:
         assert "300750" in codes
         assert "AAPL" in codes
 
+    def test_filters_fake_codes_in_legacy_format(self):
+        """Legacy JSON array or regex fallback should not include CODE, NAME, HIGH, JSON, etc."""
+        assert _parse_codes_from_text('["CODE","159887","NAME","512880","HIGH"]') == ["159887", "512880"]
+        assert _parse_codes_from_text('["JSON","159887","512880"]') == ["159887", "512880"]
+        text = "CODE 159887 NAME 512880 HIGH"
+        codes = _parse_codes_from_text(text)
+        assert "CODE" not in codes
+        assert "NAME" not in codes
+        assert "HIGH" not in codes
+        assert "159887" in codes
+        assert "512880" in codes
+
 
 class TestParseItemsFromText:
     def test_parses_new_format(self):
@@ -248,6 +260,26 @@ class TestParseItemsFromText:
         text = '[{"code":"600519","name":"茅台","confidence":"invalid"}]'
         items = _parse_items_from_text(text)
         assert items[0][2] == "medium"
+
+    def test_filters_fake_codes_from_llm_field_names(self):
+        """LLM sometimes returns JSON field names (CODE, NAME, HIGH) as items; filter them out."""
+        text = '[{"code":"CODE","name":"field"},{"code":"159887","name":"ETF"},{"code":"NAME","name":"x"},{"code":"512880","name":"证券ETF"},{"code":"HIGH","name":"y"}]'
+        items = _parse_items_from_text(text)
+        codes = [i[0] for i in items]
+        assert "CODE" not in codes
+        assert "NAME" not in codes
+        assert "HIGH" not in codes
+        assert "159887" in codes
+        assert "512880" in codes
+        assert len(items) == 2
+
+    def test_parses_markdown_wrapped_json_preserves_names(self):
+        """LLM often wraps JSON in ```json...```; strip only opening fence to avoid wiping content."""
+        text = '\n\n```json\n[{"code":"159887","name":"银行ETF","confidence":"high"},{"code":"512880","name":"证券ETF","confidence":"high"}]\n```'
+        items = _parse_items_from_text(text)
+        assert len(items) == 2
+        assert items[0] == ("159887", "银行ETF", "high")
+        assert items[1] == ("512880", "证券ETF", "high")
 
     def test_uses_json_repair_when_json_invalid(self):
         text = '[{"code":"600519","name":"贵州茅台","confidence":"high"'

@@ -266,7 +266,7 @@ export const IntelligentImport: React.FC<IntelligentImportProps> = ({
         onDrop={onDrop}
         onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
         onDragLeave={(e) => { e.preventDefault(); setIsDragging(false); }}
-        className={`mb-3 flex min-h-[80px] flex-col gap-2 rounded-lg border-2 border-dashed p-3 transition ${
+        className={`mb-3 flex min-h-[80px] flex-col gap-4 rounded-lg border-2 border-dashed p-4 transition ${
           isDragging ? 'border-accent bg-cyan/5' : 'border-white/16'
         } ${disabled || isLoading ? 'cursor-not-allowed opacity-60' : ''}`}
       >
