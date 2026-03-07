@@ -46,7 +46,7 @@ function mergeItems(
         byCode.set(it.code, {
           ...it,
           confidence: normalizedConfidence,
-          id: existing?.id ?? `${it.code}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          id: `${it.code}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
           checked: normalizedConfidence === 'high',
         });
       } else if (!existing.name && it.name) {
