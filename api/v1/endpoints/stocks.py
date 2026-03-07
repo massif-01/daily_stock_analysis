@@ -168,6 +168,15 @@ async def parse_import(request: Request) -> ExtractFromImageResponse:
                 status_code=400,
                 detail={"error": "bad_request", "message": "未提供文件，请使用表单字段 file"},
             )
+        file_size = getattr(file, "size", None)
+        if isinstance(file_size, int) and file_size > MAX_FILE_BYTES:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "file_too_large",
+                    "message": f"文件超过 {MAX_FILE_BYTES // (1024 * 1024)}MB 限制",
+                },
+            )
         try:
             data = file.file.read(MAX_FILE_BYTES)
             if file.file.read(1):

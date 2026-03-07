@@ -136,6 +136,7 @@ def resolve_name_to_code(name: str) -> Optional[str]:
     # 4. AkShare fallback
     akshare_map = _get_akshare_name_to_code()
     if akshare_map and s in akshare_map:
+        logger.debug(f"[NameResolver] 命中 AkShare 映射: {s} -> {akshare_map[s]}")
         return akshare_map[s]
 
     # 5. Fuzzy match (local + akshare, local takes precedence)
@@ -144,6 +145,8 @@ def resolve_name_to_code(name: str) -> Optional[str]:
         all_name_to_code.update(akshare_map)
     matches = difflib.get_close_matches(s, list(all_name_to_code.keys()), n=1, cutoff=0.6)
     if matches:
+        logger.debug(f"[NameResolver] 命中模糊匹配: input={s}, matched={matches[0]}")
         return all_name_to_code[matches[0]]
 
+    logger.debug(f"[NameResolver] 解析失败: {s}")
     return None

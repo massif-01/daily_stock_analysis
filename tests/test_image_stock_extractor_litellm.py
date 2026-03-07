@@ -2,7 +2,7 @@
 """Tests for image_stock_extractor Vision LLM layer.
 
 Covers:
-- _resolve_vision_model(): priority chain (openai_vision_model > litellm_model > inferred)
+- _resolve_vision_model(): priority chain (vision_model > openai_vision_model > litellm_model > inferred)
 - gemini-3 heuristic downgrade behaviour
 - _get_api_keys_for_model(): provider key routing
 - _call_litellm_vision(): request payload / timeout / error handling
@@ -81,8 +81,13 @@ def _make_jpeg_bytes() -> bytes:
 # ---------------------------------------------------------------------------
 
 class TestResolveVisionModel:
+    def test_uses_vision_model_first(self):
+        cfg = _cfg(vision_model="gemini/gemini-2.0-flash", openai_vision_model="openai/gpt-4o")
+        with patch("src.services.image_stock_extractor.get_config", return_value=cfg):
+            assert _resolve_vision_model() == "gemini/gemini-2.0-flash"
+
     def test_uses_openai_vision_model_first(self):
-        cfg = _cfg(openai_vision_model="openai/gpt-4o", litellm_model="gemini/gemini-2.5-flash")
+        cfg = _cfg(vision_model="", openai_vision_model="openai/gpt-4o", litellm_model="gemini/gemini-2.5-flash")
         with patch("src.services.image_stock_extractor.get_config", return_value=cfg):
             assert _resolve_vision_model() == "openai/gpt-4o"
 
@@ -243,6 +248,11 @@ class TestParseItemsFromText:
         text = '[{"code":"600519","name":"茅台","confidence":"invalid"}]'
         items = _parse_items_from_text(text)
         assert items[0][2] == "medium"
+
+    def test_uses_json_repair_when_json_invalid(self):
+        text = '[{"code":"600519","name":"贵州茅台","confidence":"high"'
+        items = _parse_items_from_text(text)
+        assert items == [("600519", "贵州茅台", "high")]
 
 
 # ---------------------------------------------------------------------------

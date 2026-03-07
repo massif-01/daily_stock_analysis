@@ -146,39 +146,49 @@ def _parse_items_from_text(text: str) -> List[Tuple[str, Optional[str], str]]:
         cleaned = cleaned[:end_idx].strip()
 
     # Try new format: list of objects
+    parsed_data = None
     try:
-        data = json.loads(cleaned)
-        if isinstance(data, list):
-            seen: set[str] = set()
-            result: List[Tuple[str, Optional[str], str]] = []
-            for item in data:
-                if not isinstance(item, dict):
-                    continue
-                code_raw = item.get("code") if isinstance(item.get("code"), str) else None
-                if not code_raw:
-                    continue
-                code = _normalize_code(code_raw)
-                if not code or code in seen:
-                    continue
-                seen.add(code)
-                name = item.get("name")
-                if isinstance(name, str) and name.strip():
-                    name = name.strip()
-                else:
-                    name = None
-                conf = item.get("confidence")
-                if isinstance(conf, str) and conf.lower() in _VALID_CONFIDENCE:
-                    conf = conf.lower()
-                else:
-                    conf = "medium"
-                result.append((code, name, conf))
-            if result:
-                return result
+        parsed_data = json.loads(cleaned)
     except json.JSONDecodeError:
-        pass
+        try:
+            from json_repair import repair_json
+
+            parsed_data = repair_json(cleaned, return_objects=True)
+            logger.debug("[ImageExtractor] json.loads failed, repaired malformed JSON response")
+        except Exception:
+            parsed_data = None
+
+    if isinstance(parsed_data, list):
+        seen: set[str] = set()
+        result: List[Tuple[str, Optional[str], str]] = []
+        for item in parsed_data:
+            if not isinstance(item, dict):
+                continue
+            code_raw = item.get("code") if isinstance(item.get("code"), str) else None
+            if not code_raw:
+                continue
+            code = _normalize_code(code_raw)
+            if not code or code in seen:
+                continue
+            seen.add(code)
+            name = item.get("name")
+            if isinstance(name, str) and name.strip():
+                name = name.strip()
+            else:
+                name = None
+            conf = item.get("confidence")
+            if isinstance(conf, str) and conf.lower() in _VALID_CONFIDENCE:
+                conf = conf.lower()
+            else:
+                conf = "medium"
+            result.append((code, name, conf))
+        if result:
+            return result
 
     # Fallback: legacy format (codes only)
     codes = _parse_codes_from_text(text)
+    if not codes:
+        logger.info("[ImageExtractor] 无法解析为结构化 items，且 legacy code 提取为空")
     return [(c, None, "medium") for c in codes]
 
 

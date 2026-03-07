@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 - **智能导入 (P1)** — 支持图片、CSV/Excel、剪贴板多源导入；Vision LLM 同时提取代码+名称+置信度；名称→代码解析引擎（本地映射+拼音+AkShare fallback）；置信度分层确认（高自动勾选、中/低需人工确认）；统一预览与合并流程
 
+### Changed
+- **API 响应扩展（兼容提醒）** — `POST /api/v1/stocks/extract-from-image` 响应新增 `items` 字段（`code/name/confidence` 明细）；保留 `codes` 以兼容旧客户端。对严格 JSON Schema 且不接受未知字段的客户端，需评估并适配该字段变更。
+
 ## [3.4.10] - 2026-03-07
 
 ### Fixed
