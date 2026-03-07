@@ -146,6 +146,7 @@ async def parse_import(request: Request) -> ExtractFromImageResponse:
         try:
             body = await request.json()
         except Exception as e:
+            logger.warning("[parse_import] JSON parse failed: %s", e)
             raise HTTPException(
                 status_code=400,
                 detail={"error": "invalid_json", "message": f"JSON 解析失败: {e}"},
@@ -159,6 +160,12 @@ async def parse_import(request: Request) -> ExtractFromImageResponse:
         try:
             items = parse_import_from_text(text)
         except ValueError as e:
+            text_bytes = len(text.encode("utf-8"))
+            logger.warning(
+                "[parse_import] parse_import_from_text failed: text_bytes=%d, error=%s",
+                text_bytes,
+                e,
+            )
             raise HTTPException(status_code=400, detail={"error": "parse_failed", "message": str(e)})
     elif "multipart" in content_type:
         form = await request.form()
@@ -190,7 +197,14 @@ async def parse_import(request: Request) -> ExtractFromImageResponse:
         except HTTPException:
             raise
         except Exception as e:
-            logger.warning(f"读取上传文件失败: {e}")
+            filename = getattr(file, "filename", None) or ""
+            size = getattr(file, "size", None)
+            logger.warning(
+                "[parse_import] file read failed: filename=%r, size=%s, error=%s",
+                filename,
+                size,
+                e,
+            )
             raise HTTPException(
                 status_code=400,
                 detail={"error": "read_failed", "message": "读取文件失败"},
@@ -199,6 +213,14 @@ async def parse_import(request: Request) -> ExtractFromImageResponse:
         try:
             items = parse_import_from_bytes(data, filename=filename)
         except ValueError as e:
+            ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+            logger.warning(
+                "[parse_import] parse_import_from_bytes failed: filename=%r, ext=%r, bytes=%d, error=%s",
+                filename,
+                ext,
+                len(data),
+                e,
+            )
             raise HTTPException(status_code=400, detail={"error": "parse_failed", "message": str(e)})
     else:
         raise HTTPException(

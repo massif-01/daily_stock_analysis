@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Changed
 - **API 响应扩展（兼容提醒）** — `POST /api/v1/stocks/extract-from-image` 响应新增 `items` 字段（`code/name/confidence` 明细）；保留 `codes` 以兼容旧客户端。对严格 JSON Schema 且不接受未知字段的客户端，需评估并适配该字段变更。
 - **parse-import 错误信息细化** — Excel 解析失败时增加可操作提示（格式、工作表、损坏）；CSV 解析失败（如引号未闭合、列数不一致）时返回具体原因；`docs/full-guide.md` 补充列名说明与常见解析失败场景。
+- **parse_import 日志优化** — 文件读取失败、JSON 解析失败、parse 失败时记录文件类型、大小、错误摘要，便于排查。
+- **AkShare 缓存说明** — `docs/full-guide.md` 补充名称解析 AkShare fallback 的 1h TTL 缓存说明。
 
 ## [3.4.10] - 2026-03-07
 
