@@ -1,5 +1,6 @@
 import type React from 'react';
 import { useCallback, useState } from 'react';
+import { getParsedApiError } from '../../api/error';
 import { stocksApi, type ExtractItem } from '../../api/stocks';
 import { systemConfigApi, SystemConfigConflictError } from '../../api/systemConfig';
 
@@ -30,6 +31,11 @@ function mergeItems(
   newItems: ExtractItem[]
 ): ItemWithChecked[] {
   const byCode = new Map<string, ItemWithChecked>();
+  const confOrder: Record<'high' | 'medium' | 'low', number> = {
+    high: 3,
+    medium: 2,
+    low: 1,
+  };
   const failed: ItemWithChecked[] = [];
   for (const p of prev) {
     if (p.code) {
@@ -49,13 +55,21 @@ function mergeItems(
           id: `${it.code}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
           checked: normalizedConfidence === 'high',
         });
-      } else if (!existing.name && it.name) {
-        // Same code: keep the first row that has name (plan requirement).
-        byCode.set(it.code, {
-          ...existing,
-          name: it.name,
-          confidence: normalizedConfidence,
-        });
+      } else {
+        const existingConfidence = normalizeConfidence(existing.confidence);
+        const shouldUpgradeConfidence = confOrder[normalizedConfidence] > confOrder[existingConfidence];
+        const shouldFillName = !existing.name && !!it.name;
+
+        if (shouldUpgradeConfidence || shouldFillName) {
+          byCode.set(it.code, {
+            ...existing,
+            name: it.name || existing.name,
+            confidence: shouldUpgradeConfidence ? normalizedConfidence : existingConfidence,
+            checked: shouldUpgradeConfidence
+              ? (normalizedConfidence === 'high' ? true : existing.checked)
+              : existing.checked,
+          });
+        }
       }
     } else {
       failed.push({
@@ -111,12 +125,12 @@ export const IntelligentImport: React.FC<IntelligentImportProps> = ({
         const res = await stocksApi.extractFromImage(file);
         addItems(res.items ?? res.codes.map((c) => ({ code: c, name: null, confidence: 'medium' })));
       } catch (e) {
-        const err = e && typeof e === 'object' ? (e as { response?: { data?: { message?: string }; status?: number }; code?: string }) : null;
-        const msg = err?.response?.data?.message ?? null;
+        const parsed = getParsedApiError(e);
+        const err = e && typeof e === 'object' ? (e as { response?: { status?: number }; code?: string }) : null;
         let fallback = '识别失败，请重试';
         if (err?.response?.status === 429) fallback = '请求过于频繁，请稍后再试';
         else if (err?.code === 'ECONNABORTED') fallback = '请求超时，请检查网络后重试';
-        setError(msg || fallback);
+        setError(parsed.message || fallback);
       } finally {
         setIsLoading(false);
       }
@@ -136,8 +150,8 @@ export const IntelligentImport: React.FC<IntelligentImportProps> = ({
         const res = await stocksApi.parseImport(file);
         addItems(res.items ?? res.codes.map((c) => ({ code: c, name: null, confidence: 'medium' })));
       } catch (e) {
-        const err = e && typeof e === 'object' ? (e as { response?: { data?: { message?: string } } }) : null;
-        setError(err?.response?.data?.message ?? '解析失败');
+        const parsed = getParsedApiError(e);
+        setError(parsed.message || '解析失败');
       } finally {
         setIsLoading(false);
       }
@@ -161,8 +175,8 @@ export const IntelligentImport: React.FC<IntelligentImportProps> = ({
         setPasteText('');
       })
       .catch((e) => {
-        const err = e && typeof e === 'object' ? (e as { response?: { data?: { message?: string } } }) : null;
-        setError(err?.response?.data?.message ?? '解析失败');
+        const parsed = getParsedApiError(e);
+        setError(parsed.message || '解析失败');
       })
       .finally(() => setIsLoading(false));
   }, [pasteText, addItems]);

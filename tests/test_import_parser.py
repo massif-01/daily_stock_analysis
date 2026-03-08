@@ -171,6 +171,13 @@ class TestParseImportFromText:
         assert len(result) == 1
         assert result[0] == ("00700", None, "medium")
 
+    def test_parses_space_separated_code_name_lines(self):
+        text = "600519 贵州茅台\n00700 腾讯控股"
+        result = parse_import_from_text(text)
+        assert len(result) == 2
+        assert result[0] == ("600519", "贵州茅台", "medium")
+        assert result[1] == ("00700", "腾讯控股", "medium")
+
     def test_preserves_name_when_code_is_dirty(self):
         data = "code,name\nINVALID,贵州茅台".encode("utf-8")
         result = parse_import_from_bytes(data, "a.csv")

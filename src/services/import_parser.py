@@ -29,6 +29,32 @@ MAX_FILE_BYTES = 2 * 1024 * 1024  # 2MB
 MAX_TEXT_BYTES = 100 * 1024  # 100KB
 
 
+def _should_use_single_column_fast_path(lines: List[str]) -> bool:
+    """
+    Decide whether plain-text input should use the single-column fast path.
+
+    Guardrail: if a line looks like "CODE + NAME" separated by whitespace,
+    do not use single-column mode, otherwise code/name pairs would be glued
+    into one cell and hurt parsing quality.
+    """
+    if not lines:
+        return False
+
+    # If explicit separators exist, this is not single-column input.
+    if any(re.search(r"[\t,;]", ln) for ln in lines):
+        return False
+
+    for ln in lines:
+        parts = ln.split()
+        if len(parts) >= 2 and is_code_like(parts[0]):
+            # Example: "600519 贵州茅台" / "HK00700 腾讯控股"
+            # First token is code-like and tail contains non-code token(s).
+            if any(not is_code_like(p) for p in parts[1:]):
+                return False
+
+    return True
+
+
 def _detect_column_indices(df: pd.DataFrame) -> Tuple[Optional[int], Optional[int]]:
     """Return (code_col_idx, name_col_idx) from DataFrame columns."""
     code_idx, name_idx = None, None
@@ -158,7 +184,7 @@ def parse_import_from_bytes(data: bytes, filename: Optional[str] = None) -> List
     # Single-column (one value per line): bypass pandas to avoid sep=None inference issues
     # e.g. "00700\n600519" or "code\n00700" - pandas with sep=None can produce wrong results
     lines = [ln.strip() for ln in text.strip().splitlines() if ln.strip()]
-    if lines and not any(re.search(r"[\t,;]", ln) for ln in lines):
+    if _should_use_single_column_fast_path(lines):
         rows = [[ln] for ln in lines]
         df = pd.DataFrame(rows)
         first_row = [str(x).strip().lower() for x in df.iloc[0].tolist()]
