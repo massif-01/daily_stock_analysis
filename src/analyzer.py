@@ -22,6 +22,7 @@ from litellm import Router
 
 from src.agent.llm_adapter import get_thinking_extra_body
 from src.config import Config, get_config, get_api_keys_for_model, extra_litellm_params
+from src.schemas.report_schema import AnalysisReportSchema
 
 logger = logging.getLogger(__name__)
 
@@ -1143,7 +1144,16 @@ class GeminiAnalyzer:
                 json_str = self._fix_json_string(json_str)
                 
                 data = json.loads(json_str)
-                
+
+                # Schema validation (lenient: on failure, continue with raw dict)
+                try:
+                    AnalysisReportSchema.model_validate(data)
+                except Exception as e:
+                    logger.warning(
+                        "LLM report schema validation failed, continuing with raw dict: %s",
+                        str(e)[:100],
+                    )
+
                 # 提取 dashboard 数据
                 dashboard = data.get('dashboard', None)
 
