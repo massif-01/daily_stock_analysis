@@ -9,10 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Agent 问股导出与发送** (#495) — 问股页面新增「导出会话」按钮，将会话保存为本地 .md 文件；新增「发送」按钮，将会话发送到已配置的通知渠道（企业微信/飞书/邮件等）；新增 `POST /api/v1/agent/chat/send` 接口
+- **Agent 问股后台执行** (#495) — 问股分析在切换页面后继续执行，不中断；完成时在 Dock 问股图标显示角标提示；切换会话或新建会话时自动取消进行中的流式请求
+- 📖 **LLM 配置指南** — 新增 [docs/LLM_CONFIG_GUIDE.md](LLM_CONFIG_GUIDE.md)，系统讲解三层配置、快速上手、Vision/Agent/Web UI/校验排错；同步更新 README、full-guide、.env.example、FAQ、英文版指南
+
 ### Changed
 - 🔎 **Fetcher failure observability** — historical data logs now record fetcher start/success/failure with elapsed time, explicit failover transitions, and clearer final outcomes; Efinance/Eastmoney failures now include upstream endpoint and normalized categories such as `remote_disconnect` and `timeout`; Akshare 新浪/腾讯实时行情日志 now also include upstream endpoint and classified failures for HTTP status, disconnects, and malformed payloads
-### Added
-- 📖 **LLM 配置指南** — 新增 [docs/LLM_CONFIG_GUIDE.md](LLM_CONFIG_GUIDE.md)，系统讲解三层配置、快速上手、Vision/Agent/Web UI/校验排错；同步更新 README、full-guide、.env.example、FAQ、英文版指南
 
 ## [3.4.10] - 2026-03-07
 
