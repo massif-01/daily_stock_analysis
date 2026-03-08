@@ -152,9 +152,16 @@ def parse_import_from_bytes(data: bytes, filename: Optional[str] = None) -> List
     # Excel: .xlsx (or zip magic)
     if ext == ".xlsx" or looks_like_zip:
         try:
-            df = pd.read_excel(io.BytesIO(data), sheet_name=0, engine="openpyxl")
+            # Use header=None to avoid silently consuming the first data row as column names
+            # when the sheet has no header row. We detect headers the same way as the CSV path.
+            df = pd.read_excel(io.BytesIO(data), sheet_name=0, engine="openpyxl", header=None, dtype=str)
             if df is None or df.empty:
                 return []
+            df = df.fillna("")
+            first_row = [str(x).strip().lower() for x in df.iloc[0].tolist()]
+            if any(c in _CODE_ALIASES or c in _NAME_ALIASES for c in first_row):
+                df.columns = df.iloc[0]
+                df = df.iloc[1:].reset_index(drop=True)
             return _parse_dataframe(df)
         except Exception as e:
             # If bytes strongly indicate xlsx container, treat as real Excel parse failure.

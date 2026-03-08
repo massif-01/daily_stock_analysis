@@ -99,6 +99,27 @@ class TestParseImportFromBytesExcel:
         assert result[0] == ("600519", "贵州茅台", "medium")
         assert result[1] == ("300750", "宁德时代", "medium")
 
+    def test_parses_xlsx_without_header(self):
+        """Header-less Excel: first data row must NOT be consumed as column names."""
+        try:
+            import openpyxl
+        except ImportError:
+            pytest.skip("openpyxl not installed")
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.append(["600519", "贵州茅台"])
+        ws.append(["00700", "腾讯控股"])
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        data = buf.read()
+        result = parse_import_from_bytes(data, "noheader.xlsx")
+        assert len(result) == 2, f"Expected 2 rows, got {len(result)} — first row may have been eaten as header"
+        codes = [r[0] for r in result]
+        assert "600519" in codes
+        assert "00700" in codes
+
     def test_rejects_xls(self):
         data = b"dummy"
         with pytest.raises(ValueError, match="仅支持 .xlsx"):
