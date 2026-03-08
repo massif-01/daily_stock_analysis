@@ -958,6 +958,7 @@ class Config:
         )
         return 'simple'
 
+    @classmethod
     def _parse_market_review_region(cls, value: str) -> str:
         """解析大盘复盘市场区域，非法值记录警告后回退为 cn"""
         import logging
