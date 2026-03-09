@@ -298,11 +298,14 @@ export const useAgentChatStore = create<AgentChatState & AgentChatActions>((set,
         }
       }
     } finally {
-      set({
-        loading: false,
-        progressSteps: [],
-        abortController: null,
-      });
+      const { abortController: currentAc } = get();
+      if (currentAc === ac) {
+        set({
+          loading: false,
+          progressSteps: [],
+          abortController: null,
+        });
+      }
       await get().loadSessions();
     }
   },

@@ -32,6 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **AkShare 缓存说明** — `docs/full-guide.md` 补充名称解析 AkShare fallback 的 1h TTL 缓存说明。
 - **Fetcher failure observability** — historical data logs now record fetcher start/success/failure with elapsed time, explicit failover transitions, and clearer final outcomes; Efinance/Eastmoney failures now include upstream endpoint and normalized categories such as `remote_disconnect` and `timeout`; Akshare 新浪/腾讯实时行情日志 now also include upstream endpoint and classified failures for HTTP status, disconnects, and malformed payloads
 
+### Fixed
+- **问股取消与切换** (#495) — 用户取消流式请求时不再误报为失败；快速切换会话时不再覆盖新 stream 状态
+
 ## [3.4.10] - 2026-03-07
 
 ### Fixed

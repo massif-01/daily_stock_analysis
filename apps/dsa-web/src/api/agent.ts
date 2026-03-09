@@ -127,6 +127,9 @@ export const agentApi = {
       if (isApiRequestError(error)) {
         throw error;
       }
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw error;
+      }
 
       const parsed = parseApiError(error);
       throw createApiError(parsed, { cause: error });
