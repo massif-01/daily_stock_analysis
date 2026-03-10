@@ -74,6 +74,7 @@ class StatusCommand(BotCommand):
         status["search_bocha"] = len(config.bocha_api_keys) > 0
         status["search_tavily"] = len(config.tavily_api_keys) > 0
         status["search_serpapi"] = len(config.serpapi_keys) > 0
+        status["search_minimax"] = len(config.minimax_api_keys) > 0
         
         # 通知渠道状态
         status["notify_wechat"] = bool(config.wechat_webhook_url)
@@ -118,6 +119,7 @@ class StatusCommand(BotCommand):
             f"• Bocha: {icon(status['search_bocha'])}",
             f"• Tavily: {icon(status['search_tavily'])}",
             f"• SerpAPI: {icon(status['search_serpapi'])}",
+            f"• MiniMax: {icon(status['search_minimax'])}",
             "",
             "**📢 通知渠道**",
             f"• 企业微信: {icon(status['notify_wechat'])}",
