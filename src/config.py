@@ -550,8 +550,14 @@ class Config:
         brave_api_keys = [k.strip() for k in brave_keys_str.split(',') if k.strip()]
 
         _raw_urls = [u.strip() for u in os.getenv('SEARXNG_BASE_URLS', '').split(',') if u.strip()]
-        searxng_base_urls = [u for u in _raw_urls if urlparse(u).scheme in ('http', 'https') and urlparse(u).netloc]
-        invalid_searxng_urls = [u for u in _raw_urls if u not in searxng_base_urls]
+        searxng_base_urls = []
+        invalid_searxng_urls = []
+        for u in _raw_urls:
+            p = urlparse(u)
+            if p.scheme in ('http', 'https') and p.netloc:
+                searxng_base_urls.append(u)
+            else:
+                invalid_searxng_urls.append(u)
         if invalid_searxng_urls:
             import logging
             logging.getLogger(__name__).warning(

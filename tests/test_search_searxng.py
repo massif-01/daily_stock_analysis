@@ -15,7 +15,7 @@ if "newspaper" not in sys.modules:
     mock_np.Config = MagicMock()
     sys.modules["newspaper"] = mock_np
 
-from src.search_service import SearXNGSearchProvider, SearchResult
+from src.search_service import SearXNGSearchProvider
 
 
 class TestSearXNGSearchProvider(unittest.TestCase):
@@ -52,7 +52,8 @@ class TestSearXNGSearchProvider(unittest.TestCase):
         self.assertEqual(r.title, "Test Article")
         self.assertEqual(r.url, "https://example.com/article")
         self.assertEqual(r.snippet, "Summary snippet here")
-        self.assertEqual(r.published_date, datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+        expected_date = datetime.fromisoformat(fresh_date.replace("Z", "+00:00")).strftime("%Y-%m-%d")
+        self.assertEqual(r.published_date, expected_date)
         self.assertEqual(r.source, "example.com")
 
     @patch("src.search_service.requests.get")
@@ -205,8 +206,9 @@ class TestSearXNGSearchProvider(unittest.TestCase):
 
         self.assertFalse(resp.success)
 
+    @patch("src.search_service.time.sleep")
     @patch("src.search_service.requests.get")
-    def test_timeout_returns_failure(self, mock_get):
+    def test_timeout_returns_failure(self, mock_get, _mock_sleep):
         """Network timeout returns success=False with descriptive message."""
         import requests as req_module
         mock_get.side_effect = req_module.exceptions.Timeout()
@@ -217,8 +219,9 @@ class TestSearXNGSearchProvider(unittest.TestCase):
         self.assertFalse(resp.success)
         self.assertIn("超时", resp.error_message or "")
 
+    @patch("src.search_service.time.sleep")
     @patch("src.search_service.requests.get")
-    def test_request_exception_returns_failure(self, mock_get):
+    def test_request_exception_returns_failure(self, mock_get, _mock_sleep):
         """Network error (RequestException) returns success=False."""
         import requests as req_module
         mock_get.side_effect = req_module.exceptions.ConnectionError("refused")
@@ -229,8 +232,9 @@ class TestSearXNGSearchProvider(unittest.TestCase):
         self.assertFalse(resp.success)
         self.assertIn("网络请求失败", resp.error_message or "")
 
+    @patch("src.search_service.time.sleep")
     @patch("src.search_service.requests.get")
-    def test_transient_timeout_retries_then_succeeds(self, mock_get):
+    def test_transient_timeout_retries_then_succeeds(self, mock_get, _mock_sleep):
         """Transient timeout should be retried before succeeding."""
         import requests as req_module
 
