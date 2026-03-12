@@ -5,7 +5,9 @@ Tests for structured fundamental context (P0).
 
 import os
 import sys
+import time
 import unittest
+from threading import BoundedSemaphore, Event
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -202,6 +204,28 @@ class TestFundamentalContext(unittest.TestCase):
         self.assertGreater(budgets.get("capital_flow", 0.0), 0.0)
         self.assertGreater(budgets.get("dragon_tiger", 0.0), 0.0)
         self.assertGreater(budgets.get("boards", 0.0), 0.0)
+
+    def test_run_with_timeout_limits_hanging_workers(self) -> None:
+        manager = DataFetcherManager(fetchers=[])
+        manager._fundamental_timeout_slots = BoundedSemaphore(1)
+
+        unblock = Event()
+
+        def _hanging_task():
+            unblock.wait(timeout=0.5)
+            return 1
+
+        try:
+            result, err, _ = manager._run_with_timeout(_hanging_task, 0.01, "hang")
+            self.assertIsNone(result)
+            self.assertIn("timeout", err or "")
+
+            result2, err2, _ = manager._run_with_timeout(_hanging_task, 0.01, "hang")
+            self.assertIsNone(result2)
+            self.assertIn("worker pool exhausted", err2 or "")
+        finally:
+            unblock.set()
+            time.sleep(0.02)
 
     def test_board_context_empty_rankings_mark_failed(self) -> None:
         manager = DataFetcherManager(fetchers=[])

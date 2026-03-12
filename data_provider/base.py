@@ -17,7 +17,7 @@
 import logging
 import random
 import time
-from threading import RLock, Thread
+from threading import BoundedSemaphore, RLock, Thread
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Callable, Optional, List, Tuple, Dict, Any
@@ -481,6 +481,8 @@ class DataFetcherManager:
         self._fundamental_adapter = AkshareFundamentalAdapter()
         self._fundamental_cache: Dict[str, Dict[str, Any]] = {}
         self._fundamental_cache_lock = RLock()
+        self._fundamental_timeout_worker_limit = 8
+        self._fundamental_timeout_slots = BoundedSemaphore(self._fundamental_timeout_worker_limit)
 
     def _get_fundamental_cache_key(self, stock_code: str) -> str:
         """生成基本面缓存 key。"""
@@ -1333,17 +1335,34 @@ class DataFetcherManager:
         """
         start = time.time()
         timeout_value = max(0.0, timeout_seconds)
+        if timeout_value <= 0:
+            return None, f"{task_name} timeout", 0
         result_holder: Dict[str, Any] = {}
         error_holder: Dict[str, Exception] = {}
+
+        if not self._fundamental_timeout_slots.acquire(blocking=False):
+            return None, f"{task_name} timeout worker pool exhausted", int(timeout_value * 1000)
 
         def runner() -> None:
             try:
                 result_holder["value"] = task()
             except Exception as exc:
                 error_holder["value"] = exc
+            finally:
+                try:
+                    self._fundamental_timeout_slots.release()
+                except ValueError:
+                    pass
 
         worker = Thread(target=runner, daemon=True, name=f"fundamental-{task_name}")
-        worker.start()
+        try:
+            worker.start()
+        except Exception as exc:
+            try:
+                self._fundamental_timeout_slots.release()
+            except ValueError:
+                pass
+            return None, str(exc), int((time.time() - start) * 1000)
         worker.join(timeout=timeout_value)
         if worker.is_alive():
             return None, f"{task_name} timeout", int(timeout_value * 1000)

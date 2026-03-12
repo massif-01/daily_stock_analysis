@@ -72,14 +72,16 @@ def _extract_latest_row(df: pd.DataFrame, stock_code: str) -> Optional[pd.Series
 
     code_cols = [c for c in df.columns if any(k in str(c) for k in ("代码", "股票代码", "证券代码", "ts_code", "symbol"))]
     target = _normalize_code(stock_code)
-    for col in code_cols:
-        try:
-            series = df[col].astype(str).map(_normalize_code)
-            matched = df[series == target]
-            if not matched.empty:
-                return matched.iloc[0]
-        except Exception:
-            continue
+    if code_cols:
+        for col in code_cols:
+            try:
+                series = df[col].astype(str).map(_normalize_code)
+                matched = df[series == target]
+                if not matched.empty:
+                    return matched.iloc[0]
+            except Exception:
+                continue
+        return None
 
     # Fallback: use latest row
     return df.iloc[0]
