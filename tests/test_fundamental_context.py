@@ -72,8 +72,21 @@ class TestFundamentalContext(unittest.TestCase):
             circ_mv=4.0e10,
             source=SimpleNamespace(value="tencent"),
         )
+        # Mock get_fundamental_bundle so growth/earnings/institution are not_supported (no network).
+        bundle = {
+            "status": "not_supported",
+            "growth": {},
+            "earnings": {},
+            "institution": {},
+            "source_chain": [],
+            "errors": [],
+        }
         with patch("src.config.get_config", return_value=cfg), \
-                patch.object(manager, "get_realtime_quote", return_value=quote):
+                patch.object(manager, "get_realtime_quote", return_value=quote), \
+                patch(
+                    "data_provider.fundamental_adapter.AkshareFundamentalAdapter.get_fundamental_bundle",
+                    return_value=bundle,
+                ):
             ctx = manager.get_fundamental_context("159915")
         self.assertEqual(ctx["market"], "cn")
         self.assertIn(ctx["status"], ("partial", "not_supported"))
