@@ -253,6 +253,11 @@ daily_stock_analysis/
 > - ETF：返回可得项，缺失能力标记为 `not_supported`，整体不影响原流程；
 > - 美股/港股：返回 `not_supported` 兜底块；
 > - 任何异常走 fail-open，仅记录错误，不影响技术面/新闻/筹码主链路。
+> - 字段契约：
+>   - `fundamental_context.boards.data` = `sector_rankings`（板块涨跌榜，结构 `{top, bottom}`）；
+>   - `get_stock_info.belong_boards` = 个股所属板块列表；
+>   - `get_stock_info.boards` 为兼容别名，值与 `belong_boards` 相同（未来仅在大版本考虑移除）；
+>   - `get_stock_info.sector_rankings` 与 `fundamental_context.boards.data` 保持一致。
 > - 板块涨跌榜使用固定回退顺序：`AkShare(EM->Sina) -> Tushare -> efinance`（为稳定性有意固定，不跟全局 priority 走）。
 > - 超时控制为 `best-effort` 软超时：阶段会按预算快速降级继续执行，但不保证硬中断底层三方调用。
 > - `FUNDAMENTAL_STAGE_TIMEOUT_SECONDS=1.5` 表示新增基本面阶段的目标预算，不是严格硬 SLA。
