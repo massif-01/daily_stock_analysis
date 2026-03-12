@@ -17,7 +17,7 @@
 import logging
 import random
 import time
-from threading import Thread
+from threading import RLock, Thread
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Callable, Optional, List, Tuple, Dict, Any
@@ -480,6 +480,7 @@ class DataFetcherManager:
             self._init_default_fetchers()
         self._fundamental_adapter = AkshareFundamentalAdapter()
         self._fundamental_cache: Dict[str, Dict[str, Any]] = {}
+        self._fundamental_cache_lock = RLock()
 
     def _get_fundamental_cache_key(self, stock_code: str) -> str:
         """生成基本面缓存 key。"""
@@ -487,27 +488,29 @@ class DataFetcherManager:
 
     def _prune_fundamental_cache(self, ttl_seconds: int, max_entries: int) -> None:
         """Prune expired and overflow fundamental cache items."""
-        if not self._fundamental_cache:
-            return
+        with self._fundamental_cache_lock:
+            if not self._fundamental_cache:
+                return
 
-        now_ts = time.time()
-        if ttl_seconds > 0:
-            expired_keys = [
-                key
-                for key, value in self._fundamental_cache.items()
-                if now_ts - float(value.get("ts", 0)) > ttl_seconds
-            ]
-            for key in expired_keys:
-                self._fundamental_cache.pop(key, None)
+            now_ts = time.time()
+            if ttl_seconds > 0:
+                cache_items = list(self._fundamental_cache.items())
+                expired_keys = [
+                    key
+                    for key, value in cache_items
+                    if now_ts - float(value.get("ts", 0)) > ttl_seconds
+                ]
+                for key in expired_keys:
+                    self._fundamental_cache.pop(key, None)
 
-        if max_entries > 0 and len(self._fundamental_cache) > max_entries:
-            overflow = len(self._fundamental_cache) - max_entries
-            sorted_items = sorted(
-                self._fundamental_cache.items(),
-                key=lambda item: float(item[1].get("ts", 0)),
-            )
-            for key, _ in sorted_items[:overflow]:
-                self._fundamental_cache.pop(key, None)
+            if max_entries > 0 and len(self._fundamental_cache) > max_entries:
+                overflow = len(self._fundamental_cache) - max_entries
+                sorted_items = sorted(
+                    list(self._fundamental_cache.items()),
+                    key=lambda item: float(item[1].get("ts", 0)),
+                )
+                for key, _ in sorted_items[:overflow]:
+                    self._fundamental_cache.pop(key, None)
 
     @staticmethod
     def _is_missing_board_value(value: Any) -> bool:
@@ -1578,11 +1581,12 @@ class DataFetcherManager:
         if cache_ttl > 0:
             self._prune_fundamental_cache(cache_ttl, cache_max_entries)
             cache_key = self._get_fundamental_cache_key(stock_code)
-            cache_item = self._fundamental_cache.get(cache_key)
-            if cache_item:
-                age = time.time() - cache_item.get("ts", 0)
-                if age <= cache_ttl:
-                    return cache_item.get("context", {})
+            with self._fundamental_cache_lock:
+                cache_item = self._fundamental_cache.get(cache_key)
+                if cache_item:
+                    age = time.time() - float(cache_item.get("ts", 0))
+                    if age <= cache_ttl:
+                        return cache_item.get("context", {})
 
         remaining_seconds = stage_timeout
         result_ctx: Dict[str, Any] = {
@@ -1726,16 +1730,22 @@ class DataFetcherManager:
             )
             result_ctx["status"] = "partial"
         else:
+            capital_flow_budget = min(fetch_timeout, remaining_seconds)
+            capital_flow_start = time.time()
             result_ctx["capital_flow"] = self.get_capital_flow_context(
                 stock_code,
-                budget_seconds=min(fetch_timeout, remaining_seconds),
+                budget_seconds=capital_flow_budget,
             )
-            remaining_seconds = max(0.0, remaining_seconds - min(fetch_timeout, remaining_seconds))
+            _consume_budget(int((time.time() - capital_flow_start) * 1000))
+
+            dragon_tiger_budget = min(fetch_timeout, remaining_seconds)
+            dragon_tiger_start = time.time()
             result_ctx["dragon_tiger"] = self.get_dragon_tiger_context(
                 stock_code,
-                budget_seconds=min(fetch_timeout, remaining_seconds),
+                budget_seconds=dragon_tiger_budget,
             )
-            remaining_seconds = max(0.0, remaining_seconds - min(fetch_timeout, remaining_seconds))
+            _consume_budget(int((time.time() - dragon_tiger_start) * 1000))
+
             result_ctx["boards"] = self.get_board_context(
                 stock_code,
                 budget_seconds=min(fetch_timeout, remaining_seconds),
@@ -1777,10 +1787,11 @@ class DataFetcherManager:
 
         result_ctx["elapsed_ms"] = int((time.time() - start_ts) * 1000)
         if cache_ttl > 0:
-            self._fundamental_cache[self._get_fundamental_cache_key(stock_code)] = {
-                "ts": time.time(),
-                "context": result_ctx,
-            }
+            with self._fundamental_cache_lock:
+                self._fundamental_cache[self._get_fundamental_cache_key(stock_code)] = {
+                    "ts": time.time(),
+                    "context": result_ctx,
+                }
             self._prune_fundamental_cache(cache_ttl, cache_max_entries)
         return result_ctx
 

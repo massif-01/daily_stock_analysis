@@ -150,6 +150,59 @@ class TestFundamentalContext(unittest.TestCase):
         self.assertIn("capital_flow", ctx)
         self.assertIn("dragon_tiger", ctx)
 
+    def test_non_etf_board_budget_not_forced_to_zero(self) -> None:
+        manager = DataFetcherManager(fetchers=[])
+        cfg = SimpleNamespace(
+            enable_fundamental_pipeline=True,
+            fundamental_cache_ttl_seconds=120,
+            fundamental_stage_timeout_seconds=1.5,
+            fundamental_fetch_timeout_seconds=0.8,
+            fundamental_retry_max=1,
+        )
+        quote = SimpleNamespace(
+            pe_ratio=12.3,
+            pb_ratio=2.1,
+            total_mv=1.0e11,
+            circ_mv=7.0e10,
+            source=SimpleNamespace(value="tencent"),
+        )
+        bundle = {
+            "status": "not_supported",
+            "growth": {},
+            "earnings": {},
+            "institution": {},
+            "source_chain": [],
+            "errors": [],
+        }
+        budgets = {}
+
+        def _capital_flow_side_effect(_stock_code: str, budget_seconds: float = 0.0):
+            budgets["capital_flow"] = budget_seconds
+            return {"status": "not_supported", "source_chain": [], "errors": [], "data": {}}
+
+        def _dragon_tiger_side_effect(_stock_code: str, budget_seconds: float = 0.0):
+            budgets["dragon_tiger"] = budget_seconds
+            return {"status": "not_supported", "source_chain": [], "errors": [], "data": {}}
+
+        def _boards_side_effect(_stock_code: str, budget_seconds: float = 0.0):
+            budgets["boards"] = budget_seconds
+            return {"status": "not_supported", "source_chain": [], "errors": [], "data": {}}
+
+        with patch("src.config.get_config", return_value=cfg), \
+                patch.object(manager, "get_realtime_quote", return_value=quote), \
+                patch(
+                    "data_provider.fundamental_adapter.AkshareFundamentalAdapter.get_fundamental_bundle",
+                    return_value=bundle,
+                ), \
+                patch.object(manager, "get_capital_flow_context", side_effect=_capital_flow_side_effect), \
+                patch.object(manager, "get_dragon_tiger_context", side_effect=_dragon_tiger_side_effect), \
+                patch.object(manager, "get_board_context", side_effect=_boards_side_effect):
+            manager.get_fundamental_context("600519")
+
+        self.assertGreater(budgets.get("capital_flow", 0.0), 0.0)
+        self.assertGreater(budgets.get("dragon_tiger", 0.0), 0.0)
+        self.assertGreater(budgets.get("boards", 0.0), 0.0)
+
     def test_board_context_empty_rankings_mark_failed(self) -> None:
         manager = DataFetcherManager(fetchers=[])
         cfg = SimpleNamespace(
