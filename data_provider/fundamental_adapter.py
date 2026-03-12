@@ -304,7 +304,8 @@ class AkshareFundamentalAdapter:
             except Exception:
                 continue
         if matched.empty:
-            result["status"] = "partial"
+            result["source_chain"].append(f"dragon_tiger:{source}")
+            result["status"] = "ok" if code_cols else "partial"
             return result
 
         date_col = next((c for c in matched.columns if any(k in str(c) for k in ("日期", "上榜", "交易日", "time"))), None)
@@ -324,6 +325,6 @@ class AkshareFundamentalAdapter:
         result["latest_date"] = max(recent_dates).date().isoformat() if recent_dates else (
             max(parsed_dates).date().isoformat() if parsed_dates else None
         )
-        result["status"] = "partial"
+        result["status"] = "ok"
         result["source_chain"].append(f"dragon_tiger:{source}")
         return result

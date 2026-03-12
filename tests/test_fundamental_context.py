@@ -227,6 +227,29 @@ class TestFundamentalContext(unittest.TestCase):
             unblock.set()
             time.sleep(0.02)
 
+    def test_infer_block_status_treats_all_null_payload_as_non_ok(self) -> None:
+        self.assertEqual(
+            DataFetcherManager._infer_block_status(
+                {"revenue_yoy": None, "net_profit_yoy": None, "summary": ""},
+                "partial",
+            ),
+            "partial",
+        )
+        self.assertEqual(
+            DataFetcherManager._infer_block_status(
+                {"revenue_yoy": None, "net_profit_yoy": None},
+                "not_supported",
+            ),
+            "not_supported",
+        )
+        self.assertEqual(
+            DataFetcherManager._infer_block_status(
+                {"revenue_yoy": 0.0},
+                "partial",
+            ),
+            "ok",
+        )
+
     def test_board_context_empty_rankings_mark_failed(self) -> None:
         manager = DataFetcherManager(fetchers=[])
         cfg = SimpleNamespace(

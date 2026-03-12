@@ -1469,8 +1469,26 @@ class DataFetcherManager:
         }
 
     @staticmethod
+    def _has_meaningful_payload(payload: Any) -> bool:
+        if payload is None:
+            return False
+        if isinstance(payload, str):
+            normalized = payload.strip().lower()
+            return normalized not in ("", "-", "nan", "none", "null", "n/a", "na")
+        if isinstance(payload, dict):
+            return any(DataFetcherManager._has_meaningful_payload(v) for v in payload.values())
+        if isinstance(payload, (list, tuple, set)):
+            return any(DataFetcherManager._has_meaningful_payload(v) for v in payload)
+        try:
+            if pd.isna(payload):
+                return False
+        except Exception:
+            pass
+        return True
+
+    @staticmethod
     def _infer_block_status(payload: Any, fallback_status: str) -> str:
-        if isinstance(payload, dict) and payload:
+        if DataFetcherManager._has_meaningful_payload(payload):
             return "ok"
         if fallback_status in ("failed", "partial", "not_supported"):
             return fallback_status
