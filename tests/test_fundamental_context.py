@@ -1,0 +1,192 @@
+# -*- coding: utf-8 -*-
+"""
+Tests for structured fundamental context (P0).
+"""
+
+import os
+import sys
+import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from data_provider.base import DataFetcherManager
+
+
+class _DummyFetcher:
+    def __init__(self, name: str, priority: int, rankings=None):
+        self.name = name
+        self.priority = priority
+        self._rankings = rankings
+
+    def get_sector_rankings(self, _n: int = 5):
+        return self._rankings
+
+
+class _DummyBoardFetcher:
+    def __init__(self, name: str, priority: int, boards=None):
+        self.name = name
+        self.priority = priority
+        self._boards = boards or []
+
+    def get_belong_board(self, _stock_code: str):
+        return self._boards
+
+
+class TestFundamentalContext(unittest.TestCase):
+    def test_non_cn_market_returns_not_supported(self) -> None:
+        manager = DataFetcherManager(fetchers=[])
+        cfg = SimpleNamespace(
+            enable_fundamental_pipeline=True,
+            fundamental_cache_ttl_seconds=120,
+            fundamental_stage_timeout_seconds=1.5,
+            fundamental_fetch_timeout_seconds=0.8,
+            fundamental_retry_max=1,
+        )
+        with patch("src.config.get_config", return_value=cfg):
+            ctx = manager.get_fundamental_context("AAPL")
+        self.assertEqual(ctx["market"], "us")
+        self.assertEqual(ctx["status"], "not_supported")
+        self.assertEqual(ctx["coverage"].get("valuation"), "not_supported")
+        self.assertEqual(ctx["coverage"].get("growth"), "not_supported")
+        self.assertEqual(ctx["coverage"].get("earnings"), "not_supported")
+        self.assertEqual(ctx["coverage"].get("institution"), "not_supported")
+        self.assertEqual(ctx["coverage"].get("capital_flow"), "not_supported")
+        self.assertEqual(ctx["coverage"].get("dragon_tiger"), "not_supported")
+        self.assertEqual(ctx["coverage"].get("boards"), "not_supported")
+
+    def test_etf_market_downgrades_to_partial_or_not_supported(self) -> None:
+        manager = DataFetcherManager(fetchers=[])
+        cfg = SimpleNamespace(
+            enable_fundamental_pipeline=True,
+            fundamental_cache_ttl_seconds=120,
+            fundamental_stage_timeout_seconds=1.5,
+            fundamental_fetch_timeout_seconds=0.8,
+            fundamental_retry_max=1,
+        )
+        quote = SimpleNamespace(
+            pe_ratio=None,
+            pb_ratio=None,
+            total_mv=5.0e10,
+            circ_mv=4.0e10,
+            source=SimpleNamespace(value="tencent"),
+        )
+        with patch("src.config.get_config", return_value=cfg), \
+                patch.object(manager, "get_realtime_quote", return_value=quote):
+            ctx = manager.get_fundamental_context("159915")
+        self.assertEqual(ctx["market"], "cn")
+        self.assertIn(ctx["status"], ("partial", "not_supported"))
+        self.assertEqual(ctx["coverage"].get("valuation"), "ok")
+        self.assertEqual(ctx["coverage"].get("growth"), "not_supported")
+        self.assertEqual(ctx["coverage"].get("earnings"), "not_supported")
+        self.assertEqual(ctx["coverage"].get("institution"), "not_supported")
+        self.assertEqual(ctx["coverage"].get("capital_flow"), "not_supported")
+        self.assertEqual(ctx["coverage"].get("dragon_tiger"), "not_supported")
+        self.assertEqual(ctx["coverage"].get("boards"), "not_supported")
+
+    def test_sector_rankings_use_ordered_fallback(self) -> None:
+        akshare = _DummyFetcher("AkshareFetcher", priority=5, rankings=None)
+        tushare = _DummyFetcher(
+            "TushareFetcher",
+            priority=1,
+            rankings=([{"name": "半导体", "change_pct": 1.0}], [{"name": "消费", "change_pct": -1.0}]),
+        )
+        efinance = _DummyFetcher(
+            "EfinanceFetcher",
+            priority=0,
+            rankings=([{"name": "地产", "change_pct": 2.0}], [{"name": "煤炭", "change_pct": -2.0}]),
+        )
+        manager = DataFetcherManager(fetchers=[efinance, tushare, akshare])
+        top, bottom = manager.get_sector_rankings(1)
+        self.assertEqual(top[0]["name"], "半导体")
+        self.assertEqual(bottom[0]["name"], "消费")
+
+    def test_fundamental_context_aggregates_blocks(self) -> None:
+        manager = DataFetcherManager(fetchers=[])
+        cfg = SimpleNamespace(
+            enable_fundamental_pipeline=True,
+            fundamental_cache_ttl_seconds=120,
+            fundamental_stage_timeout_seconds=1.5,
+            fundamental_fetch_timeout_seconds=0.8,
+            fundamental_retry_max=1,
+        )
+        quote = SimpleNamespace(
+            pe_ratio=12.3,
+            pb_ratio=2.1,
+            total_mv=1.0e11,
+            circ_mv=7.0e10,
+            source=SimpleNamespace(value="tencent"),
+        )
+        with patch("src.config.get_config", return_value=cfg), \
+                patch.object(manager, "get_realtime_quote", return_value=quote), \
+                patch("data_provider.fundamental_adapter.AkshareFundamentalAdapter.get_fundamental_bundle", return_value={
+                    "growth": {"revenue_yoy": 10.1, "net_profit_yoy": 8.5},
+                    "earnings": {"forecast_summary": "预增"},
+                    "institution": {"institution_holding_change": 1.2},
+                    "source_chain": ["growth:akshare"],
+                    "errors": [],
+                }), \
+                patch.object(manager, "get_capital_flow_context", return_value={"status": "partial", "source_chain": []}), \
+                patch.object(manager, "get_dragon_tiger_context", return_value={"status": "partial", "source_chain": []}), \
+                patch.object(manager, "get_board_context", return_value={"status": "partial", "source_chain": []}):
+            ctx = manager.get_fundamental_context("600519", budget_seconds=1.5)
+        self.assertEqual(ctx["market"], "cn")
+        self.assertIn("valuation", ctx)
+        self.assertIn("growth", ctx)
+        self.assertIn("capital_flow", ctx)
+        self.assertIn("dragon_tiger", ctx)
+
+    def test_board_context_empty_rankings_mark_failed(self) -> None:
+        manager = DataFetcherManager(fetchers=[])
+        cfg = SimpleNamespace(
+            enable_fundamental_pipeline=True,
+            fundamental_cache_ttl_seconds=120,
+            fundamental_stage_timeout_seconds=1.5,
+            fundamental_fetch_timeout_seconds=0.8,
+            fundamental_retry_max=1,
+        )
+        with patch("src.config.get_config", return_value=cfg), \
+                patch.object(manager, "_get_sector_rankings_with_meta", return_value=([], [], [], "all failed")):
+            ctx = manager.get_board_context("600519", budget_seconds=0.5)
+        self.assertEqual(ctx["status"], "failed")
+        self.assertEqual(ctx["data"], {})
+
+    def test_capital_flow_not_supported_status(self) -> None:
+        manager = DataFetcherManager(fetchers=[])
+        cfg = SimpleNamespace(
+            enable_fundamental_pipeline=True,
+            fundamental_cache_ttl_seconds=120,
+            fundamental_stage_timeout_seconds=1.5,
+            fundamental_fetch_timeout_seconds=0.8,
+            fundamental_retry_max=1,
+        )
+        with patch("src.config.get_config", return_value=cfg), \
+                patch(
+                    "data_provider.fundamental_adapter.AkshareFundamentalAdapter.get_capital_flow",
+                    return_value={
+                        "status": "not_supported",
+                        "stock_flow": {},
+                        "sector_rankings": {"top": [], "bottom": []},
+                        "source_chain": [],
+                        "errors": [],
+                    },
+                ):
+            ctx = manager.get_capital_flow_context("600519", budget_seconds=0.5)
+        self.assertEqual(ctx["status"], "not_supported")
+
+    def test_get_belong_boards_from_capability_probe(self) -> None:
+        fetcher = _DummyBoardFetcher(
+            "EfinanceFetcher",
+            priority=0,
+            boards=[{"name": "白酒"}, {"board_name": "消费"}],
+        )
+        manager = DataFetcherManager(fetchers=[fetcher])
+        boards = manager.get_belong_boards("600519")
+        self.assertEqual(len(boards), 2)
+        self.assertEqual(boards[0]["name"], "白酒")
+        self.assertEqual(boards[1]["name"], "消费")
+
+
+if __name__ == "__main__":
+    unittest.main()
