@@ -604,10 +604,18 @@ class DataFetcherManager:
                         continue
                     dedupe.add(board_name)
                     normalized_item: Dict[str, Any] = {"name": board_name}
-                    code_raw = item.get("code")
+                    code_raw = (
+                        item.get("code")
+                        or item.get("板块代码")
+                        or item.get("代码")
+                    )
                     if not DataFetcherManager._is_missing_board_value(code_raw):
                         normalized_item["code"] = str(code_raw).strip()
-                    type_raw = item.get("type")
+                    type_raw = (
+                        item.get("type")
+                        or item.get("板块类型")
+                        or item.get("类别")
+                    )
                     if not DataFetcherManager._is_missing_board_value(type_raw):
                         normalized_item["type"] = str(type_raw).strip()
                     normalized.append(normalized_item)

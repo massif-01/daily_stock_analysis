@@ -300,6 +300,27 @@ class TestFundamentalContext(unittest.TestCase):
         self.assertEqual(boards[0]["name"], "白酒")
         self.assertEqual(boards[1]["name"], "消费")
 
+    def test_get_belong_boards_preserves_cn_code_and_type_fields(self) -> None:
+        fetcher = _DummyBoardFetcher(
+            "EfinanceFetcher",
+            priority=0,
+            boards=[
+                {"板块名称": "白酒", "板块代码": "BK0815", "板块类型": "行业"},
+                {"板块": "消费", "代码": "BK0475", "类别": "概念"},
+            ],
+        )
+        manager = DataFetcherManager(fetchers=[fetcher])
+        boards = manager.get_belong_boards("600519")
+        self.assertEqual(len(boards), 2)
+        self.assertEqual(
+            boards[0],
+            {"name": "白酒", "code": "BK0815", "type": "行业"},
+        )
+        self.assertEqual(
+            boards[1],
+            {"name": "消费", "code": "BK0475", "type": "概念"},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
