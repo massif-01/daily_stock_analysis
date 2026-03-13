@@ -605,6 +605,10 @@ class DataFetcherManager:
                         or item.get("board_name")
                         or item.get("板块名称")
                         or item.get("板块")
+                        or item.get("所属板块")
+                        or item.get("板块名")
+                        or item.get("industry")
+                        or item.get("行业")
                     )
                     if DataFetcherManager._is_missing_board_value(board_name_raw):
                         continue

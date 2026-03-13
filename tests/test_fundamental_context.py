@@ -365,6 +365,29 @@ class TestFundamentalContext(unittest.TestCase):
             {"name": "消费", "code": "BK0475", "type": "概念"},
         )
 
+    def test_get_belong_boards_supports_extended_name_aliases_in_dict_payload(self) -> None:
+        fetcher = _DummyBoardFetcher(
+            "EfinanceFetcher",
+            priority=0,
+            boards=[
+                {"所属板块": "新能源"},
+                {"板块名": "半导体"},
+                {"industry": "医药"},
+                {"行业": "算力"},
+            ],
+        )
+        manager = DataFetcherManager(fetchers=[fetcher])
+        boards = manager.get_belong_boards("600519")
+        self.assertEqual(
+            boards,
+            [
+                {"name": "新能源"},
+                {"name": "半导体"},
+                {"name": "医药"},
+                {"name": "算力"},
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
