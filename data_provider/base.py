@@ -484,9 +484,18 @@ class DataFetcherManager:
         self._fundamental_timeout_worker_limit = 8
         self._fundamental_timeout_slots = BoundedSemaphore(self._fundamental_timeout_worker_limit)
 
-    def _get_fundamental_cache_key(self, stock_code: str) -> str:
-        """生成基本面缓存 key。"""
-        return normalize_stock_code(stock_code)
+    def _get_fundamental_cache_key(self, stock_code: str, budget_seconds: Optional[float] = None) -> str:
+        """生成基本面缓存 key（包含预算分桶以避免低预算结果污染高预算请求）。"""
+        normalized_code = normalize_stock_code(stock_code)
+        if budget_seconds is None:
+            return f"{normalized_code}|budget=default"
+        try:
+            budget = max(0.0, float(budget_seconds))
+        except (TypeError, ValueError):
+            budget = 0.0
+        # 100ms bucket to balance cache reuse and scenario isolation.
+        budget_bucket = int(round(budget * 10))
+        return f"{normalized_code}|budget={budget_bucket}"
 
     def _prune_fundamental_cache(self, ttl_seconds: int, max_entries: int) -> None:
         """Prune expired and overflow fundamental cache items."""
@@ -1502,6 +1511,29 @@ class DataFetcherManager:
             return fallback_status
         return "partial"
 
+    @staticmethod
+    def _should_cache_fundamental_context(context: Any) -> bool:
+        if not isinstance(context, dict):
+            return False
+        status = str(context.get("status", "")).strip().lower()
+        if status == "ok":
+            return True
+        if status == "failed":
+            return False
+        for block in (
+            "valuation",
+            "growth",
+            "earnings",
+            "institution",
+            "capital_flow",
+            "dragon_tiger",
+            "boards",
+        ):
+            payload = context.get(block, {})
+            if isinstance(payload, dict) and DataFetcherManager._has_meaningful_payload(payload.get("data")):
+                return True
+        return False
+
     def _build_market_not_supported(self, market: str, reason: str) -> Dict[str, Any]:
         blocks = {
             "valuation": self._build_fundamental_block(
@@ -1623,9 +1655,9 @@ class DataFetcherManager:
 
         cache_ttl = int(config.fundamental_cache_ttl_seconds)
         cache_max_entries = max(0, int(getattr(config, "fundamental_cache_max_entries", 256)))
+        cache_key = self._get_fundamental_cache_key(stock_code, stage_timeout)
         if cache_ttl > 0:
             self._prune_fundamental_cache(cache_ttl, cache_max_entries)
-            cache_key = self._get_fundamental_cache_key(stock_code)
             with self._fundamental_cache_lock:
                 cache_item = self._fundamental_cache.get(cache_key)
                 if cache_item:
@@ -1671,11 +1703,11 @@ class DataFetcherManager:
             "total_mv": getattr(quote_payload, "total_mv", None) if quote_payload else None,
             "circ_mv": getattr(quote_payload, "circ_mv", None) if quote_payload else None,
         }
-        valuation_status = self._block_status(
+        valuation_status = self._infer_block_status(
             valuation_payload,
-            available=quote_payload is not None,
+            "partial" if quote_payload is not None else "not_supported",
         )
-        if valuation_status == "partial" and valuation_err:
+        if valuation_status == "partial" and valuation_err and not self._has_meaningful_payload(valuation_payload):
             valuation_status = "failed"
         result_ctx["valuation"] = self._build_fundamental_block(
             valuation_status,
@@ -1831,9 +1863,9 @@ class DataFetcherManager:
             result_ctx["status"] = "ok"
 
         result_ctx["elapsed_ms"] = int((time.time() - start_ts) * 1000)
-        if cache_ttl > 0:
+        if cache_ttl > 0 and self._should_cache_fundamental_context(result_ctx):
             with self._fundamental_cache_lock:
-                self._fundamental_cache[self._get_fundamental_cache_key(stock_code)] = {
+                self._fundamental_cache[cache_key] = {
                     "ts": time.time(),
                     "context": result_ctx,
                 }

@@ -250,6 +250,50 @@ class TestFundamentalContext(unittest.TestCase):
             "ok",
         )
 
+    def test_valuation_all_none_fields_should_not_be_ok(self) -> None:
+        manager = DataFetcherManager(fetchers=[])
+        cfg = SimpleNamespace(
+            enable_fundamental_pipeline=True,
+            fundamental_cache_ttl_seconds=120,
+            fundamental_stage_timeout_seconds=1.5,
+            fundamental_fetch_timeout_seconds=0.8,
+            fundamental_retry_max=1,
+        )
+        quote = SimpleNamespace(
+            pe_ratio=None,
+            pb_ratio=None,
+            total_mv=None,
+            circ_mv=None,
+            source=SimpleNamespace(value="tencent"),
+        )
+        bundle = {
+            "status": "not_supported",
+            "growth": {},
+            "earnings": {},
+            "institution": {},
+            "source_chain": [],
+            "errors": [],
+        }
+        with patch("src.config.get_config", return_value=cfg), \
+                patch.object(manager, "get_realtime_quote", return_value=quote), \
+                patch(
+                    "data_provider.fundamental_adapter.AkshareFundamentalAdapter.get_fundamental_bundle",
+                    return_value=bundle,
+                ):
+            ctx = manager.get_fundamental_context("600519")
+
+        self.assertEqual(ctx["coverage"].get("valuation"), "partial")
+
+    def test_fundamental_cache_key_isolated_by_budget_bucket(self) -> None:
+        manager = DataFetcherManager(fetchers=[])
+        key_default = manager._get_fundamental_cache_key("600519")
+        key_low = manager._get_fundamental_cache_key("600519", 0.4)
+        key_high = manager._get_fundamental_cache_key("600519", 1.5)
+
+        self.assertNotEqual(key_default, key_low)
+        self.assertNotEqual(key_low, key_high)
+        self.assertIn("budget=", key_low)
+
     def test_board_context_empty_rankings_mark_failed(self) -> None:
         manager = DataFetcherManager(fetchers=[])
         cfg = SimpleNamespace(
