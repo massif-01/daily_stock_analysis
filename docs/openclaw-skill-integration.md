@@ -155,7 +155,8 @@ metadata:
 若 daily_stock_analysis 已启用 `AGENT_MODE=true`，可调用 Agent 策略问股接口，支持多轮对话与多种策略（缠论、均线金叉等）：
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/agent/chat \
+# 将 {DSA_BASE_URL} 替换为实际配置的 API 地址（如 http://localhost:8000）
+curl -X POST {DSA_BASE_URL}/api/v1/agent/chat \
   -H 'Content-Type: application/json' \
   -d '{"message": "用缠论分析 600519", "session_id": "optional-session-id"}'
 ```
@@ -174,4 +175,4 @@ curl -X POST http://localhost:8000/api/v1/agent/chat \
 
 ## 认证说明
 
-默认情况下 DSA API 无需认证。若在 `.env` 中启用了 `ADMIN_AUTH_ENABLED=true`，则需在 Skill 调用时携带 Cookie 或 Bearer Token，具体方式取决于 openclaw 的 HTTP 工具能力。
+默认情况下 DSA API 无需认证。若在 `.env` 中启用了 `ADMIN_AUTH_ENABLED=true`，则需在 Skill 调用时携带登录后获得的 Cookie，具体方式取决于 openclaw 的 HTTP 工具能力（当前 API 仅支持 Cookie 认证，不支持 Bearer Token）。
