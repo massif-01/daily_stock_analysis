@@ -885,3 +885,34 @@ A: 检查是否启用了 Actions，以及 cron 表达式是否正确（注意是
 ---
 
 更多问题请 [提交 Issue](https://github.com/ZhuLinsen/daily_stock_analysis/issues)
+
+## Portfolio P0 PR1 (Core Ledger and Snapshot)
+
+### Scope
+- Core portfolio domain models:
+  - account, trade, cash ledger, corporate action, position cache, lot cache, daily snapshot, fx cache
+- Core service capability:
+  - account CRUD
+  - event writes
+  - read-time replay snapshot for one account or all active accounts
+
+### Accounting semantics
+- Cost method:
+  - `fifo` (default)
+  - `avg`
+- Same-day event ordering:
+  - `cash -> corporate action -> trade`
+- Corporate action effective-date rule:
+  - `effective_date` is treated as effective before market trading on that day.
+
+### Error and stability semantics
+- `trade_uid` unique conflict returns `409` (API conflict semantics).
+- Snapshot write path is atomic for positions/lots/daily snapshot.
+- FX conversion keeps fail-open behavior (fallback 1:1 with stale marker) to avoid pipeline interruption.
+
+### Test coverage in PR1
+- FIFO/AVG partial sell replay
+- Dividend and split replay
+- Same-day ordering (dividend/trade, split/trade)
+- API account/event/snapshot contract
+- API duplicate trade_uid conflict
