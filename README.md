@@ -468,3 +468,24 @@ New endpoints:
 - `POST /api/v1/portfolio/imports/csv/commit`
 - `GET /api/v1/portfolio/risk`
 - `POST /api/v1/portfolio/fx/refresh`
+
+## Portfolio P0 PR3 (Web + Agent Consumption Loop)
+
+This phase delivers the consumption layer on top of PR1/PR2 without changing core ledger architecture.
+
+- Web route:
+  - Added `/portfolio` page in `apps/dsa-web` with:
+    - portfolio snapshot cards
+    - full portfolio / single account switch
+    - concentration pie chart (Top Positions, via Recharts)
+    - risk summary blocks (concentration / drawdown / stop-loss-near)
+- Agent tool:
+  - Added `get_portfolio_snapshot` in `src/agent/tools/data_tools.py`
+  - Default output is compact summary for low token usage
+  - Optional `include_positions=true` to return detailed positions
+  - Optional risk block with fail-open behavior
+
+Compatibility and rollback:
+- PR3 only appends a new web page, API client/types, and one Agent tool.
+- No existing API schema is removed.
+- Rollback by removing the `/portfolio` route and `get_portfolio_snapshot` tool registration.

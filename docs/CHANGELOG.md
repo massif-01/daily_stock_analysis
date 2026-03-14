@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   - Added dedup fallback by key-field hash when `trade_uid` is absent.
   - Added risk report API for concentration, drawdown and stop-loss proximity.
   - Added FX refresh API with stale fallback behavior.
+- Portfolio P0 PR3 web and agent consumption capability:
+  - Added Web route `/portfolio` with snapshot/risk consumption.
+  - Added concentration pie chart view (Top Positions) via Recharts.
+  - Added `get_portfolio_snapshot` Agent data tool with compact-by-default output and optional detailed positions.
 
 ### Changed
 - `POST /api/v1/portfolio/trades` now returns `409` on duplicate `trade_uid` conflict within the same account.

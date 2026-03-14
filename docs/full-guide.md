@@ -960,3 +960,34 @@ A: 检查是否启用了 Actions，以及 cron 表达式是否正确（注意是
 - FX refresh first tries online source (YFinance).
 - On online failure, fallback to latest cached rate and mark `is_stale=true`.
 - Main snapshot/risk pipeline stays available even when online FX fetch is unavailable.
+
+## Portfolio P0 PR3 (Web + Agent Consumption)
+
+### Web consumption page
+- Added Web page route: `/portfolio` (`apps/dsa-web/src/pages/PortfolioPage.tsx`).
+- Data sources:
+  - `GET /api/v1/portfolio/snapshot`
+  - `GET /api/v1/portfolio/risk`
+- Supports:
+  - full portfolio / single account switch
+  - cost method switch (`fifo` / `avg`)
+  - concentration pie chart (Top Positions) with Recharts
+  - snapshot KPI cards and risk summary cards
+
+### Agent tool
+- Added `get_portfolio_snapshot` data tool for account-aware LLM suggestions.
+- Default behavior:
+  - compact summary output (token-friendly)
+  - includes optional compact risk block
+- Optional parameters:
+  - `account_id`
+  - `cost_method` (`fifo` / `avg`)
+  - `as_of` (`YYYY-MM-DD`)
+  - `include_positions` (default `false`)
+  - `include_risk` (default `true`)
+
+### Stability and compatibility
+- New capability is additive only; no removal of existing keys/routes.
+- Fail-open semantics:
+  - If risk block fails, snapshot is still returned.
+  - If portfolio module is unavailable, tool returns structured `not_supported`.
