@@ -171,6 +171,40 @@ class PortfolioPr2TestCase(unittest.TestCase):
         self.assertIn("zhongxin", broker_map["citic"]["aliases"])
         self.assertIn("zhaoshang", broker_map["cmb"]["aliases"])
 
+    def test_import_preserves_leading_zero_symbol(self) -> None:
+        csv_text = (
+            "成交日期,证券代码,买卖标志,成交数量,成交均价,成交编号\n"
+            "2026-01-02,000001,买入,10,100,HT-003\n"
+        )
+        parsed = self.import_service.parse_trade_csv(
+            broker="huatai",
+            content=csv_text.encode("utf-8"),
+        )
+        self.assertEqual(parsed["record_count"], 1)
+        self.assertEqual(parsed["records"][0]["symbol"], "000001")
+
+    def test_import_dry_run_counts_in_file_duplicates(self) -> None:
+        account = self.service.create_account(name="Main", broker="Demo", market="cn", base_currency="CNY")
+        aid = account["id"]
+        csv_text = (
+            "成交日期,证券代码,买卖标志,成交数量,成交均价,成交编号,手续费,印花税\n"
+            "2026-01-02,600519,买入,10,100,HT-004,1,0\n"
+            "2026-01-02,600519,买入,10,100,HT-004,1,0\n"
+        )
+        parsed = self.import_service.parse_trade_csv(
+            broker="huatai",
+            content=csv_text.encode("utf-8"),
+        )
+        result = self.import_service.commit_trade_records(
+            account_id=aid,
+            broker="huatai",
+            records=parsed["records"],
+            dry_run=True,
+        )
+        self.assertEqual(result["record_count"], 2)
+        self.assertEqual(result["inserted_count"], 1)
+        self.assertEqual(result["duplicate_count"], 1)
+
     def test_risk_threshold_boundary(self) -> None:
         account = self.service.create_account(name="Main", broker="Demo", market="cn", base_currency="CNY")
         aid = account["id"]

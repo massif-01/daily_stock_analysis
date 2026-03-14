@@ -179,6 +179,8 @@ class PortfolioImportService:
         duplicate_count = 0
         failed_count = 0
         errors: List[str] = []
+        seen_trade_uids: set[str] = set()
+        seen_dedup_hashes: set[str] = set()
 
         for i, record in enumerate(records):
             try:
@@ -196,7 +198,17 @@ class PortfolioImportService:
                     continue
 
                 if dry_run:
+                    if trade_uid and trade_uid in seen_trade_uids:
+                        duplicate_count += 1
+                        continue
+                    if dedup_hash_to_use and dedup_hash_to_use in seen_dedup_hashes:
+                        duplicate_count += 1
+                        continue
                     inserted_count += 1
+                    if trade_uid:
+                        seen_trade_uids.add(trade_uid)
+                    if dedup_hash_to_use:
+                        seen_dedup_hashes.add(dedup_hash_to_use)
                     continue
 
                 trade_date_value = record.get("trade_date")
@@ -249,10 +261,15 @@ class PortfolioImportService:
     def _read_csv(content: bytes) -> pd.DataFrame:
         for encoding in ("utf-8-sig", "gbk", "gb18030"):
             try:
-                return pd.read_csv(io.BytesIO(content), encoding=encoding)
+                return pd.read_csv(
+                    io.BytesIO(content),
+                    encoding=encoding,
+                    dtype=str,
+                    keep_default_na=False,
+                )
             except UnicodeDecodeError:
                 continue
-        return pd.read_csv(io.BytesIO(content))
+        return pd.read_csv(io.BytesIO(content), dtype=str, keep_default_na=False)
 
     def _normalize_trade_row(
         self,
