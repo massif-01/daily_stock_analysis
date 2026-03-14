@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import hashlib
 import io
-import logging
 from datetime import date
 from typing import Any, Dict, List, Optional
 
@@ -15,9 +14,12 @@ from data_provider.base import canonical_stock_code
 from src.repositories.portfolio_repo import PortfolioRepository
 from src.services.portfolio_service import PortfolioConflictError, PortfolioService
 
-logger = logging.getLogger(__name__)
-
-SUPPORTED_BROKERS = {"huatai", "citic", "cmb", "cmbchina", "zhaoshang", "zhongxin"}
+BROKER_ALIASES = {
+    "zhaoshang": "cmb",
+    "cmbchina": "cmb",
+    "zhongxin": "citic",
+}
+SUPPORTED_BROKERS = {"huatai", "citic", "cmb"}
 BROKER_COLUMN_HINTS = {
     "huatai": {
         "trade_date": ("成交日期", "成交时间", "发生日期", "日期"),
@@ -77,7 +79,7 @@ class PortfolioImportService:
                 skipped += 1
                 continue
             try:
-                normalized["dedup_hash"] = self._build_dedup_hash(normalized)
+                normalized["dedup_hash"] = self._build_dedup_hash(normalized, raw_row=row)
                 records.append(normalized)
             except Exception as exc:  # pragma: no cover - defensive path
                 skipped += 1
@@ -169,30 +171,24 @@ class PortfolioImportService:
     @staticmethod
     def _normalize_broker(value: str) -> str:
         broker = (value or "").strip().lower()
-        alias = {
-            "zhaoshang": "cmb",
-            "cmbchina": "cmb",
-            "zhongxin": "citic",
-        }
-        broker = alias.get(broker, broker)
+        broker = BROKER_ALIASES.get(broker, broker)
         if broker not in SUPPORTED_BROKERS:
             raise ValueError("broker must be one of: huatai, citic, cmb")
-        if broker == "cmbchina":
-            return "cmb"
-        if broker == "zhaoshang":
-            return "cmb"
-        if broker == "zhongxin":
-            return "citic"
         return broker
 
     @staticmethod
     def _read_csv(content: bytes) -> pd.DataFrame:
         for encoding in ("utf-8-sig", "gbk", "gb18030"):
             try:
-                return pd.read_csv(io.BytesIO(content), encoding=encoding)
+                return pd.read_csv(
+                    io.BytesIO(content),
+                    encoding=encoding,
+                    dtype=str,
+                    keep_default_na=False,
+                )
             except UnicodeDecodeError:
                 continue
-        return pd.read_csv(io.BytesIO(content))
+        return pd.read_csv(io.BytesIO(content), dtype=str, keep_default_na=False)
 
     def _normalize_trade_row(self, *, row: Any, broker: str) -> Optional[Dict[str, Any]]:
         broker_hints = BROKER_COLUMN_HINTS.get(broker, {})
@@ -329,17 +325,39 @@ class PortfolioImportService:
         return None
 
     @staticmethod
-    def _build_dedup_hash(record: Dict[str, Any]) -> str:
-        payload = "|".join(
-            [
-                str(record.get("trade_date") or ""),
-                str(record.get("symbol") or ""),
-                str(record.get("side") or ""),
-                f"{float(record.get('quantity', 0.0)):.8f}",
-                f"{float(record.get('price', 0.0)):.8f}",
-                f"{float(record.get('fee', 0.0)):.8f}",
-                f"{float(record.get('tax', 0.0)):.8f}",
-                str(record.get("currency") or ""),
-            ]
-        )
+    def _build_dedup_hash(record: Dict[str, Any], raw_row: Any = None) -> str:
+        payload_parts = [
+            str(record.get("trade_date") or ""),
+            str(record.get("symbol") or ""),
+            str(record.get("side") or ""),
+            f"{float(record.get('quantity', 0.0)):.8f}",
+            f"{float(record.get('price', 0.0)):.8f}",
+            f"{float(record.get('fee', 0.0)):.8f}",
+            f"{float(record.get('tax', 0.0)):.8f}",
+            str(record.get("currency") or ""),
+        ]
+        raw_row_payload = PortfolioImportService._build_raw_row_payload(raw_row)
+        if raw_row_payload:
+            payload_parts.append(raw_row_payload)
+        payload = "|".join(payload_parts)
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _build_raw_row_payload(row: Any) -> str:
+        if row is None or not hasattr(row, "index"):
+            return ""
+
+        parts: List[str] = []
+        for name in row.index:
+            key = str(name or "").strip()
+            if not key:
+                continue
+            value = row.get(name)
+            text = str(value or "").strip()
+            if not text or text.lower() == "nan":
+                continue
+            parts.append(f"{key}={text}")
+
+        if not parts:
+            return ""
+        return "|".join(sorted(parts))

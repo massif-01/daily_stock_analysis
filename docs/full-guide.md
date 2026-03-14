@@ -949,7 +949,7 @@ A: 检查是否启用了 Actions，以及 cron 表达式是否正确（注意是
 - Unified workflow: parse CSV into normalized records, then commit into portfolio trades.
 - Dedup policy:
   - First key: `trade_uid` (account-scoped)
-  - Fallback key: deterministic hash of date/symbol/side/qty/price/fee/tax/currency
+  - Fallback key: deterministic normalized-row hash that preserves leading-zero symbols and adds raw CSV row context when `trade_uid` is absent
 
 ### Risk report
 - Concentration monitoring: top position weight alert by config threshold.

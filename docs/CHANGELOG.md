@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 - `POST /api/v1/portfolio/trades` now returns `409` on duplicate `trade_uid` conflict within the same account.
+- Portfolio CSV import now preserves leading-zero identifiers during parse and uses raw row context in the fallback dedup hash when `trade_uid` is absent.
 
 ### Tests
 - Added PR1 tests for replay edge cases and API conflict handling.
