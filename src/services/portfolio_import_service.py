@@ -73,6 +73,9 @@ DEFAULT_PARSER_SPECS: Tuple[CsvParserSpec, ...] = (
 
 class PortfolioImportService:
     """Parse broker CSV and commit normalized trade records with dedup."""
+    _shared_parser_registry: Dict[str, CsvParserSpec] = {}
+    _shared_broker_alias_map: Dict[str, str] = {}
+    _shared_registry_initialized: bool = False
 
     def __init__(
         self,
@@ -82,9 +85,11 @@ class PortfolioImportService:
     ):
         self.portfolio_service = portfolio_service or PortfolioService()
         self.repo = repo or PortfolioRepository()
-        self._parser_registry: Dict[str, CsvParserSpec] = {}
-        self._broker_alias_map: Dict[str, str] = {}
-        self._init_default_parsers()
+        self._parser_registry = self.__class__._shared_parser_registry
+        self._broker_alias_map = self.__class__._shared_broker_alias_map
+        if not self.__class__._shared_registry_initialized:
+            self._init_default_parsers()
+            self.__class__._shared_registry_initialized = True
 
     def _init_default_parsers(self) -> None:
         for spec in DEFAULT_PARSER_SPECS:

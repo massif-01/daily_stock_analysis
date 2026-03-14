@@ -1,6 +1,7 @@
 import apiClient from './index';
 import { toCamelCase } from './utils';
 import type {
+  PortfolioAccountItem,
   PortfolioAccountCreateRequest,
   PortfolioAccountListResponse,
   PortfolioCashLedgerCreateRequest,
@@ -88,7 +89,7 @@ export const portfolioApi = {
     return toCamelCase<PortfolioAccountListResponse>(response.data);
   },
 
-  async createAccount(payload: PortfolioAccountCreateRequest): Promise<PortfolioEventCreatedResponse> {
+  async createAccount(payload: PortfolioAccountCreateRequest): Promise<PortfolioAccountItem> {
     const response = await apiClient.post<Record<string, unknown>>('/api/v1/portfolio/accounts', {
       name: payload.name,
       broker: payload.broker,
@@ -96,7 +97,7 @@ export const portfolioApi = {
       base_currency: payload.baseCurrency,
       owner_id: payload.ownerId,
     });
-    return toCamelCase<PortfolioEventCreatedResponse>(response.data);
+    return toCamelCase<PortfolioAccountItem>(response.data);
   },
 
   async getSnapshot(query: SnapshotQuery = {}): Promise<PortfolioSnapshotResponse> {
