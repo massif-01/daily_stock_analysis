@@ -941,3 +941,22 @@ A: 检查是否启用了 Actions，以及 cron 表达式是否正确（注意是
 - Same-day ordering (dividend/trade, split/trade)
 - API account/event/snapshot contract
 - API duplicate trade_uid conflict
+
+## Portfolio P0 PR2 (Import and Risk)
+
+### CSV import
+- Supported broker ids: `huatai`, `citic`, `cmb`.
+- Unified workflow: parse CSV into normalized records, then commit into portfolio trades.
+- Dedup policy:
+  - First key: `trade_uid` (account-scoped)
+  - Fallback key: deterministic hash of date/symbol/side/qty/price/fee/tax/currency
+
+### Risk report
+- Concentration monitoring: top position weight alert by config threshold.
+- Drawdown monitoring: max/current drawdown computed from daily snapshots.
+- Stop-loss proximity warning: mark near-alert and triggered items with threshold echo.
+
+### FX fail-open
+- FX refresh first tries online source (YFinance).
+- On online failure, fallback to latest cached rate and mark `is_stale=true`.
+- Main snapshot/risk pipeline stays available even when online FX fetch is unavailable.

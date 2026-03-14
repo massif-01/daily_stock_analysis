@@ -451,3 +451,20 @@ Validated scope:
 - Corporate actions: cash dividend and split adjustment
 - Same-day ordering edge cases
 - API contract: happy path + invalid cost method + duplicate trade_uid conflict
+
+## Portfolio P0 PR2 (Import and Risk)
+
+This phase extends portfolio capability with import and risk monitoring while keeping the existing architecture stable.
+
+- Broker CSV import (`huatai` / `citic` / `cmb`) via unified parse/commit flow.
+- Dedup strategy:
+  - Prefer `trade_uid` when available.
+  - Fallback to key-field hash when `trade_uid` is absent.
+- New risk API for concentration, drawdown, and stop-loss-near warnings.
+- FX online refresh with fail-open stale fallback when online quote fetch fails.
+
+New endpoints:
+- `POST /api/v1/portfolio/imports/csv/parse`
+- `POST /api/v1/portfolio/imports/csv/commit`
+- `GET /api/v1/portfolio/risk`
+- `POST /api/v1/portfolio/fx/refresh`

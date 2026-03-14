@@ -7,7 +7,7 @@ import logging
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 
 from api.v1.schemas.common import ErrorResponse
 from api.v1.schemas.portfolio import (
@@ -18,9 +18,16 @@ from api.v1.schemas.portfolio import (
     PortfolioCashLedgerCreateRequest,
     PortfolioCorporateActionCreateRequest,
     PortfolioEventCreatedResponse,
+    PortfolioFxRefreshResponse,
+    PortfolioImportCommitResponse,
+    PortfolioImportParseResponse,
+    PortfolioImportTradeItem,
+    PortfolioRiskResponse,
     PortfolioSnapshotResponse,
     PortfolioTradeCreateRequest,
 )
+from src.services.portfolio_import_service import PortfolioImportService
+from src.services.portfolio_risk_service import PortfolioRiskService
 from src.services.portfolio_service import PortfolioConflictError, PortfolioService
 
 logger = logging.getLogger(__name__)
@@ -41,6 +48,16 @@ def _internal_error(message: str, exc: Exception) -> HTTPException:
         status_code=500,
         detail={"error": "internal_error", "message": f"{message}: {str(exc)}"},
     )
+
+
+def _serialize_import_record(item: dict) -> PortfolioImportTradeItem:
+    payload = dict(item)
+    trade_date = payload.get("trade_date")
+    if isinstance(trade_date, date):
+        payload["trade_date"] = trade_date.isoformat()
+    else:
+        payload["trade_date"] = str(trade_date)
+    return PortfolioImportTradeItem(**payload)
 
 
 @router.post(
@@ -245,3 +262,101 @@ def get_snapshot(
         raise _bad_request(exc)
     except Exception as exc:
         raise _internal_error("Get snapshot failed", exc)
+
+
+@router.post(
+    "/imports/csv/parse",
+    response_model=PortfolioImportParseResponse,
+    responses={400: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+    summary="Parse broker CSV into normalized trade records",
+)
+def parse_csv_import(
+    broker: str = Form(..., description="Broker id: huatai/citic/cmb"),
+    file: UploadFile = File(...),
+) -> PortfolioImportParseResponse:
+    importer = PortfolioImportService()
+    try:
+        content = file.file.read()
+        parsed = importer.parse_trade_csv(broker=broker, content=content)
+        return PortfolioImportParseResponse(
+            broker=parsed["broker"],
+            record_count=parsed["record_count"],
+            skipped_count=parsed["skipped_count"],
+            error_count=parsed["error_count"],
+            records=[_serialize_import_record(item) for item in parsed.get("records", [])],
+            errors=list(parsed.get("errors", [])),
+        )
+    except ValueError as exc:
+        raise _bad_request(exc)
+    except Exception as exc:
+        raise _internal_error("Parse CSV import failed", exc)
+
+
+@router.post(
+    "/imports/csv/commit",
+    response_model=PortfolioImportCommitResponse,
+    responses={400: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+    summary="Parse and commit broker CSV with dedup",
+)
+def commit_csv_import(
+    account_id: int = Form(...),
+    broker: str = Form(..., description="Broker id: huatai/citic/cmb"),
+    dry_run: bool = Form(False),
+    file: UploadFile = File(...),
+) -> PortfolioImportCommitResponse:
+    importer = PortfolioImportService()
+    try:
+        content = file.file.read()
+        parsed = importer.parse_trade_csv(broker=broker, content=content)
+        result = importer.commit_trade_records(
+            account_id=account_id,
+            broker=parsed["broker"],
+            records=list(parsed.get("records", [])),
+            dry_run=dry_run,
+        )
+        return PortfolioImportCommitResponse(**result)
+    except ValueError as exc:
+        raise _bad_request(exc)
+    except Exception as exc:
+        raise _internal_error("Commit CSV import failed", exc)
+
+
+@router.post(
+    "/fx/refresh",
+    response_model=PortfolioFxRefreshResponse,
+    responses={400: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+    summary="Refresh FX cache online with stale fallback",
+)
+def refresh_fx_rates(
+    account_id: Optional[int] = Query(None, description="Optional account id"),
+    as_of: Optional[date] = Query(None, description="Rate date, default today"),
+) -> PortfolioFxRefreshResponse:
+    service = PortfolioService()
+    try:
+        data = service.refresh_fx_rates(account_id=account_id, as_of=as_of)
+        return PortfolioFxRefreshResponse(**data)
+    except ValueError as exc:
+        raise _bad_request(exc)
+    except Exception as exc:
+        raise _internal_error("Refresh FX rates failed", exc)
+
+
+@router.get(
+    "/risk",
+    response_model=PortfolioRiskResponse,
+    responses={400: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+    summary="Get portfolio risk report",
+)
+def get_risk_report(
+    account_id: Optional[int] = Query(None, description="Optional account id"),
+    as_of: Optional[date] = Query(None, description="Risk report date, default today"),
+    cost_method: str = Query("fifo", description="Cost method: fifo or avg"),
+) -> PortfolioRiskResponse:
+    service = PortfolioRiskService()
+    try:
+        data = service.get_risk_report(account_id=account_id, as_of=as_of, cost_method=cost_method)
+        return PortfolioRiskResponse(**data)
+    except ValueError as exc:
+        raise _bad_request(exc)
+    except Exception as exc:
+        raise _internal_error("Get risk report failed", exc)

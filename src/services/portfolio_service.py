@@ -7,13 +7,23 @@ import json
 import logging
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import date
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from datetime import date, timedelta
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from data_provider.base import canonical_stock_code
-from src.repositories.portfolio_repo import DuplicateTradeUidError, PortfolioRepository
+from src.config import get_config
+from src.repositories.portfolio_repo import (
+    DuplicateTradeDedupHashError,
+    DuplicateTradeUidError,
+    PortfolioRepository,
+)
 
 logger = logging.getLogger(__name__)
+
+try:
+    import yfinance as yf
+except Exception:  # pragma: no cover - optional dependency path
+    yf = None
 
 EPS = 1e-8
 VALID_MARKETS = {"cn", "hk", "us"}
@@ -124,6 +134,7 @@ class PortfolioService:
         market: Optional[str] = None,
         currency: Optional[str] = None,
         trade_uid: Optional[str] = None,
+        dedup_hash: Optional[str] = None,
         note: Optional[str] = None,
     ) -> Dict[str, Any]:
         account = self._require_active_account(account_id)
@@ -155,9 +166,9 @@ class PortfolioService:
                 fee=float(fee),
                 tax=float(tax),
                 note=(note or "").strip() or None,
-                dedup_hash=None,
+                dedup_hash=(dedup_hash or "").strip() or None,
             )
-        except DuplicateTradeUidError as exc:
+        except (DuplicateTradeUidError, DuplicateTradeDedupHashError) as exc:
             raise PortfolioConflictError(str(exc)) from exc
         return {"id": row.id}
 
@@ -365,6 +376,35 @@ class PortfolioService:
             "fx_stale": aggregate["fx_stale"],
             "accounts": accounts_payload,
         }
+
+    def refresh_fx_rates(
+        self,
+        *,
+        account_id: Optional[int] = None,
+        as_of: Optional[date] = None,
+    ) -> Dict[str, Any]:
+        """Refresh account FX pairs online with stale fallback when fetch fails."""
+        as_of_date = as_of or date.today()
+        if account_id is not None:
+            account_rows = [self._require_active_account(account_id)]
+        else:
+            account_rows = self.repo.list_accounts(include_inactive=False)
+
+        summary = {
+            "as_of": as_of_date.isoformat(),
+            "account_count": len(account_rows),
+            "pair_count": 0,
+            "updated_count": 0,
+            "stale_count": 0,
+            "error_count": 0,
+        }
+        for account in account_rows:
+            item = self._refresh_account_fx_rates(account=account, as_of_date=as_of_date)
+            summary["pair_count"] += item["pair_count"]
+            summary["updated_count"] += item["updated_count"]
+            summary["stale_count"] += item["stale_count"]
+            summary["error_count"] += item["error_count"]
+        return summary
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -737,6 +777,113 @@ class PortfolioService:
 
         # P0 fallback: keep pipeline available even when FX cache is missing.
         return float(amount), True, "fallback_1_to_1"
+
+    def convert_amount(
+        self,
+        *,
+        amount: float,
+        from_currency: str,
+        to_currency: str,
+        as_of_date: date,
+    ) -> Tuple[float, bool, str]:
+        """Public conversion entry for cross-service consumers."""
+        return self._convert_amount(
+            amount=amount,
+            from_currency=from_currency,
+            to_currency=to_currency,
+            as_of_date=as_of_date,
+        )
+
+    def _refresh_account_fx_rates(self, *, account: Any, as_of_date: date) -> Dict[str, int]:
+        """Refresh FX pairs for one account and keep stale fallback on failures."""
+        config = get_config()
+        if not getattr(config, "portfolio_fx_update_enabled", True):
+            return {"pair_count": 0, "updated_count": 0, "stale_count": 0, "error_count": 0}
+
+        base_currency = self._normalize_currency(account.base_currency)
+        currencies: Set[str] = set()
+        for row in self.repo.list_trades(account.id, as_of=as_of_date):
+            currencies.add(self._normalize_currency(row.currency))
+        for row in self.repo.list_cash_ledger(account.id, as_of=as_of_date):
+            currencies.add(self._normalize_currency(row.currency))
+
+        summary = {"pair_count": 0, "updated_count": 0, "stale_count": 0, "error_count": 0}
+        for from_currency in sorted(currencies):
+            if from_currency == base_currency:
+                continue
+            summary["pair_count"] += 1
+            try:
+                rate = self._fetch_fx_rate_from_yfinance(
+                    from_currency=from_currency,
+                    to_currency=base_currency,
+                    as_of_date=as_of_date,
+                )
+                if rate is not None and rate > 0:
+                    self.repo.save_fx_rate(
+                        from_currency=from_currency,
+                        to_currency=base_currency,
+                        rate_date=as_of_date,
+                        rate=rate,
+                        source="yfinance",
+                        is_stale=False,
+                    )
+                    summary["updated_count"] += 1
+                    continue
+            except Exception as exc:
+                logger.warning(
+                    "FX online fetch failed for %s/%s on %s: %s",
+                    from_currency,
+                    base_currency,
+                    as_of_date.isoformat(),
+                    exc,
+                )
+
+            fallback = self.repo.get_latest_fx_rate(
+                from_currency=from_currency,
+                to_currency=base_currency,
+                as_of=as_of_date,
+            )
+            if fallback is not None and float(fallback.rate or 0.0) > 0:
+                self.repo.save_fx_rate(
+                    from_currency=from_currency,
+                    to_currency=base_currency,
+                    rate_date=as_of_date,
+                    rate=float(fallback.rate),
+                    source=(fallback.source or "cache_fallback"),
+                    is_stale=True,
+                )
+                summary["stale_count"] += 1
+            else:
+                summary["error_count"] += 1
+        return summary
+
+    @staticmethod
+    def _fetch_fx_rate_from_yfinance(
+        *,
+        from_currency: str,
+        to_currency: str,
+        as_of_date: date,
+    ) -> Optional[float]:
+        """Fetch latest available FX close rate around as_of date."""
+        if yf is None:
+            return None
+        symbol = f"{from_currency}{to_currency}=X"
+        ticker = yf.Ticker(symbol)
+        history = ticker.history(
+            start=(as_of_date - timedelta(days=7)).isoformat(),
+            end=(as_of_date + timedelta(days=1)).isoformat(),
+            interval="1d",
+            auto_adjust=False,
+        )
+        if history is None or history.empty or "Close" not in history:
+            return None
+        close = history["Close"].dropna()
+        if close.empty:
+            return None
+        value = float(close.iloc[-1])
+        if value <= 0:
+            return None
+        return value
 
     def _require_active_account(self, account_id: int) -> Any:
         account = self.repo.get_account(account_id, include_inactive=False)

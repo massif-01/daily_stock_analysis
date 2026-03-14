@@ -435,6 +435,7 @@ class PortfolioTrade(Base):
 
     __table_args__ = (
         UniqueConstraint('account_id', 'trade_uid', name='uix_portfolio_trade_uid'),
+        UniqueConstraint('account_id', 'dedup_hash', name='uix_portfolio_trade_dedup_hash'),
         Index('ix_portfolio_trade_account_date', 'account_id', 'trade_date'),
     )
 

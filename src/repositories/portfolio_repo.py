@@ -33,6 +33,10 @@ class DuplicateTradeUidError(Exception):
     """Raised when trade_uid conflicts with existing record in one account."""
 
 
+class DuplicateTradeDedupHashError(Exception):
+    """Raised when dedup hash conflicts with existing record in one account."""
+
+
 class PortfolioRepository:
     """DB access layer for portfolio P0 domain."""
 
@@ -154,6 +158,14 @@ class PortfolioRepository:
                     raise DuplicateTradeUidError(
                         f"Duplicate trade_uid for account_id={account_id}: {trade_uid}"
                     ) from exc
+                if dedup_hash and (
+                    "uix_portfolio_trade_dedup_hash" in err_text
+                    or "portfolio_trades.account_id, portfolio_trades.dedup_hash" in err_text
+                    or ("unique" in err_text and "dedup_hash" in err_text)
+                ):
+                    raise DuplicateTradeDedupHashError(
+                        f"Duplicate dedup_hash for account_id={account_id}: {dedup_hash}"
+                    ) from exc
                 raise
             session.refresh(row)
             return row
@@ -211,6 +223,38 @@ class PortfolioRepository:
             session.commit()
             session.refresh(row)
             return row
+
+    def has_trade_uid(self, account_id: int, trade_uid: Optional[str]) -> bool:
+        """Return True when trade_uid already exists in the account."""
+        uid = (trade_uid or "").strip()
+        if not uid:
+            return False
+        with self.db.get_session() as session:
+            row = session.execute(
+                select(PortfolioTrade.id).where(
+                    and_(
+                        PortfolioTrade.account_id == account_id,
+                        PortfolioTrade.trade_uid == uid,
+                    )
+                ).limit(1)
+            ).scalar_one_or_none()
+            return row is not None
+
+    def has_trade_dedup_hash(self, account_id: int, dedup_hash: Optional[str]) -> bool:
+        """Return True when dedup hash already exists in the account."""
+        hash_value = (dedup_hash or "").strip()
+        if not hash_value:
+            return False
+        with self.db.get_session() as session:
+            row = session.execute(
+                select(PortfolioTrade.id).where(
+                    and_(
+                        PortfolioTrade.account_id == account_id,
+                        PortfolioTrade.dedup_hash == hash_value,
+                    )
+                ).limit(1)
+            ).scalar_one_or_none()
+            return row is not None
 
     # ------------------------------------------------------------------
     # Event reads
@@ -336,6 +380,36 @@ class PortfolioRepository:
                 .limit(1)
             ).scalar_one_or_none()
             return row
+
+    def list_daily_snapshots_for_risk(
+        self,
+        *,
+        as_of: date,
+        cost_method: str,
+        account_id: Optional[int] = None,
+        lookback_days: int = 180,
+    ) -> List[PortfolioDailySnapshot]:
+        """Load snapshot rows in ascending date order for risk monitoring."""
+        with self.db.get_session() as session:
+            query = select(PortfolioDailySnapshot).where(
+                and_(
+                    PortfolioDailySnapshot.snapshot_date <= as_of,
+                    PortfolioDailySnapshot.cost_method == cost_method,
+                )
+            )
+            if account_id is not None:
+                query = query.where(PortfolioDailySnapshot.account_id == account_id)
+            rows = session.execute(
+                query.order_by(
+                    PortfolioDailySnapshot.snapshot_date.asc(),
+                    PortfolioDailySnapshot.account_id.asc(),
+                )
+            ).scalars().all()
+            if lookback_days <= 0:
+                return list(rows)
+            # Keep only the latest N calendar days window for risk calculations.
+            cutoff_ordinal = as_of.toordinal() - lookback_days
+            return [row for row in rows if row.snapshot_date.toordinal() >= cutoff_ordinal]
 
     # ------------------------------------------------------------------
     # Snapshot / position cache

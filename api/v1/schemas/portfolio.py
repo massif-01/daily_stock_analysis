@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -129,3 +129,55 @@ class PortfolioSnapshotResponse(BaseModel):
     tax_total: float
     fx_stale: bool
     accounts: List[PortfolioAccountSnapshot] = Field(default_factory=list)
+
+
+class PortfolioImportTradeItem(BaseModel):
+    trade_date: str
+    symbol: str
+    side: Literal["buy", "sell"]
+    quantity: float
+    price: float
+    fee: float
+    tax: float
+    trade_uid: Optional[str] = None
+    dedup_hash: str
+    currency: Optional[str] = None
+
+
+class PortfolioImportParseResponse(BaseModel):
+    broker: str
+    record_count: int
+    skipped_count: int
+    error_count: int
+    records: List[PortfolioImportTradeItem] = Field(default_factory=list)
+    errors: List[str] = Field(default_factory=list)
+
+
+class PortfolioImportCommitResponse(BaseModel):
+    account_id: int
+    record_count: int
+    inserted_count: int
+    duplicate_count: int
+    failed_count: int
+    dry_run: bool
+    errors: List[str] = Field(default_factory=list)
+
+
+class PortfolioFxRefreshResponse(BaseModel):
+    as_of: str
+    account_count: int
+    pair_count: int
+    updated_count: int
+    stale_count: int
+    error_count: int
+
+
+class PortfolioRiskResponse(BaseModel):
+    as_of: str
+    account_id: Optional[int] = None
+    cost_method: str
+    currency: str
+    thresholds: Dict[str, Any] = Field(default_factory=dict)
+    concentration: Dict[str, Any] = Field(default_factory=dict)
+    drawdown: Dict[str, Any] = Field(default_factory=dict)
+    stop_loss: Dict[str, Any] = Field(default_factory=dict)
