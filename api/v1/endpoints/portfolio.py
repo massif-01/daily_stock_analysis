@@ -15,15 +15,19 @@ from api.v1.schemas.portfolio import (
     PortfolioAccountItem,
     PortfolioAccountListResponse,
     PortfolioAccountUpdateRequest,
+    PortfolioCashLedgerListResponse,
     PortfolioCashLedgerCreateRequest,
+    PortfolioCorporateActionListResponse,
     PortfolioCorporateActionCreateRequest,
     PortfolioEventCreatedResponse,
     PortfolioFxRefreshResponse,
+    PortfolioImportBrokerListResponse,
     PortfolioImportCommitResponse,
     PortfolioImportParseResponse,
     PortfolioImportTradeItem,
     PortfolioRiskResponse,
     PortfolioSnapshotResponse,
+    PortfolioTradeListResponse,
     PortfolioTradeCreateRequest,
 )
 from src.services.portfolio_import_service import PortfolioImportService
@@ -188,6 +192,39 @@ def create_trade(request: PortfolioTradeCreateRequest) -> PortfolioEventCreatedR
         raise _internal_error("Create trade failed", exc)
 
 
+@router.get(
+    "/trades",
+    response_model=PortfolioTradeListResponse,
+    responses={400: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+    summary="List trade events",
+)
+def list_trades(
+    account_id: Optional[int] = Query(None, description="Optional account id"),
+    date_from: Optional[date] = Query(None, description="Trade date from"),
+    date_to: Optional[date] = Query(None, description="Trade date to"),
+    symbol: Optional[str] = Query(None, description="Optional stock symbol filter"),
+    side: Optional[str] = Query(None, description="Optional side filter: buy/sell"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+) -> PortfolioTradeListResponse:
+    service = PortfolioService()
+    try:
+        data = service.list_trade_events(
+            account_id=account_id,
+            date_from=date_from,
+            date_to=date_to,
+            symbol=symbol,
+            side=side,
+            page=page,
+            page_size=page_size,
+        )
+        return PortfolioTradeListResponse(**data)
+    except ValueError as exc:
+        raise _bad_request(exc)
+    except Exception as exc:
+        raise _internal_error("List trade events failed", exc)
+
+
 @router.post(
     "/cash-ledger",
     response_model=PortfolioEventCreatedResponse,
@@ -210,6 +247,37 @@ def create_cash_ledger(request: PortfolioCashLedgerCreateRequest) -> PortfolioEv
         raise _bad_request(exc)
     except Exception as exc:
         raise _internal_error("Create cash ledger event failed", exc)
+
+
+@router.get(
+    "/cash-ledger",
+    response_model=PortfolioCashLedgerListResponse,
+    responses={400: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+    summary="List cash ledger events",
+)
+def list_cash_ledger(
+    account_id: Optional[int] = Query(None, description="Optional account id"),
+    date_from: Optional[date] = Query(None, description="Cash event date from"),
+    date_to: Optional[date] = Query(None, description="Cash event date to"),
+    direction: Optional[str] = Query(None, description="Optional direction filter: in/out"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+) -> PortfolioCashLedgerListResponse:
+    service = PortfolioService()
+    try:
+        data = service.list_cash_ledger_events(
+            account_id=account_id,
+            date_from=date_from,
+            date_to=date_to,
+            direction=direction,
+            page=page,
+            page_size=page_size,
+        )
+        return PortfolioCashLedgerListResponse(**data)
+    except ValueError as exc:
+        raise _bad_request(exc)
+    except Exception as exc:
+        raise _internal_error("List cash ledger events failed", exc)
 
 
 @router.post(
@@ -237,6 +305,39 @@ def create_corporate_action(request: PortfolioCorporateActionCreateRequest) -> P
         raise _bad_request(exc)
     except Exception as exc:
         raise _internal_error("Create corporate action event failed", exc)
+
+
+@router.get(
+    "/corporate-actions",
+    response_model=PortfolioCorporateActionListResponse,
+    responses={400: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+    summary="List corporate action events",
+)
+def list_corporate_actions(
+    account_id: Optional[int] = Query(None, description="Optional account id"),
+    date_from: Optional[date] = Query(None, description="Corporate action effective date from"),
+    date_to: Optional[date] = Query(None, description="Corporate action effective date to"),
+    symbol: Optional[str] = Query(None, description="Optional stock symbol filter"),
+    action_type: Optional[str] = Query(None, description="Optional action type filter"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+) -> PortfolioCorporateActionListResponse:
+    service = PortfolioService()
+    try:
+        data = service.list_corporate_action_events(
+            account_id=account_id,
+            date_from=date_from,
+            date_to=date_to,
+            symbol=symbol,
+            action_type=action_type,
+            page=page,
+            page_size=page_size,
+        )
+        return PortfolioCorporateActionListResponse(**data)
+    except ValueError as exc:
+        raise _bad_request(exc)
+    except Exception as exc:
+        raise _internal_error("List corporate action events failed", exc)
 
 
 @router.get(
@@ -290,6 +391,20 @@ def parse_csv_import(
         raise _bad_request(exc)
     except Exception as exc:
         raise _internal_error("Parse CSV import failed", exc)
+
+
+@router.get(
+    "/imports/csv/brokers",
+    response_model=PortfolioImportBrokerListResponse,
+    responses={500: {"model": ErrorResponse}},
+    summary="List supported broker CSV parsers",
+)
+def list_csv_brokers() -> PortfolioImportBrokerListResponse:
+    importer = PortfolioImportService()
+    try:
+        return PortfolioImportBrokerListResponse(brokers=importer.list_supported_brokers())
+    except Exception as exc:
+        raise _internal_error("List CSV brokers failed", exc)
 
 
 @router.post(

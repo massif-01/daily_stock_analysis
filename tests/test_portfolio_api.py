@@ -178,6 +178,102 @@ class PortfolioApiTestCase(unittest.TestCase):
         detail = second.json()
         self.assertEqual(detail.get("error"), "conflict")
 
+    def test_event_list_endpoints_and_filters(self) -> None:
+        create_resp = self.client.post(
+            "/api/v1/portfolio/accounts",
+            json={"name": "Main", "broker": "Demo", "market": "cn", "base_currency": "CNY"},
+        )
+        self.assertEqual(create_resp.status_code, 200)
+        account_id = create_resp.json()["id"]
+
+        cash_resp = self.client.post(
+            "/api/v1/portfolio/cash-ledger",
+            json={
+                "account_id": account_id,
+                "event_date": "2026-01-01",
+                "direction": "in",
+                "amount": 10000,
+                "currency": "CNY",
+            },
+        )
+        self.assertEqual(cash_resp.status_code, 200)
+
+        trade_payload = {
+            "account_id": account_id,
+            "symbol": "600519",
+            "side": "buy",
+            "quantity": 10,
+            "price": 100,
+            "fee": 1,
+            "tax": 0,
+            "market": "cn",
+            "currency": "CNY",
+        }
+        self.assertEqual(
+            self.client.post("/api/v1/portfolio/trades", json={**trade_payload, "trade_date": "2026-01-02"}).status_code,
+            200,
+        )
+        self.assertEqual(
+            self.client.post("/api/v1/portfolio/trades", json={**trade_payload, "trade_date": "2026-01-03"}).status_code,
+            200,
+        )
+        self.assertEqual(
+            self.client.post(
+                "/api/v1/portfolio/corporate-actions",
+                json={
+                    "account_id": account_id,
+                    "symbol": "600519",
+                    "effective_date": "2026-01-04",
+                    "action_type": "cash_dividend",
+                    "market": "cn",
+                    "currency": "CNY",
+                    "cash_dividend_per_share": 0.5,
+                },
+            ).status_code,
+            200,
+        )
+
+        trades_resp = self.client.get(
+            "/api/v1/portfolio/trades",
+            params={"account_id": account_id, "page": 1, "page_size": 1},
+        )
+        self.assertEqual(trades_resp.status_code, 200)
+        trades_payload = trades_resp.json()
+        self.assertEqual(trades_payload["total"], 2)
+        self.assertEqual(len(trades_payload["items"]), 1)
+        self.assertEqual(trades_payload["items"][0]["trade_date"], "2026-01-03")
+
+        cash_list_resp = self.client.get(
+            "/api/v1/portfolio/cash-ledger",
+            params={"account_id": account_id, "direction": "in"},
+        )
+        self.assertEqual(cash_list_resp.status_code, 200)
+        cash_payload = cash_list_resp.json()
+        self.assertEqual(cash_payload["total"], 1)
+        self.assertEqual(cash_payload["items"][0]["direction"], "in")
+
+        corp_list_resp = self.client.get(
+            "/api/v1/portfolio/corporate-actions",
+            params={"account_id": account_id, "action_type": "cash_dividend"},
+        )
+        self.assertEqual(corp_list_resp.status_code, 200)
+        corp_payload = corp_list_resp.json()
+        self.assertEqual(corp_payload["total"], 1)
+        self.assertEqual(corp_payload["items"][0]["action_type"], "cash_dividend")
+
+    def test_csv_broker_list_endpoint(self) -> None:
+        resp = self.client.get("/api/v1/portfolio/imports/csv/brokers")
+        self.assertEqual(resp.status_code, 200)
+        payload = resp.json()
+        brokers = {item["broker"] for item in payload["brokers"]}
+        self.assertIn("huatai", brokers)
+        self.assertIn("citic", brokers)
+        self.assertIn("cmb", brokers)
+
+    def test_event_list_invalid_page_size_returns_422(self) -> None:
+        resp = self.client.get("/api/v1/portfolio/trades", params={"page_size": 101})
+        self.assertEqual(resp.status_code, 422)
+
 
 if __name__ == "__main__":
     unittest.main()

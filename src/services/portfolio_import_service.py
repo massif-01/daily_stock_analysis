@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Portfolio CSV import service for PR2 broker adapters and dedup commit."""
+"""Portfolio CSV import service with extensible parser registry."""
 
 from __future__ import annotations
 
 import hashlib
 import io
 import logging
+from dataclasses import dataclass
 from datetime import date
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
@@ -17,33 +18,57 @@ from src.services.portfolio_service import PortfolioConflictError, PortfolioServ
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_BROKERS = {"huatai", "citic", "cmb", "cmbchina", "zhaoshang", "zhongxin"}
-BROKER_COLUMN_HINTS = {
-    "huatai": {
-        "trade_date": ("成交日期", "成交时间", "发生日期", "日期"),
-        "symbol": ("证券代码", "股票代码", "代码"),
-        "side": ("买卖标志", "买卖方向", "操作"),
-        "quantity": ("成交数量", "数量", "成交股数"),
-        "price": ("成交均价", "成交价格", "价格", "成交价", "均价"),
-        "trade_uid": ("成交编号", "成交序号", "流水号"),
-    },
-    "citic": {
-        "trade_date": ("发生日期", "成交日期", "日期"),
-        "symbol": ("证券代码", "股票代码", "代码"),
-        "side": ("买卖方向", "买卖标志", "业务名称"),
-        "quantity": ("成交数量", "数量", "成交股数"),
-        "price": ("成交价格", "成交均价", "价格", "成交价"),
-        "trade_uid": ("合同编号", "成交编号", "委托编号"),
-    },
-    "cmb": {
-        "trade_date": ("日期", "成交日期", "发生日期"),
-        "symbol": ("证券代码", "股票代码", "代码"),
-        "side": ("交易方向", "买卖方向", "买卖标志"),
-        "quantity": ("成交股数", "成交数量", "数量"),
-        "price": ("成交价", "成交价格", "成交均价", "均价"),
-        "trade_uid": ("流水号", "成交编号", "成交序号"),
-    },
-}
+@dataclass(frozen=True)
+class CsvParserSpec:
+    """CSV parser specification for one broker."""
+
+    broker: str
+    aliases: Tuple[str, ...]
+    display_name: str
+    column_hints: Dict[str, Tuple[str, ...]]
+
+
+DEFAULT_PARSER_SPECS: Tuple[CsvParserSpec, ...] = (
+    CsvParserSpec(
+        broker="huatai",
+        aliases=(),
+        display_name="华泰",
+        column_hints={
+            "trade_date": ("成交日期", "成交时间", "发生日期", "日期"),
+            "symbol": ("证券代码", "股票代码", "代码"),
+            "side": ("买卖标志", "买卖方向", "操作"),
+            "quantity": ("成交数量", "数量", "成交股数"),
+            "price": ("成交均价", "成交价格", "价格", "成交价", "均价"),
+            "trade_uid": ("成交编号", "成交序号", "流水号"),
+        },
+    ),
+    CsvParserSpec(
+        broker="citic",
+        aliases=("zhongxin",),
+        display_name="中信",
+        column_hints={
+            "trade_date": ("发生日期", "成交日期", "日期"),
+            "symbol": ("证券代码", "股票代码", "代码"),
+            "side": ("买卖方向", "买卖标志", "业务名称"),
+            "quantity": ("成交数量", "数量", "成交股数"),
+            "price": ("成交价格", "成交均价", "价格", "成交价"),
+            "trade_uid": ("合同编号", "成交编号", "委托编号"),
+        },
+    ),
+    CsvParserSpec(
+        broker="cmb",
+        aliases=("zhaoshang", "cmbchina"),
+        display_name="招商",
+        column_hints={
+            "trade_date": ("日期", "成交日期", "发生日期"),
+            "symbol": ("证券代码", "股票代码", "代码"),
+            "side": ("交易方向", "买卖方向", "买卖标志"),
+            "quantity": ("成交股数", "成交数量", "数量"),
+            "price": ("成交价", "成交价格", "成交均价", "均价"),
+            "trade_uid": ("流水号", "成交编号", "成交序号"),
+        },
+    ),
+)
 
 
 class PortfolioImportService:
@@ -57,6 +82,53 @@ class PortfolioImportService:
     ):
         self.portfolio_service = portfolio_service or PortfolioService()
         self.repo = repo or PortfolioRepository()
+        self._parser_registry: Dict[str, CsvParserSpec] = {}
+        self._broker_alias_map: Dict[str, str] = {}
+        self._init_default_parsers()
+
+    def _init_default_parsers(self) -> None:
+        for spec in DEFAULT_PARSER_SPECS:
+            self.register_parser(spec)
+
+    def register_parser(self, spec: CsvParserSpec) -> None:
+        """Register or replace one broker parser spec."""
+        broker = (spec.broker or "").strip().lower()
+        if not broker:
+            raise ValueError("broker is required")
+        new_aliases = tuple(sorted({alias.strip().lower() for alias in spec.aliases if alias}))
+        for alias in new_aliases:
+            if alias == broker:
+                raise ValueError(f"alias '{alias}' cannot be the same as broker id")
+            existing_target = self._broker_alias_map.get(alias)
+            if existing_target and existing_target != broker:
+                raise ValueError(
+                    f"alias '{alias}' already registered by broker '{existing_target}'"
+                )
+        for alias, target in list(self._broker_alias_map.items()):
+            if target == broker and alias not in new_aliases:
+                self._broker_alias_map.pop(alias, None)
+        self._parser_registry[broker] = CsvParserSpec(
+            broker=broker,
+            aliases=new_aliases,
+            display_name=spec.display_name or broker,
+            column_hints=dict(spec.column_hints or {}),
+        )
+        for alias in self._parser_registry[broker].aliases:
+            self._broker_alias_map[alias] = broker
+
+    def list_supported_brokers(self) -> List[Dict[str, Any]]:
+        """List canonical broker ids and aliases for frontend selector."""
+        items: List[Dict[str, Any]] = []
+        for broker in sorted(self._parser_registry.keys()):
+            aliases = sorted(alias for alias, target in self._broker_alias_map.items() if target == broker)
+            items.append(
+                {
+                    "broker": broker,
+                    "aliases": aliases,
+                    "display_name": self._parser_registry[broker].display_name,
+                }
+            )
+        return items
 
     def parse_trade_csv(
         self,
@@ -65,6 +137,7 @@ class PortfolioImportService:
         content: bytes,
     ) -> Dict[str, Any]:
         broker_norm = self._normalize_broker(broker)
+        parser_spec = self._parser_registry[broker_norm]
         df = self._read_csv(content)
 
         records: List[Dict[str, Any]] = []
@@ -72,7 +145,7 @@ class PortfolioImportService:
         errors: List[str] = []
 
         for idx, row in df.iterrows():
-            normalized = self._normalize_trade_row(row=row, broker=broker_norm)
+            normalized = self._normalize_trade_row(row=row, parser_spec=parser_spec)
             if normalized is None:
                 skipped += 1
                 continue
@@ -100,7 +173,7 @@ class PortfolioImportService:
         records: List[Dict[str, Any]],
         dry_run: bool = False,
     ) -> Dict[str, Any]:
-        self._normalize_broker(broker)
+        broker_norm = self._normalize_broker(broker)
 
         inserted_count = 0
         duplicate_count = 0
@@ -145,7 +218,7 @@ class PortfolioImportService:
                     currency=record.get("currency"),
                     trade_uid=trade_uid,
                     dedup_hash=dedup_hash_to_use,
-                    note=(record.get("note") or "").strip() or f"csv_import:{broker}",
+                    note=(record.get("note") or "").strip() or f"csv_import:{broker_norm}",
                 )
                 inserted_count += 1
             except PortfolioConflictError:
@@ -164,23 +237,12 @@ class PortfolioImportService:
             "errors": errors[:20],
         }
 
-    @staticmethod
-    def _normalize_broker(value: str) -> str:
+    def _normalize_broker(self, value: str) -> str:
         broker = (value or "").strip().lower()
-        alias = {
-            "zhaoshang": "cmb",
-            "cmbchina": "cmb",
-            "zhongxin": "citic",
-        }
-        broker = alias.get(broker, broker)
-        if broker not in SUPPORTED_BROKERS:
-            raise ValueError("broker must be one of: huatai, citic, cmb")
-        if broker == "cmbchina":
-            return "cmb"
-        if broker == "zhaoshang":
-            return "cmb"
-        if broker == "zhongxin":
-            return "citic"
+        broker = self._broker_alias_map.get(broker, broker)
+        if broker not in self._parser_registry:
+            supported = ", ".join(sorted(self._parser_registry.keys()))
+            raise ValueError(f"broker must be one of: {supported}")
         return broker
 
     @staticmethod
@@ -192,8 +254,13 @@ class PortfolioImportService:
                 continue
         return pd.read_csv(io.BytesIO(content))
 
-    def _normalize_trade_row(self, *, row: Any, broker: str) -> Optional[Dict[str, Any]]:
-        broker_hints = BROKER_COLUMN_HINTS.get(broker, {})
+    def _normalize_trade_row(
+        self,
+        *,
+        row: Any,
+        parser_spec: CsvParserSpec,
+    ) -> Optional[Dict[str, Any]]:
+        broker_hints = parser_spec.column_hints
 
         trade_date_raw = self._pick(
             row,

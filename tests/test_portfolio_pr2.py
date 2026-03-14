@@ -72,6 +72,8 @@ class PortfolioPr2TestCase(unittest.TestCase):
         self.service = PortfolioService()
         self.import_service = PortfolioImportService(portfolio_service=self.service)
         self.risk_service = PortfolioRiskService(portfolio_service=self.service)
+        self._board_fetch_patcher = patch.object(PortfolioRiskService, "_fetch_belong_boards", return_value=[])
+        self._board_fetch_patcher.start()
         self.client = TestClient(create_app(static_dir=data_dir / "empty-static"))
 
     def tearDown(self) -> None:
@@ -79,6 +81,7 @@ class PortfolioPr2TestCase(unittest.TestCase):
         Config.reset_instance()
         os.environ.pop("ENV_FILE", None)
         os.environ.pop("DATABASE_PATH", None)
+        self._board_fetch_patcher.stop()
         self.temp_dir.cleanup()
 
     def _save_close(self, symbol: str, on_date: date, close: float) -> None:
@@ -158,6 +161,15 @@ class PortfolioPr2TestCase(unittest.TestCase):
             content=csv_text.encode("utf-8"),
         )
         self.assertEqual(parsed["record_count"], 0)
+
+    def test_import_supported_broker_registry(self) -> None:
+        items = self.import_service.list_supported_brokers()
+        broker_map = {item["broker"]: item for item in items}
+        self.assertIn("huatai", broker_map)
+        self.assertIn("citic", broker_map)
+        self.assertIn("cmb", broker_map)
+        self.assertIn("zhongxin", broker_map["citic"]["aliases"])
+        self.assertIn("zhaoshang", broker_map["cmb"]["aliases"])
 
     def test_risk_threshold_boundary(self) -> None:
         account = self.service.create_account(name="Main", broker="Demo", market="cn", base_currency="CNY")
@@ -290,6 +302,60 @@ class PortfolioPr2TestCase(unittest.TestCase):
         self.assertIn("AAPL", positions)
         self.assertAlmostEqual(positions["AAPL"]["market_value_base"], 700.0, places=6)
 
+    def test_sector_concentration_uses_unclassified_for_non_cn(self) -> None:
+        us_account = self.service.create_account(name="US", broker="Demo", market="us", base_currency="USD")
+        us_id = us_account["id"]
+        self.service.record_cash_ledger(
+            account_id=us_id,
+            event_date=date(2026, 1, 1),
+            direction="in",
+            amount=100.0,
+            currency="USD",
+        )
+        self.service.record_trade(
+            account_id=us_id,
+            symbol="AAPL",
+            trade_date=date(2026, 1, 1),
+            side="buy",
+            quantity=1,
+            price=100,
+            market="us",
+            currency="USD",
+        )
+        self._save_close("AAPL", date(2026, 1, 1), 100.0)
+        report = self.risk_service.get_risk_report(account_id=us_id, as_of=date(2026, 1, 1), cost_method="fifo")
+        self.assertIn("sector_concentration", report)
+        sectors = report["sector_concentration"]["top_sectors"]
+        self.assertTrue(len(sectors) >= 1)
+        self.assertEqual(sectors[0]["sector"], "UNCLASSIFIED")
+
+    @patch.object(PortfolioRiskService, "_fetch_belong_boards", return_value=[{"name": "白酒", "type": "行业"}])
+    def test_sector_concentration_cn_board_mapping(self, _mock_fetch) -> None:
+        account = self.service.create_account(name="Main", broker="Demo", market="cn", base_currency="CNY")
+        aid = account["id"]
+        self.service.record_cash_ledger(
+            account_id=aid,
+            event_date=date(2026, 1, 1),
+            direction="in",
+            amount=10000.0,
+            currency="CNY",
+        )
+        self.service.record_trade(
+            account_id=aid,
+            symbol="600519",
+            trade_date=date(2026, 1, 1),
+            side="buy",
+            quantity=100,
+            price=100,
+            market="cn",
+            currency="CNY",
+        )
+        self._save_close("600519", date(2026, 1, 1), 100.0)
+        report = self.risk_service.get_risk_report(account_id=aid, as_of=date(2026, 1, 1), cost_method="fifo")
+        sectors = report["sector_concentration"]["top_sectors"]
+        self.assertTrue(len(sectors) >= 1)
+        self.assertEqual(sectors[0]["sector"], "白酒")
+
     def test_snapshot_does_not_trigger_online_fx_refresh(self) -> None:
         account = self.service.create_account(name="US", broker="Demo", market="us", base_currency="CNY")
         aid = account["id"]
@@ -383,6 +449,7 @@ class PortfolioPr2TestCase(unittest.TestCase):
         payload = risk_resp.json()
         self.assertEqual(payload["cost_method"], "fifo")
         self.assertIn("concentration", payload)
+        self.assertIn("sector_concentration", payload)
         self.assertIn("drawdown", payload)
         self.assertIn("stop_loss", payload)
 

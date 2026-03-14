@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date, datetime
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from sqlalchemy import and_, delete, desc, func, select
 from sqlalchemy.exc import IntegrityError
@@ -333,6 +333,123 @@ class PortfolioRepository:
             if not candidates:
                 return None
             return min(candidates)
+
+    def query_trades(
+        self,
+        *,
+        account_id: Optional[int],
+        date_from: Optional[date],
+        date_to: Optional[date],
+        symbol: Optional[str],
+        side: Optional[str],
+        page: int,
+        page_size: int,
+    ) -> Tuple[List[PortfolioTrade], int]:
+        with self.db.get_session() as session:
+            conditions = []
+            if account_id is not None:
+                conditions.append(PortfolioTrade.account_id == account_id)
+            if date_from is not None:
+                conditions.append(PortfolioTrade.trade_date >= date_from)
+            if date_to is not None:
+                conditions.append(PortfolioTrade.trade_date <= date_to)
+            if symbol:
+                conditions.append(PortfolioTrade.symbol == symbol)
+            if side:
+                conditions.append(PortfolioTrade.side == side)
+
+            data_query = select(PortfolioTrade)
+            count_query = select(func.count()).select_from(PortfolioTrade)
+            if conditions:
+                where_clause = and_(*conditions)
+                data_query = data_query.where(where_clause)
+                count_query = count_query.where(where_clause)
+
+            total = int(session.execute(count_query).scalar_one() or 0)
+            rows = session.execute(
+                data_query
+                .order_by(PortfolioTrade.trade_date.desc(), PortfolioTrade.id.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            ).scalars().all()
+            return list(rows), total
+
+    def query_cash_ledger(
+        self,
+        *,
+        account_id: Optional[int],
+        date_from: Optional[date],
+        date_to: Optional[date],
+        direction: Optional[str],
+        page: int,
+        page_size: int,
+    ) -> Tuple[List[PortfolioCashLedger], int]:
+        with self.db.get_session() as session:
+            conditions = []
+            if account_id is not None:
+                conditions.append(PortfolioCashLedger.account_id == account_id)
+            if date_from is not None:
+                conditions.append(PortfolioCashLedger.event_date >= date_from)
+            if date_to is not None:
+                conditions.append(PortfolioCashLedger.event_date <= date_to)
+            if direction:
+                conditions.append(PortfolioCashLedger.direction == direction)
+
+            data_query = select(PortfolioCashLedger)
+            count_query = select(func.count()).select_from(PortfolioCashLedger)
+            if conditions:
+                where_clause = and_(*conditions)
+                data_query = data_query.where(where_clause)
+                count_query = count_query.where(where_clause)
+
+            total = int(session.execute(count_query).scalar_one() or 0)
+            rows = session.execute(
+                data_query
+                .order_by(PortfolioCashLedger.event_date.desc(), PortfolioCashLedger.id.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            ).scalars().all()
+            return list(rows), total
+
+    def query_corporate_actions(
+        self,
+        *,
+        account_id: Optional[int],
+        date_from: Optional[date],
+        date_to: Optional[date],
+        symbol: Optional[str],
+        action_type: Optional[str],
+        page: int,
+        page_size: int,
+    ) -> Tuple[List[PortfolioCorporateAction], int]:
+        with self.db.get_session() as session:
+            conditions = []
+            if account_id is not None:
+                conditions.append(PortfolioCorporateAction.account_id == account_id)
+            if date_from is not None:
+                conditions.append(PortfolioCorporateAction.effective_date >= date_from)
+            if date_to is not None:
+                conditions.append(PortfolioCorporateAction.effective_date <= date_to)
+            if symbol:
+                conditions.append(PortfolioCorporateAction.symbol == symbol)
+            if action_type:
+                conditions.append(PortfolioCorporateAction.action_type == action_type)
+
+            data_query = select(PortfolioCorporateAction)
+            count_query = select(func.count()).select_from(PortfolioCorporateAction)
+            if conditions:
+                where_clause = and_(*conditions)
+                data_query = data_query.where(where_clause)
+                count_query = count_query.where(where_clause)
+
+            total = int(session.execute(count_query).scalar_one() or 0)
+            rows = session.execute(
+                data_query
+                .order_by(PortfolioCorporateAction.effective_date.desc(), PortfolioCorporateAction.id.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            ).scalars().all()
+            return list(rows), total
 
     # ------------------------------------------------------------------
     # Price / FX

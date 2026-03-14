@@ -991,3 +991,43 @@ A: 检查是否启用了 Actions，以及 cron 表达式是否正确（注意是
 - Fail-open semantics:
   - If risk block fails, snapshot is still returned.
   - If portfolio module is unavailable, tool returns structured `not_supported`.
+
+## Portfolio P0 PR4 (Gap Closure)
+
+### API query closure
+- Added event query endpoints:
+  - `GET /api/v1/portfolio/trades`
+  - `GET /api/v1/portfolio/cash-ledger`
+  - `GET /api/v1/portfolio/corporate-actions`
+- Unified query parameters:
+  - `account_id`, `date_from`, `date_to`, `page`, `page_size`
+- Trade/cash/corporate-action specific filters:
+  - trades: `symbol`, `side`
+  - cash-ledger: `direction`
+  - corporate-actions: `symbol`, `action_type`
+- Unified response shape:
+  - `items`, `total`, `page`, `page_size`
+
+### CSV import framework
+- Reworked parser logic into extensible parser registry.
+- Built-in adapters remain: `huatai`, `citic`, `cmb` with alias mapping.
+- Added parser discovery endpoint:
+  - `GET /api/v1/portfolio/imports/csv/brokers`
+
+### Web closure
+- `/portfolio` page now includes:
+  - inline account creation entry with empty-state guide and auto-switch to created account
+  - manual event entry forms: trade / cash / corporate action
+  - CSV parse + commit operations (supports `dry_run`)
+  - event list panel with filters and pagination
+  - broker selector fallback to built-in brokers (`huatai/citic/cmb`) when broker list API fails or returns empty
+
+### Risk sector concentration semantics
+- Added `sector_concentration` in `GET /api/v1/portfolio/risk`.
+- Mapping rules:
+  - CN positions try board mapping from `get_belong_boards`.
+  - Non-CN or mapping failure falls back to `UNCLASSIFIED`.
+  - Uses single primary board per symbol to avoid duplicate weighting.
+- Fail-open:
+  - board lookup errors do not interrupt risk response.
+  - response returns coverage/error details for explainability.

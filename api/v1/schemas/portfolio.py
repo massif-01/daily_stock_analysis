@@ -82,6 +82,69 @@ class PortfolioEventCreatedResponse(BaseModel):
     id: int
 
 
+class PortfolioTradeListItem(BaseModel):
+    id: int
+    account_id: int
+    trade_uid: Optional[str] = None
+    symbol: str
+    market: str
+    currency: str
+    trade_date: str
+    side: str
+    quantity: float
+    price: float
+    fee: float
+    tax: float
+    note: Optional[str] = None
+    created_at: Optional[str] = None
+
+
+class PortfolioTradeListResponse(BaseModel):
+    items: List[PortfolioTradeListItem] = Field(default_factory=list)
+    total: int
+    page: int
+    page_size: int
+
+
+class PortfolioCashLedgerListItem(BaseModel):
+    id: int
+    account_id: int
+    event_date: str
+    direction: str
+    amount: float
+    currency: str
+    note: Optional[str] = None
+    created_at: Optional[str] = None
+
+
+class PortfolioCashLedgerListResponse(BaseModel):
+    items: List[PortfolioCashLedgerListItem] = Field(default_factory=list)
+    total: int
+    page: int
+    page_size: int
+
+
+class PortfolioCorporateActionListItem(BaseModel):
+    id: int
+    account_id: int
+    symbol: str
+    market: str
+    currency: str
+    effective_date: str
+    action_type: str
+    cash_dividend_per_share: Optional[float] = None
+    split_ratio: Optional[float] = None
+    note: Optional[str] = None
+    created_at: Optional[str] = None
+
+
+class PortfolioCorporateActionListResponse(BaseModel):
+    items: List[PortfolioCorporateActionListItem] = Field(default_factory=list)
+    total: int
+    page: int
+    page_size: int
+
+
 class PortfolioPositionItem(BaseModel):
     symbol: str
     market: str
@@ -163,6 +226,16 @@ class PortfolioImportCommitResponse(BaseModel):
     errors: List[str] = Field(default_factory=list)
 
 
+class PortfolioImportBrokerItem(BaseModel):
+    broker: str
+    aliases: List[str] = Field(default_factory=list)
+    display_name: Optional[str] = None
+
+
+class PortfolioImportBrokerListResponse(BaseModel):
+    brokers: List[PortfolioImportBrokerItem] = Field(default_factory=list)
+
+
 class PortfolioFxRefreshResponse(BaseModel):
     as_of: str
     account_count: int
@@ -179,5 +252,6 @@ class PortfolioRiskResponse(BaseModel):
     currency: str
     thresholds: Dict[str, Any] = Field(default_factory=dict)
     concentration: Dict[str, Any] = Field(default_factory=dict)
+    sector_concentration: Dict[str, Any] = Field(default_factory=dict)
     drawdown: Dict[str, Any] = Field(default_factory=dict)
     stop_loss: Dict[str, Any] = Field(default_factory=dict)

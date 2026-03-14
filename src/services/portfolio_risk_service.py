@@ -24,6 +24,8 @@ class PortfolioRiskService:
         self.repo = repo or PortfolioRepository()
         self.portfolio_service = portfolio_service or PortfolioService(repo=self.repo)
         self.config = config or get_config()
+        self._data_manager = None
+        self._data_manager_init_error = ""
 
     def get_risk_report(
         self,
@@ -52,6 +54,11 @@ class PortfolioRiskService:
             thresholds["concentration_alert_pct"],
             as_of_date=as_of_date,
         )
+        sector_concentration = self._build_sector_concentration(
+            snapshot,
+            thresholds["concentration_alert_pct"],
+            as_of_date=as_of_date,
+        )
         self._ensure_drawdown_snapshot_window(
             account_id=account_id,
             as_of_date=as_of_date,
@@ -74,6 +81,7 @@ class PortfolioRiskService:
             "currency": snapshot["currency"],
             "thresholds": thresholds,
             "concentration": concentration,
+            "sector_concentration": sector_concentration,
             "drawdown": drawdown,
             "stop_loss": stop_loss,
         }
@@ -192,6 +200,151 @@ class PortfolioRiskService:
             "alert": bool(top_weight >= threshold_pct),
             "top_positions": rows[:10],
         }
+
+    def _build_sector_concentration(
+        self,
+        snapshot: Dict[str, Any],
+        threshold_pct: float,
+        *,
+        as_of_date: date,
+    ) -> Dict[str, Any]:
+        total_mv = float(snapshot.get("total_market_value", 0.0) or 0.0)
+        sector_exposure: Dict[str, float] = {}
+        sector_symbols: Dict[str, set] = {}
+        coverage = {
+            "classified_count": 0,
+            "unclassified_count": 0,
+            "failed_count": 0,
+        }
+        errors: List[str] = []
+        board_cache: Dict[Tuple[str, str], str] = {}
+
+        for account in snapshot.get("accounts", []):
+            for pos in account.get("positions", []):
+                symbol = str(pos.get("symbol") or "").strip().upper()
+                market = str(pos.get("market") or account.get("market") or "").strip().lower()
+                if not symbol:
+                    continue
+
+                market_value = float(pos.get("market_value_base") or 0.0)
+                valuation_currency = str(pos.get("valuation_currency") or account.get("base_currency") or "CNY")
+                converted, _, _ = self.portfolio_service.convert_amount(
+                    amount=market_value,
+                    from_currency=valuation_currency,
+                    to_currency="CNY",
+                    as_of_date=as_of_date,
+                )
+
+                sector = self._resolve_primary_sector(
+                    symbol=symbol,
+                    market=market,
+                    board_cache=board_cache,
+                    coverage=coverage,
+                    errors=errors,
+                )
+                sector_exposure[sector] = sector_exposure.get(sector, 0.0) + converted
+                sector_symbols.setdefault(sector, set()).add(symbol)
+
+        rows = []
+        for sector, exposure in sector_exposure.items():
+            weight = (exposure / total_mv * 100.0) if total_mv > 0 else 0.0
+            rows.append(
+                {
+                    "sector": sector,
+                    "market_value_base": round(exposure, 6),
+                    "weight_pct": round(weight, 4),
+                    "symbol_count": len(sector_symbols.get(sector, set())),
+                    "is_alert": bool(weight >= threshold_pct),
+                }
+            )
+        rows.sort(key=lambda item: item["market_value_base"], reverse=True)
+        top_weight = rows[0]["weight_pct"] if rows else 0.0
+
+        return {
+            "total_market_value": round(total_mv, 6),
+            "top_weight_pct": round(float(top_weight), 4),
+            "alert": bool(top_weight >= threshold_pct),
+            "top_sectors": rows[:10],
+            "coverage": coverage,
+            "errors": errors[:20],
+        }
+
+    def _resolve_primary_sector(
+        self,
+        *,
+        symbol: str,
+        market: str,
+        board_cache: Dict[Tuple[str, str], str],
+        coverage: Dict[str, int],
+        errors: List[str],
+    ) -> str:
+        cache_key = (symbol, market)
+        if cache_key in board_cache:
+            return board_cache[cache_key]
+
+        if market != "cn":
+            coverage["unclassified_count"] += 1
+            board_cache[cache_key] = "UNCLASSIFIED"
+            return board_cache[cache_key]
+
+        try:
+            boards = self._fetch_belong_boards(symbol)
+            sector_name = self._pick_primary_board_name(boards)
+            if sector_name:
+                coverage["classified_count"] += 1
+                board_cache[cache_key] = sector_name
+                return board_cache[cache_key]
+        except Exception as exc:
+            coverage["failed_count"] += 1
+            errors.append(f"{symbol}: {exc}")
+
+        coverage["unclassified_count"] += 1
+        board_cache[cache_key] = "UNCLASSIFIED"
+        return board_cache[cache_key]
+
+    def _fetch_belong_boards(self, symbol: str) -> List[Dict[str, Any]]:
+        manager = self._get_data_manager()
+        if manager is None:
+            return []
+        result = manager.get_belong_boards(symbol)
+        if isinstance(result, list):
+            return result
+        return []
+
+    @staticmethod
+    def _pick_primary_board_name(boards: List[Dict[str, Any]]) -> Optional[str]:
+        if not boards:
+            return None
+
+        preferred: Optional[str] = None
+        fallback: Optional[str] = None
+        for item in boards:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip()
+            if not name:
+                continue
+            if fallback is None:
+                fallback = name
+            type_text = str(item.get("type") or "").strip().lower()
+            if "行业" in type_text or "industry" in type_text:
+                preferred = name
+                break
+        return preferred or fallback
+
+    def _get_data_manager(self):
+        if self._data_manager is not None:
+            return self._data_manager
+        if self._data_manager_init_error:
+            return None
+        try:
+            from data_provider import DataFetcherManager
+
+            self._data_manager = DataFetcherManager()
+            return self._data_manager
+        except Exception as exc:  # pragma: no cover - fail-open initialization
+            self._data_manager_init_error = str(exc)
+            return None
 
     def _build_drawdown(
         self,

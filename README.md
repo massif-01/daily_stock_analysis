@@ -490,3 +490,32 @@ Compatibility and rollback:
 - PR3 only appends a new web page, API client/types, and one Agent tool.
 - No existing API schema is removed.
 - Rollback by removing the `/portfolio` route and `get_portfolio_snapshot` tool registration.
+
+## Portfolio P0 PR4 (Gap Closure)
+
+This phase closes remaining P0 gaps on top of PR3 with additive changes only.
+
+- API query closure:
+  - `GET /api/v1/portfolio/trades`
+  - `GET /api/v1/portfolio/cash-ledger`
+  - `GET /api/v1/portfolio/corporate-actions`
+  - Common filters: `account_id`, `date_from`, `date_to`, `page`, `page_size`
+- CSV framework upgrade:
+  - parser registry for extensible broker adapters
+  - new broker discovery endpoint: `GET /api/v1/portfolio/imports/csv/brokers`
+- Web portfolio page closure:
+  - added inline account creation entry (empty-state guided)
+  - manual entry forms for trade/cash/corporate action
+  - CSV parse/commit entry (`dry_run` supported)
+  - event list with type switch, filters, pagination
+  - broker selector fail-open fallback to built-in `huatai/citic/cmb` when broker-list API is unavailable
+- Risk semantics extension:
+  - new `sector_concentration` block in risk response
+  - A-share sector mapping via `get_belong_boards`
+  - non-CN/lookup failure falls back to `UNCLASSIFIED` (fail-open)
+  - pie chart prefers sector concentration, then degrades to top positions
+
+Compatibility and rollback:
+- Existing endpoints and keys remain available.
+- New fields are additive only (`sector_concentration`, list responses, broker list).
+- Rollback can remove PR4-only endpoints/UI blocks without affecting PR1-PR3 core ledger flow.

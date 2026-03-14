@@ -243,6 +243,133 @@ class PortfolioService:
         )
         return {"id": row.id}
 
+    def list_trade_events(
+        self,
+        *,
+        account_id: Optional[int] = None,
+        date_from: Optional[date] = None,
+        date_to: Optional[date] = None,
+        symbol: Optional[str] = None,
+        side: Optional[str] = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> Dict[str, Any]:
+        if account_id is not None:
+            self._require_active_account(account_id)
+        page, page_size = self._validate_paging(page=page, page_size=page_size)
+        if date_from is not None and date_to is not None and date_from > date_to:
+            raise ValueError("date_from must be <= date_to")
+
+        symbol_norm: Optional[str] = None
+        if symbol is not None and symbol.strip():
+            symbol_norm = canonical_stock_code(symbol)
+            if not symbol_norm:
+                raise ValueError("symbol is invalid")
+
+        side_norm: Optional[str] = None
+        if side is not None and side.strip():
+            side_norm = side.strip().lower()
+            if side_norm not in VALID_SIDES:
+                raise ValueError("side must be buy or sell")
+
+        rows, total = self.repo.query_trades(
+            account_id=account_id,
+            date_from=date_from,
+            date_to=date_to,
+            symbol=symbol_norm,
+            side=side_norm,
+            page=page,
+            page_size=page_size,
+        )
+        return {
+            "items": [self._trade_row_to_dict(row) for row in rows],
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+        }
+
+    def list_cash_ledger_events(
+        self,
+        *,
+        account_id: Optional[int] = None,
+        date_from: Optional[date] = None,
+        date_to: Optional[date] = None,
+        direction: Optional[str] = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> Dict[str, Any]:
+        if account_id is not None:
+            self._require_active_account(account_id)
+        page, page_size = self._validate_paging(page=page, page_size=page_size)
+        if date_from is not None and date_to is not None and date_from > date_to:
+            raise ValueError("date_from must be <= date_to")
+
+        direction_norm: Optional[str] = None
+        if direction is not None and direction.strip():
+            direction_norm = direction.strip().lower()
+            if direction_norm not in VALID_CASH_DIRECTIONS:
+                raise ValueError("direction must be in or out")
+
+        rows, total = self.repo.query_cash_ledger(
+            account_id=account_id,
+            date_from=date_from,
+            date_to=date_to,
+            direction=direction_norm,
+            page=page,
+            page_size=page_size,
+        )
+        return {
+            "items": [self._cash_ledger_row_to_dict(row) for row in rows],
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+        }
+
+    def list_corporate_action_events(
+        self,
+        *,
+        account_id: Optional[int] = None,
+        date_from: Optional[date] = None,
+        date_to: Optional[date] = None,
+        symbol: Optional[str] = None,
+        action_type: Optional[str] = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> Dict[str, Any]:
+        if account_id is not None:
+            self._require_active_account(account_id)
+        page, page_size = self._validate_paging(page=page, page_size=page_size)
+        if date_from is not None and date_to is not None and date_from > date_to:
+            raise ValueError("date_from must be <= date_to")
+
+        symbol_norm: Optional[str] = None
+        if symbol is not None and symbol.strip():
+            symbol_norm = canonical_stock_code(symbol)
+            if not symbol_norm:
+                raise ValueError("symbol is invalid")
+
+        action_norm: Optional[str] = None
+        if action_type is not None and action_type.strip():
+            action_norm = action_type.strip().lower()
+            if action_norm not in VALID_CORPORATE_ACTIONS:
+                raise ValueError("action_type must be cash_dividend or split_adjustment")
+
+        rows, total = self.repo.query_corporate_actions(
+            account_id=account_id,
+            date_from=date_from,
+            date_to=date_to,
+            symbol=symbol_norm,
+            action_type=action_norm,
+            page=page,
+            page_size=page_size,
+        )
+        return {
+            "items": [self._corporate_action_row_to_dict(row) for row in rows],
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+        }
+
     # ------------------------------------------------------------------
     # Snapshot replay
     # ------------------------------------------------------------------
@@ -904,6 +1031,64 @@ class PortfolioService:
             "created_at": row.created_at.isoformat() if row.created_at else None,
             "updated_at": row.updated_at.isoformat() if row.updated_at else None,
         }
+
+    @staticmethod
+    def _trade_row_to_dict(row: Any) -> Dict[str, Any]:
+        return {
+            "id": int(row.id),
+            "account_id": int(row.account_id),
+            "trade_uid": row.trade_uid,
+            "symbol": row.symbol,
+            "market": row.market,
+            "currency": row.currency,
+            "trade_date": row.trade_date.isoformat() if row.trade_date else "",
+            "side": row.side,
+            "quantity": float(row.quantity),
+            "price": float(row.price),
+            "fee": float(row.fee),
+            "tax": float(row.tax),
+            "note": row.note,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+
+    @staticmethod
+    def _cash_ledger_row_to_dict(row: Any) -> Dict[str, Any]:
+        return {
+            "id": int(row.id),
+            "account_id": int(row.account_id),
+            "event_date": row.event_date.isoformat() if row.event_date else "",
+            "direction": row.direction,
+            "amount": float(row.amount),
+            "currency": row.currency,
+            "note": row.note,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+
+    @staticmethod
+    def _corporate_action_row_to_dict(row: Any) -> Dict[str, Any]:
+        return {
+            "id": int(row.id),
+            "account_id": int(row.account_id),
+            "symbol": row.symbol,
+            "market": row.market,
+            "currency": row.currency,
+            "effective_date": row.effective_date.isoformat() if row.effective_date else "",
+            "action_type": row.action_type,
+            "cash_dividend_per_share": (
+                float(row.cash_dividend_per_share) if row.cash_dividend_per_share is not None else None
+            ),
+            "split_ratio": float(row.split_ratio) if row.split_ratio is not None else None,
+            "note": row.note,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+
+    @staticmethod
+    def _validate_paging(*, page: int, page_size: int) -> Tuple[int, int]:
+        if page < 1:
+            raise ValueError("page must be >= 1")
+        if page_size < 1 or page_size > 100:
+            raise ValueError("page_size must be in [1, 100]")
+        return page, page_size
 
     @staticmethod
     def _normalize_market(value: str) -> str:

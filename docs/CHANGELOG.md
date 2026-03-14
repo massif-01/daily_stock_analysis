@@ -24,9 +24,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   - Added Web route `/portfolio` with snapshot/risk consumption.
   - Added concentration pie chart view (Top Positions) via Recharts.
   - Added `get_portfolio_snapshot` Agent data tool with compact-by-default output and optional detailed positions.
+- Portfolio P0 PR4 gap closure capability:
+  - Added portfolio event query APIs (`GET /portfolio/trades`, `GET /portfolio/cash-ledger`, `GET /portfolio/corporate-actions`) with filters and pagination.
+  - Added extensible CSV parser registry and broker discovery API (`GET /portfolio/imports/csv/brokers`).
+  - Added Web manual entry forms (trade/cash/corporate action), inline account creation entry, CSV parse/commit entry, and event list view.
+  - Added risk `sector_concentration` block with A-share board mapping and `UNCLASSIFIED` fail-open fallback.
+  - Added broker selector UI fail-open fallback to built-in brokers when broker discovery API fails or returns empty.
 
 ### Changed
 - `POST /api/v1/portfolio/trades` now returns `409` on duplicate `trade_uid` conflict within the same account.
+- Portfolio risk response now includes additive `sector_concentration` field; existing `concentration` remains unchanged for compatibility.
 
 ### Fixed
 - Portfolio CSV import dedup now persists/checks key-field hash even when `trade_uid` exists, preventing mixed-source duplicate writes (with/without `trade_uid`) for the same trade.
