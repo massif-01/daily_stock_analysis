@@ -440,6 +440,8 @@ This phase introduces a minimal-intrusion portfolio core workflow for account/ev
 - Valuation replay supports `fifo` (default) and `avg`.
 - Same-day deterministic ordering is fixed to: `cash -> corporate action -> trade`.
 - Duplicate `trade_uid` in same account returns `409 conflict`.
+- Sell trades are rejected at write time when replayed holdings are insufficient, preventing irrecoverable oversell
+  ledger states.
 - Snapshot cache persistence is fail-open and written atomically (positions/lots/snapshot in one transaction).
 - Position/lot cache rows are keyed by `snapshot_date`, so historical snapshot requests do not overwrite newer cache
   entries.

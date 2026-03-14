@@ -8,12 +8,13 @@ import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
+from unittest import mock
 
 import pandas as pd
 from sqlalchemy import select
 
 from src.config import Config
-from src.services.portfolio_service import PortfolioService
+from src.services.portfolio_service import PortfolioConflictError, PortfolioService
 from src.storage import DatabaseManager, PortfolioPosition, PortfolioPositionLot
 
 
@@ -383,6 +384,86 @@ class PortfolioServiceTestCase(unittest.TestCase):
 
         self.assertAlmostEqual(pos["last_price"], 15.0, places=6)
         self.assertAlmostEqual(acc["total_market_value"], 1500.0, places=6)
+
+    def test_record_trade_rejects_oversell_before_persisting(self) -> None:
+        account = self.service.create_account(name="Main", broker="Demo", market="cn", base_currency="CNY")
+        aid = account["id"]
+
+        self.service.record_cash_ledger(
+            account_id=aid,
+            event_date=date(2026, 1, 1),
+            direction="in",
+            amount=5000,
+            currency="CNY",
+        )
+        self.service.record_trade(
+            account_id=aid,
+            symbol="600519",
+            trade_date=date(2026, 1, 2),
+            side="buy",
+            quantity=100,
+            price=10,
+            market="cn",
+            currency="CNY",
+        )
+
+        with self.assertRaises(PortfolioConflictError):
+            self.service.record_trade(
+                account_id=aid,
+                symbol="600519",
+                trade_date=date(2026, 1, 3),
+                side="sell",
+                quantity=150,
+                price=12,
+                market="cn",
+                currency="CNY",
+            )
+
+        trades = self.service.repo.list_trades(aid, as_of=date(2026, 1, 3))
+        self.assertEqual(len(trades), 1)
+        self.assertEqual(trades[0].side, "buy")
+        self.assertAlmostEqual(float(trades[0].quantity), 100.0, places=6)
+
+    def test_snapshot_cache_persistence_is_fail_open(self) -> None:
+        account = self.service.create_account(name="Main", broker="Demo", market="cn", base_currency="CNY")
+        aid = account["id"]
+
+        self.service.record_cash_ledger(
+            account_id=aid,
+            event_date=date(2026, 1, 1),
+            direction="in",
+            amount=5000,
+            currency="CNY",
+        )
+        self.service.record_trade(
+            account_id=aid,
+            symbol="600519",
+            trade_date=date(2026, 1, 2),
+            side="buy",
+            quantity=100,
+            price=10,
+            market="cn",
+            currency="CNY",
+        )
+        self._save_close("600519", date(2026, 1, 3), 12.0)
+
+        with mock.patch.object(
+            self.service.repo,
+            "replace_positions_lots_and_snapshot",
+            side_effect=RuntimeError("cache down"),
+        ) as mock_replace:
+            snapshot = self.service.get_portfolio_snapshot(
+                account_id=aid,
+                as_of=date(2026, 1, 3),
+                cost_method="fifo",
+            )
+
+        mock_replace.assert_called_once()
+        acc = snapshot["accounts"][0]
+        self.assertAlmostEqual(acc["total_cash"], 4000.0, places=6)
+        self.assertAlmostEqual(acc["total_market_value"], 1200.0, places=6)
+        self.assertAlmostEqual(acc["total_equity"], 5200.0, places=6)
+        self.assertFalse(acc["fx_stale"])
 
 
 if __name__ == "__main__":

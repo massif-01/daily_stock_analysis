@@ -140,6 +140,15 @@ class PortfolioService:
         symbol_norm = canonical_stock_code(symbol)
         if not symbol_norm:
             raise ValueError("symbol is required")
+        if side_norm == "sell":
+            self._ensure_sell_quantity_available(
+                account_id=account_id,
+                symbol=symbol_norm,
+                market=market_norm,
+                currency=currency_norm,
+                trade_date=trade_date,
+                quantity=float(quantity),
+            )
 
         try:
             row = self.repo.add_trade(
@@ -267,24 +276,34 @@ class PortfolioService:
         for account in account_rows:
             account_snapshot = self._replay_account(account=account, as_of_date=as_of_date, cost_method=method)
 
-            self.repo.replace_positions_lots_and_snapshot(
-                account_id=account.id,
-                snapshot_date=as_of_date,
-                cost_method=method,
-                base_currency=account.base_currency,
-                total_cash=account_snapshot["total_cash"],
-                total_market_value=account_snapshot["total_market_value"],
-                total_equity=account_snapshot["total_equity"],
-                unrealized_pnl=account_snapshot["unrealized_pnl"],
-                realized_pnl=account_snapshot["realized_pnl"],
-                fee_total=account_snapshot["fee_total"],
-                tax_total=account_snapshot["tax_total"],
-                fx_stale=account_snapshot["fx_stale"],
-                payload=json.dumps(account_snapshot["payload"], ensure_ascii=False),
-                positions=account_snapshot["positions_cache"],
-                lots=account_snapshot["lots_cache"],
-                valuation_currency=account.base_currency,
-            )
+            try:
+                self.repo.replace_positions_lots_and_snapshot(
+                    account_id=account.id,
+                    snapshot_date=as_of_date,
+                    cost_method=method,
+                    base_currency=account.base_currency,
+                    total_cash=account_snapshot["total_cash"],
+                    total_market_value=account_snapshot["total_market_value"],
+                    total_equity=account_snapshot["total_equity"],
+                    unrealized_pnl=account_snapshot["unrealized_pnl"],
+                    realized_pnl=account_snapshot["realized_pnl"],
+                    fee_total=account_snapshot["fee_total"],
+                    tax_total=account_snapshot["tax_total"],
+                    fx_stale=account_snapshot["fx_stale"],
+                    payload=json.dumps(account_snapshot["payload"], ensure_ascii=False),
+                    positions=account_snapshot["positions_cache"],
+                    lots=account_snapshot["lots_cache"],
+                    valuation_currency=account.base_currency,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Snapshot cache persistence failed for account_id=%s as_of=%s cost_method=%s: %s",
+                    account.id,
+                    as_of_date.isoformat(),
+                    method,
+                    exc,
+                    exc_info=True,
+                )
 
             accounts_payload.append(account_snapshot["public"])
 
@@ -369,6 +388,101 @@ class PortfolioService:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+    def _ensure_sell_quantity_available(
+        self,
+        *,
+        account_id: int,
+        symbol: str,
+        market: str,
+        currency: str,
+        trade_date: date,
+        quantity: float,
+    ) -> None:
+        key = (symbol, market, currency)
+        try:
+            fifo_lots = self._replay_quantity_lots(account_id=account_id, as_of_date=trade_date)
+        except ValueError as exc:
+            raise PortfolioConflictError(f"Ledger replay failed before recording trade: {exc}") from exc
+
+        available = self._held_quantity(
+            key=key,
+            cost_method="fifo",
+            fifo_lots=fifo_lots,
+            avg_state={},
+        )
+        if available + EPS < quantity:
+            raise PortfolioConflictError(
+                f"Oversell rejected for {symbol}: available {round(available, 8)}, requested {round(quantity, 8)}"
+            )
+
+    def _replay_quantity_lots(
+        self,
+        *,
+        account_id: int,
+        as_of_date: date,
+    ) -> Dict[Tuple[str, str, str], List[Dict[str, Any]]]:
+        trades = self.repo.list_trades(account_id, as_of=as_of_date)
+        corporate_actions = self.repo.list_corporate_actions(account_id, as_of=as_of_date)
+
+        events = []
+        for row in trades:
+            events.append(("trade", row.trade_date, row.id, row))
+        for row in corporate_actions:
+            events.append(("corp", row.effective_date, row.id, row))
+
+        event_priority = {"corp": 0, "trade": 1}
+        events.sort(key=lambda item: (item[1], event_priority[item[0]], item[2]))
+
+        fifo_lots: Dict[Tuple[str, str, str], List[Dict[str, Any]]] = defaultdict(list)
+        for event_type, event_date, _, event in events:
+            key = (
+                canonical_stock_code(event.symbol),
+                self._normalize_market(event.market),
+                self._normalize_currency(event.currency),
+            )
+            if event_type == "corp":
+                action_type = (event.action_type or "").strip().lower()
+                if action_type == "cash_dividend":
+                    continue
+                if action_type != "split_adjustment":
+                    raise ValueError(f"Unsupported corporate action type: {event.action_type}")
+
+                split_ratio = float(event.split_ratio or 0.0)
+                if split_ratio <= 0:
+                    raise ValueError(f"Invalid split_ratio for {event.symbol}")
+                if abs(split_ratio - 1.0) <= EPS:
+                    continue
+                for lot in fifo_lots[key]:
+                    lot["remaining_quantity"] *= split_ratio
+                    lot["unit_cost"] /= split_ratio
+                continue
+
+            qty = float(event.quantity or 0.0)
+            price = float(event.price or 0.0)
+            if qty <= 0 or price <= 0:
+                raise ValueError(f"Invalid trade quantity or price for {event.symbol}")
+
+            side = (event.side or "").strip().lower()
+            if side == "buy":
+                fifo_lots[key].append(
+                    {
+                        "symbol": key[0],
+                        "market": key[1],
+                        "currency": key[2],
+                        "open_date": event_date,
+                        "remaining_quantity": qty,
+                        "unit_cost": price,
+                        "source_trade_id": event.id,
+                    }
+                )
+                continue
+            if side == "sell":
+                self._consume_fifo_lots(fifo_lots[key], qty, key[0])
+                continue
+            raise ValueError(f"Unsupported trade side: {event.side}")
+
+        return fifo_lots
+
     def _replay_account(self, *, account: Any, as_of_date: date, cost_method: str) -> Dict[str, Any]:
         trades = self.repo.list_trades(account.id, as_of=as_of_date)
         cash_ledger = self.repo.list_cash_ledger(account.id, as_of=as_of_date)

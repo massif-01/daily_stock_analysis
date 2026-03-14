@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- 🧾 **Portfolio oversell guardrail** — sell trades are now validated against the replayed ledger before persistence, so
+  oversell requests are rejected without leaving the account in a persisted-but-unreplayable state.
+- 🛟 **Portfolio snapshot cache fail-open** — `/api/v1/portfolio/snapshot` now returns replayed results even when
+  cache table persistence fails, matching the documented best-effort cache contract.
 - 🧾 **Portfolio snapshot cache isolation** — `portfolio_positions` / `portfolio_position_lots` are now scoped by
   `snapshot_date`, so backdated `/api/v1/portfolio/snapshot` requests no longer overwrite newer cached holdings.
 - 🌏 **Portfolio price lookup normalization** — snapshot valuation now resolves market-aware code variants such as
