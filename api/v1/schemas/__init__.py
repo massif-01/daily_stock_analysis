@@ -62,6 +62,19 @@ from api.v1.schemas.system_config import (
     SystemConfigValidationErrorResponse,
     SystemConfigConflictResponse,
 )
+from api.v1.schemas.portfolio import (
+    PortfolioAccountCreateRequest,
+    PortfolioAccountUpdateRequest,
+    PortfolioAccountItem,
+    PortfolioAccountListResponse,
+    PortfolioTradeCreateRequest,
+    PortfolioCashLedgerCreateRequest,
+    PortfolioCorporateActionCreateRequest,
+    PortfolioEventCreatedResponse,
+    PortfolioPositionItem,
+    PortfolioAccountSnapshot,
+    PortfolioSnapshotResponse,
+)
 
 __all__ = [
     # common
@@ -112,4 +125,16 @@ __all__ = [
     "TestLLMChannelResponse",
     "SystemConfigValidationErrorResponse",
     "SystemConfigConflictResponse",
+    # portfolio
+    "PortfolioAccountCreateRequest",
+    "PortfolioAccountUpdateRequest",
+    "PortfolioAccountItem",
+    "PortfolioAccountListResponse",
+    "PortfolioTradeCreateRequest",
+    "PortfolioCashLedgerCreateRequest",
+    "PortfolioCorporateActionCreateRequest",
+    "PortfolioEventCreatedResponse",
+    "PortfolioPositionItem",
+    "PortfolioAccountSnapshot",
+    "PortfolioSnapshotResponse",
 ]

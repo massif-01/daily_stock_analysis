@@ -427,3 +427,27 @@ npm run build
 本项目仅供学习和研究使用，不构成任何投资建议。股市有风险，投资需谨慎。作者不对使用本项目产生的任何损失负责。
 
 ---
+
+## Portfolio P0 PR1 (Core Ledger and Snapshot)
+
+This phase introduces a minimal-intrusion portfolio core workflow for account/events/snapshot.
+
+- New API group: `/api/v1/portfolio`
+- Covered endpoints:
+  - `POST /accounts`, `GET /accounts`, `PUT /accounts/{account_id}`, `DELETE /accounts/{account_id}`
+  - `POST /trades`, `POST /cash-ledger`, `POST /corporate-actions`
+  - `GET /snapshot`
+- Valuation replay supports `fifo` (default) and `avg`.
+- Same-day deterministic ordering is fixed to: `cash -> corporate action -> trade`.
+- Duplicate `trade_uid` in same account returns `409 conflict`.
+- Snapshot cache persistence is fail-open and written atomically (positions/lots/snapshot in one transaction).
+
+Rollback:
+- PR1 scope is isolated to portfolio tables/repository/service/API module.
+- Revert by removing portfolio route exposure and related portfolio module changes.
+
+Validated scope:
+- Replay consistency: FIFO vs AVG, partial sell
+- Corporate actions: cash dividend and split adjustment
+- Same-day ordering edge cases
+- API contract: happy path + invalid cost method + duplicate trade_uid conflict

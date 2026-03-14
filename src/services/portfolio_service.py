@@ -1,0 +1,788 @@
+# -*- coding: utf-8 -*-
+"""Portfolio service for P0 account/events/snapshot workflow."""
+
+from __future__ import annotations
+
+import json
+import logging
+from collections import defaultdict
+from dataclasses import dataclass
+from datetime import date
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+from data_provider.base import canonical_stock_code
+from src.repositories.portfolio_repo import DuplicateTradeUidError, PortfolioRepository
+
+logger = logging.getLogger(__name__)
+
+EPS = 1e-8
+VALID_MARKETS = {"cn", "hk", "us"}
+VALID_COST_METHODS = {"fifo", "avg"}
+VALID_SIDES = {"buy", "sell"}
+VALID_CASH_DIRECTIONS = {"in", "out"}
+VALID_CORPORATE_ACTIONS = {"cash_dividend", "split_adjustment"}
+
+
+class PortfolioConflictError(Exception):
+    """Raised when request conflicts with existing portfolio state."""
+
+
+@dataclass
+class _AvgState:
+    quantity: float = 0.0
+    total_cost: float = 0.0
+
+
+class PortfolioService:
+    """Business logic for account CRUD, event writes, and snapshot replay."""
+
+    def __init__(self, repo: Optional[PortfolioRepository] = None):
+        self.repo = repo or PortfolioRepository()
+
+    # ------------------------------------------------------------------
+    # Account CRUD
+    # ------------------------------------------------------------------
+    def create_account(
+        self,
+        *,
+        name: str,
+        broker: Optional[str],
+        market: str,
+        base_currency: str,
+        owner_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        name_norm = (name or "").strip()
+        if not name_norm:
+            raise ValueError("name is required")
+        market_norm = self._normalize_market(market)
+        base_currency_norm = self._normalize_currency(base_currency)
+        row = self.repo.create_account(
+            name=name_norm,
+            broker=(broker or "").strip() or None,
+            market=market_norm,
+            base_currency=base_currency_norm,
+            owner_id=(owner_id or "").strip() or None,
+        )
+        return self._account_to_dict(row)
+
+    def list_accounts(self, include_inactive: bool = False) -> List[Dict[str, Any]]:
+        rows = self.repo.list_accounts(include_inactive=include_inactive)
+        return [self._account_to_dict(r) for r in rows]
+
+    def update_account(
+        self,
+        account_id: int,
+        *,
+        name: Optional[str] = None,
+        broker: Optional[str] = None,
+        market: Optional[str] = None,
+        base_currency: Optional[str] = None,
+        owner_id: Optional[str] = None,
+        is_active: Optional[bool] = None,
+    ) -> Optional[Dict[str, Any]]:
+        fields: Dict[str, Any] = {}
+        if name is not None:
+            name_norm = name.strip()
+            if not name_norm:
+                raise ValueError("name is required")
+            fields["name"] = name_norm
+        if broker is not None:
+            fields["broker"] = broker.strip() or None
+        if market is not None:
+            fields["market"] = self._normalize_market(market)
+        if base_currency is not None:
+            fields["base_currency"] = self._normalize_currency(base_currency)
+        if owner_id is not None:
+            fields["owner_id"] = owner_id.strip() or None
+        if is_active is not None:
+            fields["is_active"] = bool(is_active)
+        if not fields:
+            raise ValueError("No fields provided for update")
+
+        row = self.repo.update_account(account_id, fields)
+        if row is None:
+            return None
+        return self._account_to_dict(row)
+
+    def deactivate_account(self, account_id: int) -> bool:
+        return self.repo.deactivate_account(account_id)
+
+    # ------------------------------------------------------------------
+    # Event writes
+    # ------------------------------------------------------------------
+    def record_trade(
+        self,
+        *,
+        account_id: int,
+        symbol: str,
+        trade_date: date,
+        side: str,
+        quantity: float,
+        price: float,
+        fee: float = 0.0,
+        tax: float = 0.0,
+        market: Optional[str] = None,
+        currency: Optional[str] = None,
+        trade_uid: Optional[str] = None,
+        note: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        account = self._require_active_account(account_id)
+        side_norm = (side or "").strip().lower()
+        if side_norm not in VALID_SIDES:
+            raise ValueError("side must be buy or sell")
+        if quantity <= 0 or price <= 0:
+            raise ValueError("quantity and price must be > 0")
+        if fee < 0 or tax < 0:
+            raise ValueError("fee and tax must be >= 0")
+
+        market_norm = self._normalize_market(market or account.market)
+        currency_norm = self._normalize_currency(currency or self._default_currency_for_market(market_norm))
+        symbol_norm = canonical_stock_code(symbol)
+        if not symbol_norm:
+            raise ValueError("symbol is required")
+
+        try:
+            row = self.repo.add_trade(
+                account_id=account_id,
+                trade_uid=(trade_uid or "").strip() or None,
+                symbol=symbol_norm,
+                market=market_norm,
+                currency=currency_norm,
+                trade_date=trade_date,
+                side=side_norm,
+                quantity=float(quantity),
+                price=float(price),
+                fee=float(fee),
+                tax=float(tax),
+                note=(note or "").strip() or None,
+                dedup_hash=None,
+            )
+        except DuplicateTradeUidError as exc:
+            raise PortfolioConflictError(str(exc)) from exc
+        return {"id": row.id}
+
+    def record_cash_ledger(
+        self,
+        *,
+        account_id: int,
+        event_date: date,
+        direction: str,
+        amount: float,
+        currency: Optional[str] = None,
+        note: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        account = self._require_active_account(account_id)
+        direction_norm = (direction or "").strip().lower()
+        if direction_norm not in VALID_CASH_DIRECTIONS:
+            raise ValueError("direction must be in or out")
+        if amount <= 0:
+            raise ValueError("amount must be > 0")
+        currency_norm = self._normalize_currency(currency or account.base_currency)
+        row = self.repo.add_cash_ledger(
+            account_id=account_id,
+            event_date=event_date,
+            direction=direction_norm,
+            amount=float(amount),
+            currency=currency_norm,
+            note=(note or "").strip() or None,
+        )
+        return {"id": row.id}
+
+    def record_corporate_action(
+        self,
+        *,
+        account_id: int,
+        symbol: str,
+        effective_date: date,
+        action_type: str,
+        market: Optional[str] = None,
+        currency: Optional[str] = None,
+        cash_dividend_per_share: Optional[float] = None,
+        split_ratio: Optional[float] = None,
+        note: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        account = self._require_active_account(account_id)
+        action_type_norm = (action_type or "").strip().lower()
+        if action_type_norm not in VALID_CORPORATE_ACTIONS:
+            raise ValueError("action_type must be cash_dividend or split_adjustment")
+
+        market_norm = self._normalize_market(market or account.market)
+        currency_norm = self._normalize_currency(currency or self._default_currency_for_market(market_norm))
+        symbol_norm = canonical_stock_code(symbol)
+        if not symbol_norm:
+            raise ValueError("symbol is required")
+
+        if action_type_norm == "cash_dividend":
+            if cash_dividend_per_share is None or cash_dividend_per_share < 0:
+                raise ValueError("cash_dividend_per_share must be >= 0 for cash_dividend")
+        if action_type_norm == "split_adjustment":
+            if split_ratio is None or split_ratio <= 0:
+                raise ValueError("split_ratio must be > 0 for split_adjustment")
+
+        row = self.repo.add_corporate_action(
+            account_id=account_id,
+            symbol=symbol_norm,
+            market=market_norm,
+            currency=currency_norm,
+            effective_date=effective_date,
+            action_type=action_type_norm,
+            cash_dividend_per_share=cash_dividend_per_share,
+            split_ratio=split_ratio,
+            note=(note or "").strip() or None,
+        )
+        return {"id": row.id}
+
+    # ------------------------------------------------------------------
+    # Snapshot replay
+    # ------------------------------------------------------------------
+    def get_portfolio_snapshot(
+        self,
+        *,
+        account_id: Optional[int] = None,
+        as_of: Optional[date] = None,
+        cost_method: str = "fifo",
+    ) -> Dict[str, Any]:
+        as_of_date = as_of or date.today()
+        method = self._normalize_cost_method(cost_method)
+
+        if account_id is not None:
+            account = self._require_active_account(account_id)
+            account_rows = [account]
+        else:
+            account_rows = self.repo.list_accounts(include_inactive=False)
+
+        accounts_payload: List[Dict[str, Any]] = []
+        aggregate_currency = "CNY"
+        aggregate = {
+            "total_cash": 0.0,
+            "total_market_value": 0.0,
+            "total_equity": 0.0,
+            "realized_pnl": 0.0,
+            "unrealized_pnl": 0.0,
+            "fee_total": 0.0,
+            "tax_total": 0.0,
+            "fx_stale": False,
+        }
+
+        for account in account_rows:
+            account_snapshot = self._replay_account(account=account, as_of_date=as_of_date, cost_method=method)
+
+            self.repo.replace_positions_lots_and_snapshot(
+                account_id=account.id,
+                snapshot_date=as_of_date,
+                cost_method=method,
+                base_currency=account.base_currency,
+                total_cash=account_snapshot["total_cash"],
+                total_market_value=account_snapshot["total_market_value"],
+                total_equity=account_snapshot["total_equity"],
+                unrealized_pnl=account_snapshot["unrealized_pnl"],
+                realized_pnl=account_snapshot["realized_pnl"],
+                fee_total=account_snapshot["fee_total"],
+                tax_total=account_snapshot["tax_total"],
+                fx_stale=account_snapshot["fx_stale"],
+                payload=json.dumps(account_snapshot["payload"], ensure_ascii=False),
+                positions=account_snapshot["positions_cache"],
+                lots=account_snapshot["lots_cache"],
+                valuation_currency=account.base_currency,
+            )
+
+            accounts_payload.append(account_snapshot["public"])
+
+            cash_cny, stale_cash, _ = self._convert_amount(
+                amount=account_snapshot["total_cash"],
+                from_currency=account.base_currency,
+                to_currency=aggregate_currency,
+                as_of_date=as_of_date,
+            )
+            mv_cny, stale_mv, _ = self._convert_amount(
+                amount=account_snapshot["total_market_value"],
+                from_currency=account.base_currency,
+                to_currency=aggregate_currency,
+                as_of_date=as_of_date,
+            )
+            eq_cny, stale_eq, _ = self._convert_amount(
+                amount=account_snapshot["total_equity"],
+                from_currency=account.base_currency,
+                to_currency=aggregate_currency,
+                as_of_date=as_of_date,
+            )
+            realized_cny, stale_realized, _ = self._convert_amount(
+                amount=account_snapshot["realized_pnl"],
+                from_currency=account.base_currency,
+                to_currency=aggregate_currency,
+                as_of_date=as_of_date,
+            )
+            unrealized_cny, stale_unrealized, _ = self._convert_amount(
+                amount=account_snapshot["unrealized_pnl"],
+                from_currency=account.base_currency,
+                to_currency=aggregate_currency,
+                as_of_date=as_of_date,
+            )
+            fee_cny, stale_fee, _ = self._convert_amount(
+                amount=account_snapshot["fee_total"],
+                from_currency=account.base_currency,
+                to_currency=aggregate_currency,
+                as_of_date=as_of_date,
+            )
+            tax_cny, stale_tax, _ = self._convert_amount(
+                amount=account_snapshot["tax_total"],
+                from_currency=account.base_currency,
+                to_currency=aggregate_currency,
+                as_of_date=as_of_date,
+            )
+
+            aggregate["total_cash"] += cash_cny
+            aggregate["total_market_value"] += mv_cny
+            aggregate["total_equity"] += eq_cny
+            aggregate["realized_pnl"] += realized_cny
+            aggregate["unrealized_pnl"] += unrealized_cny
+            aggregate["fee_total"] += fee_cny
+            aggregate["tax_total"] += tax_cny
+            aggregate["fx_stale"] = aggregate["fx_stale"] or any(
+                [
+                    stale_cash,
+                    stale_mv,
+                    stale_eq,
+                    stale_realized,
+                    stale_unrealized,
+                    stale_fee,
+                    stale_tax,
+                ]
+            )
+
+        return {
+            "as_of": as_of_date.isoformat(),
+            "cost_method": method,
+            "currency": aggregate_currency,
+            "account_count": len(account_rows),
+            "total_cash": round(aggregate["total_cash"], 6),
+            "total_market_value": round(aggregate["total_market_value"], 6),
+            "total_equity": round(aggregate["total_equity"], 6),
+            "realized_pnl": round(aggregate["realized_pnl"], 6),
+            "unrealized_pnl": round(aggregate["unrealized_pnl"], 6),
+            "fee_total": round(aggregate["fee_total"], 6),
+            "tax_total": round(aggregate["tax_total"], 6),
+            "fx_stale": aggregate["fx_stale"],
+            "accounts": accounts_payload,
+        }
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+    def _replay_account(self, *, account: Any, as_of_date: date, cost_method: str) -> Dict[str, Any]:
+        trades = self.repo.list_trades(account.id, as_of=as_of_date)
+        cash_ledger = self.repo.list_cash_ledger(account.id, as_of=as_of_date)
+        corporate_actions = self.repo.list_corporate_actions(account.id, as_of=as_of_date)
+
+        events = []
+        for row in cash_ledger:
+            events.append(("cash", row.event_date, row.id, row))
+        for row in trades:
+            events.append(("trade", row.trade_date, row.id, row))
+        for row in corporate_actions:
+            events.append(("corp", row.effective_date, row.id, row))
+
+        # Same-day deterministic ordering: cash -> corporate action -> trade.
+        event_priority = {"cash": 0, "corp": 1, "trade": 2}
+        events.sort(key=lambda item: (item[1], event_priority[item[0]], item[2]))
+
+        cash_balances: Dict[str, float] = defaultdict(float)
+        fees_total_base = 0.0
+        taxes_total_base = 0.0
+        realized_pnl_base = 0.0
+        fx_stale = False
+
+        fifo_lots: Dict[Tuple[str, str, str], List[Dict[str, Any]]] = defaultdict(list)
+        avg_state: Dict[Tuple[str, str, str], _AvgState] = defaultdict(_AvgState)
+
+        for event_type, event_date, _, event in events:
+            if event_type == "cash":
+                currency = self._normalize_currency(event.currency)
+                amount = float(event.amount or 0.0)
+                if event.direction == "in":
+                    cash_balances[currency] += amount
+                elif event.direction == "out":
+                    cash_balances[currency] -= amount
+                else:
+                    raise ValueError(f"Unsupported cash direction: {event.direction}")
+                continue
+
+            if event_type == "trade":
+                key = (
+                    canonical_stock_code(event.symbol),
+                    self._normalize_market(event.market),
+                    self._normalize_currency(event.currency),
+                )
+                qty = float(event.quantity or 0.0)
+                price = float(event.price or 0.0)
+                fee = float(event.fee or 0.0)
+                tax = float(event.tax or 0.0)
+                if qty <= 0 or price <= 0:
+                    raise ValueError(f"Invalid trade quantity or price for {event.symbol}")
+
+                gross = qty * price
+                side = (event.side or "").lower().strip()
+                if side == "buy":
+                    cash_balances[key[2]] -= (gross + fee + tax)
+                    if cost_method == "fifo":
+                        unit_cost = (gross + fee + tax) / qty
+                        fifo_lots[key].append(
+                            {
+                                "symbol": key[0],
+                                "market": key[1],
+                                "currency": key[2],
+                                "open_date": event_date,
+                                "remaining_quantity": qty,
+                                "unit_cost": unit_cost,
+                                "source_trade_id": event.id,
+                            }
+                        )
+                    else:
+                        state = avg_state[key]
+                        state.quantity += qty
+                        state.total_cost += (gross + fee + tax)
+                elif side == "sell":
+                    cash_balances[key[2]] += (gross - fee - tax)
+                    proceeds_net = gross - fee - tax
+                    if cost_method == "fifo":
+                        cost_basis = self._consume_fifo_lots(fifo_lots[key], qty, key[0])
+                    else:
+                        cost_basis = self._consume_avg_position(avg_state[key], qty, key[0])
+                    realized_local = proceeds_net - cost_basis
+                    realized_base, stale_realized, _ = self._convert_amount(
+                        amount=realized_local,
+                        from_currency=key[2],
+                        to_currency=account.base_currency,
+                        as_of_date=event_date,
+                    )
+                    realized_pnl_base += realized_base
+                    fx_stale = fx_stale or stale_realized
+                else:
+                    raise ValueError(f"Unsupported trade side: {event.side}")
+
+                fee_base, stale_fee, _ = self._convert_amount(
+                    amount=fee,
+                    from_currency=key[2],
+                    to_currency=account.base_currency,
+                    as_of_date=event_date,
+                )
+                tax_base, stale_tax, _ = self._convert_amount(
+                    amount=tax,
+                    from_currency=key[2],
+                    to_currency=account.base_currency,
+                    as_of_date=event_date,
+                )
+                fees_total_base += fee_base
+                taxes_total_base += tax_base
+                fx_stale = fx_stale or stale_fee or stale_tax
+                continue
+
+            if event_type == "corp":
+                key = (
+                    canonical_stock_code(event.symbol),
+                    self._normalize_market(event.market),
+                    self._normalize_currency(event.currency),
+                )
+                action_type = (event.action_type or "").strip().lower()
+                if action_type == "cash_dividend":
+                    per_share = float(event.cash_dividend_per_share or 0.0)
+                    if per_share <= 0:
+                        continue
+                    qty_held = self._held_quantity(
+                        key=key,
+                        cost_method=cost_method,
+                        fifo_lots=fifo_lots,
+                        avg_state=avg_state,
+                    )
+                    if qty_held > EPS:
+                        cash_balances[key[2]] += qty_held * per_share
+                elif action_type == "split_adjustment":
+                    split_ratio = float(event.split_ratio or 0.0)
+                    if split_ratio <= 0:
+                        raise ValueError(f"Invalid split_ratio for {event.symbol}")
+                    if abs(split_ratio - 1.0) <= EPS:
+                        continue
+                    if cost_method == "fifo":
+                        for lot in fifo_lots[key]:
+                            lot["remaining_quantity"] *= split_ratio
+                            lot["unit_cost"] /= split_ratio
+                    else:
+                        state = avg_state[key]
+                        state.quantity *= split_ratio
+                else:
+                    raise ValueError(f"Unsupported corporate action type: {event.action_type}")
+
+        position_rows, lot_rows, market_value_base, total_cost_base, stale_pos = self._build_positions(
+            account=account,
+            as_of_date=as_of_date,
+            cost_method=cost_method,
+            fifo_lots=fifo_lots,
+            avg_state=avg_state,
+        )
+        fx_stale = fx_stale or stale_pos
+
+        total_cash_base = 0.0
+        for currency, amount in cash_balances.items():
+            converted, stale, _ = self._convert_amount(
+                amount=amount,
+                from_currency=currency,
+                to_currency=account.base_currency,
+                as_of_date=as_of_date,
+            )
+            total_cash_base += converted
+            fx_stale = fx_stale or stale
+
+        unrealized_pnl_base = market_value_base - total_cost_base
+        total_equity_base = total_cash_base + market_value_base
+
+        account_payload = {
+            "account_id": account.id,
+            "account_name": account.name,
+            "owner_id": account.owner_id,
+            "broker": account.broker,
+            "market": account.market,
+            "base_currency": account.base_currency,
+            "as_of": as_of_date.isoformat(),
+            "cost_method": cost_method,
+            "total_cash": round(total_cash_base, 6),
+            "total_market_value": round(market_value_base, 6),
+            "total_equity": round(total_equity_base, 6),
+            "realized_pnl": round(realized_pnl_base, 6),
+            "unrealized_pnl": round(unrealized_pnl_base, 6),
+            "fee_total": round(fees_total_base, 6),
+            "tax_total": round(taxes_total_base, 6),
+            "fx_stale": fx_stale,
+            "positions": position_rows,
+        }
+
+        return {
+            "public": account_payload,
+            "payload": account_payload,
+            "positions_cache": position_rows,
+            "lots_cache": lot_rows,
+            "total_cash": float(total_cash_base),
+            "total_market_value": float(market_value_base),
+            "total_equity": float(total_equity_base),
+            "realized_pnl": float(realized_pnl_base),
+            "unrealized_pnl": float(unrealized_pnl_base),
+            "fee_total": float(fees_total_base),
+            "tax_total": float(taxes_total_base),
+            "fx_stale": fx_stale,
+        }
+
+    def _build_positions(
+        self,
+        *,
+        account: Any,
+        as_of_date: date,
+        cost_method: str,
+        fifo_lots: Dict[Tuple[str, str, str], List[Dict[str, Any]]],
+        avg_state: Dict[Tuple[str, str, str], _AvgState],
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], float, float, bool]:
+        position_rows: List[Dict[str, Any]] = []
+        lot_rows: List[Dict[str, Any]] = []
+        market_value_base = 0.0
+        total_cost_base = 0.0
+        fx_stale = False
+
+        keys: Iterable[Tuple[str, str, str]]
+        if cost_method == "fifo":
+            keys = list(fifo_lots.keys())
+        else:
+            keys = list(avg_state.keys())
+
+        for key in sorted(keys):
+            symbol, market, currency = key
+
+            if cost_method == "fifo":
+                active_lots = [lot for lot in fifo_lots[key] if lot["remaining_quantity"] > EPS]
+                qty = sum(float(lot["remaining_quantity"]) for lot in active_lots)
+                if qty <= EPS:
+                    continue
+                total_cost = sum(float(lot["remaining_quantity"]) * float(lot["unit_cost"]) for lot in active_lots)
+                avg_cost = total_cost / qty
+                lot_rows.extend(active_lots)
+            else:
+                state = avg_state[key]
+                qty = float(state.quantity)
+                total_cost = float(state.total_cost)
+                if qty <= EPS:
+                    continue
+                avg_cost = total_cost / qty
+                lot_rows.append(
+                    {
+                        "symbol": symbol,
+                        "market": market,
+                        "currency": currency,
+                        "open_date": as_of_date,
+                        "remaining_quantity": qty,
+                        "unit_cost": avg_cost,
+                        "source_trade_id": None,
+                    }
+                )
+
+            last_price = self.repo.get_latest_close(symbol=symbol, as_of=as_of_date)
+            if last_price is None or last_price <= 0:
+                last_price = avg_cost
+
+            local_market_value = qty * float(last_price)
+            market_base, stale_market, _ = self._convert_amount(
+                amount=local_market_value,
+                from_currency=currency,
+                to_currency=account.base_currency,
+                as_of_date=as_of_date,
+            )
+            cost_base, stale_cost, _ = self._convert_amount(
+                amount=total_cost,
+                from_currency=currency,
+                to_currency=account.base_currency,
+                as_of_date=as_of_date,
+            )
+            unrealized_base = market_base - cost_base
+            fx_stale = fx_stale or stale_market or stale_cost
+
+            position_rows.append(
+                {
+                    "symbol": symbol,
+                    "market": market,
+                    "currency": currency,
+                    "quantity": round(qty, 8),
+                    "avg_cost": round(avg_cost, 8),
+                    "total_cost": round(total_cost, 8),
+                    "last_price": round(float(last_price), 8),
+                    "market_value_base": round(market_base, 8),
+                    "unrealized_pnl_base": round(unrealized_base, 8),
+                    "valuation_currency": account.base_currency,
+                }
+            )
+
+            market_value_base += market_base
+            total_cost_base += cost_base
+
+        return position_rows, lot_rows, market_value_base, total_cost_base, fx_stale
+
+    @staticmethod
+    def _consume_fifo_lots(lots: List[Dict[str, Any]], quantity: float, symbol: str) -> float:
+        remaining = quantity
+        cost_basis = 0.0
+        while remaining > EPS:
+            if not lots:
+                raise ValueError(f"Oversell detected for {symbol}")
+            head = lots[0]
+            take = min(remaining, float(head["remaining_quantity"]))
+            cost_basis += take * float(head["unit_cost"])
+            head["remaining_quantity"] = float(head["remaining_quantity"]) - take
+            remaining -= take
+            if head["remaining_quantity"] <= EPS:
+                lots.pop(0)
+        return cost_basis
+
+    @staticmethod
+    def _consume_avg_position(state: _AvgState, quantity: float, symbol: str) -> float:
+        if state.quantity + EPS < quantity:
+            raise ValueError(f"Oversell detected for {symbol}")
+        if state.quantity <= EPS:
+            raise ValueError(f"Oversell detected for {symbol}")
+        avg_cost = state.total_cost / state.quantity
+        cost_basis = avg_cost * quantity
+        state.quantity -= quantity
+        state.total_cost -= cost_basis
+        if state.quantity <= EPS:
+            state.quantity = 0.0
+            state.total_cost = 0.0
+        return cost_basis
+
+    @staticmethod
+    def _held_quantity(
+        *,
+        key: Tuple[str, str, str],
+        cost_method: str,
+        fifo_lots: Dict[Tuple[str, str, str], List[Dict[str, Any]]],
+        avg_state: Dict[Tuple[str, str, str], _AvgState],
+    ) -> float:
+        if cost_method == "fifo":
+            return sum(float(lot["remaining_quantity"]) for lot in fifo_lots.get(key, []))
+        return float(avg_state.get(key, _AvgState()).quantity)
+
+    def _convert_amount(
+        self,
+        *,
+        amount: float,
+        from_currency: str,
+        to_currency: str,
+        as_of_date: date,
+    ) -> Tuple[float, bool, str]:
+        from_norm = self._normalize_currency(from_currency)
+        to_norm = self._normalize_currency(to_currency)
+        if abs(amount) <= EPS:
+            return 0.0, False, "zero"
+        if from_norm == to_norm:
+            return float(amount), False, "identity"
+
+        direct = self.repo.get_latest_fx_rate(
+            from_currency=from_norm,
+            to_currency=to_norm,
+            as_of=as_of_date,
+        )
+        if direct is not None and direct.rate > 0:
+            return float(amount) * float(direct.rate), bool(direct.is_stale), "direct_rate"
+
+        inverse = self.repo.get_latest_fx_rate(
+            from_currency=to_norm,
+            to_currency=from_norm,
+            as_of=as_of_date,
+        )
+        if inverse is not None and inverse.rate > 0:
+            return float(amount) / float(inverse.rate), bool(inverse.is_stale), "inverse_rate"
+
+        # P0 fallback: keep pipeline available even when FX cache is missing.
+        return float(amount), True, "fallback_1_to_1"
+
+    def _require_active_account(self, account_id: int) -> Any:
+        account = self.repo.get_account(account_id, include_inactive=False)
+        if account is None:
+            raise ValueError(f"Active account not found: {account_id}")
+        return account
+
+    @staticmethod
+    def _account_to_dict(row: Any) -> Dict[str, Any]:
+        return {
+            "id": row.id,
+            "owner_id": row.owner_id,
+            "name": row.name,
+            "broker": row.broker,
+            "market": row.market,
+            "base_currency": row.base_currency,
+            "is_active": bool(row.is_active),
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+            "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        }
+
+    @staticmethod
+    def _normalize_market(value: str) -> str:
+        market = (value or "").strip().lower()
+        if market not in VALID_MARKETS:
+            raise ValueError("market must be one of: cn, hk, us")
+        return market
+
+    @staticmethod
+    def _normalize_currency(value: str) -> str:
+        currency = (value or "").strip().upper()
+        if not currency:
+            raise ValueError("currency is required")
+        return currency
+
+    @staticmethod
+    def _normalize_cost_method(value: str) -> str:
+        method = (value or "").strip().lower()
+        if method not in VALID_COST_METHODS:
+            raise ValueError("cost_method must be fifo or avg")
+        return method
+
+    @staticmethod
+    def _default_currency_for_market(market: str) -> str:
+        if market == "hk":
+            return "HKD"
+        if market == "us":
+            return "USD"
+        return "CNY"

@@ -947,3 +947,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [1.2.0]: https://github.com/ZhuLinsen/daily_stock_analysis/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/ZhuLinsen/daily_stock_analysis/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/ZhuLinsen/daily_stock_analysis/releases/tag/v1.0.0
+
+## [Unreleased]
+
+### Added
+- Portfolio P0 PR1 core ledger and snapshot workflow:
+  - Added portfolio account/event/snapshot models and API endpoints.
+  - Added replay engine with FIFO/AVG cost method.
+  - Added deterministic same-day ordering: `cash -> corporate action -> trade`.
+  - Added atomic persistence for position cache, lot cache, and daily snapshot.
+
+### Changed
+- `POST /api/v1/portfolio/trades` now returns `409` on duplicate `trade_uid` conflict within the same account.
+
+### Tests
+- Added PR1 tests for replay edge cases and API conflict handling.
