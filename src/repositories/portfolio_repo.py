@@ -10,7 +10,7 @@ import logging
 from datetime import date, datetime
 from typing import Any, Dict, Iterable, List, Optional
 
-from sqlalchemy import and_, delete, desc, select
+from sqlalchemy import and_, case, delete, desc, select
 from sqlalchemy.exc import IntegrityError
 
 from src.storage import (
@@ -260,17 +260,66 @@ class PortfolioRepository:
     # ------------------------------------------------------------------
     # Price / FX
     # ------------------------------------------------------------------
-    def get_latest_close(self, symbol: str, as_of: date) -> Optional[float]:
+    @staticmethod
+    def _price_code_candidates(symbol: str, market: Optional[str]) -> List[str]:
+        candidates: List[str] = []
+
+        def add(value: Optional[str]) -> None:
+            text = (value or "").strip()
+            if text and text not in candidates:
+                candidates.append(text)
+
+        raw = (symbol or "").strip()
+        if not raw:
+            return candidates
+
+        upper = raw.upper()
+        add(upper)
+        add(raw)
+
+        market_norm = (market or "").strip().lower()
+        if market_norm == "hk":
+            bare = upper[2:] if upper.startswith("HK") and upper[2:].isdigit() else upper
+            if bare.isdigit():
+                bare = bare.zfill(5)
+                add(bare)
+                add(f"HK{bare}")
+        elif market_norm == "cn":
+            bare = upper
+            if "." in bare:
+                base, suffix = bare.rsplit(".", 1)
+                if suffix in {"SH", "SZ", "SS", "BJ"} and base.isdigit():
+                    bare = base
+            if bare.startswith(("SH", "SZ", "BJ")) and bare[2:].isdigit():
+                bare = bare[2:]
+            add(bare)
+
+        for value in list(candidates):
+            if any(ch.isalpha() for ch in value):
+                add(value.lower())
+
+        return candidates
+
+    def get_latest_close(self, symbol: str, as_of: date, market: Optional[str] = None) -> Optional[float]:
+        candidates = self._price_code_candidates(symbol=symbol, market=market)
+        if not candidates:
+            return None
+
+        code_priority = case(
+            {code: index for index, code in enumerate(candidates)},
+            value=StockDaily.code,
+            else_=len(candidates),
+        )
         with self.db.get_session() as session:
             row = session.execute(
                 select(StockDaily)
                 .where(
                     and_(
-                        StockDaily.code == symbol,
+                        StockDaily.code.in_(candidates),
                         StockDaily.date <= as_of,
                     )
                 )
-                .order_by(desc(StockDaily.date))
+                .order_by(desc(StockDaily.date), code_priority)
                 .limit(1)
             ).scalar_one_or_none()
             if row is None or row.close is None:
@@ -344,6 +393,7 @@ class PortfolioRepository:
         self,
         *,
         account_id: int,
+        snapshot_date: date,
         cost_method: str,
         positions: Iterable[Dict[str, Any]],
         lots: Iterable[Dict[str, Any]],
@@ -354,6 +404,7 @@ class PortfolioRepository:
                 delete(PortfolioPosition).where(
                     and_(
                         PortfolioPosition.account_id == account_id,
+                        PortfolioPosition.snapshot_date == snapshot_date,
                         PortfolioPosition.cost_method == cost_method,
                     )
                 )
@@ -362,6 +413,7 @@ class PortfolioRepository:
                 delete(PortfolioPositionLot).where(
                     and_(
                         PortfolioPositionLot.account_id == account_id,
+                        PortfolioPositionLot.snapshot_date == snapshot_date,
                         PortfolioPositionLot.cost_method == cost_method,
                     )
                 )
@@ -372,6 +424,7 @@ class PortfolioRepository:
                     PortfolioPosition(
                         account_id=account_id,
                         cost_method=cost_method,
+                        snapshot_date=snapshot_date,
                         symbol=item["symbol"],
                         market=item["market"],
                         currency=item["currency"],
@@ -390,6 +443,7 @@ class PortfolioRepository:
                     PortfolioPositionLot(
                         account_id=account_id,
                         cost_method=cost_method,
+                        snapshot_date=snapshot_date,
                         symbol=lot["symbol"],
                         market=lot["market"],
                         currency=lot["currency"],
@@ -488,6 +542,7 @@ class PortfolioRepository:
                 delete(PortfolioPosition).where(
                     and_(
                         PortfolioPosition.account_id == account_id,
+                        PortfolioPosition.snapshot_date == snapshot_date,
                         PortfolioPosition.cost_method == cost_method,
                     )
                 )
@@ -496,6 +551,7 @@ class PortfolioRepository:
                 delete(PortfolioPositionLot).where(
                     and_(
                         PortfolioPositionLot.account_id == account_id,
+                        PortfolioPositionLot.snapshot_date == snapshot_date,
                         PortfolioPositionLot.cost_method == cost_method,
                     )
                 )
@@ -506,6 +562,7 @@ class PortfolioRepository:
                     PortfolioPosition(
                         account_id=account_id,
                         cost_method=cost_method,
+                        snapshot_date=snapshot_date,
                         symbol=item["symbol"],
                         market=item["market"],
                         currency=item["currency"],
@@ -524,6 +581,7 @@ class PortfolioRepository:
                     PortfolioPositionLot(
                         account_id=account_id,
                         cost_method=cost_method,
+                        snapshot_date=snapshot_date,
                         symbol=lot["symbol"],
                         market=lot["market"],
                         currency=lot["currency"],

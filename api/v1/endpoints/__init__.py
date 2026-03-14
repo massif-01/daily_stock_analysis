@@ -5,7 +5,7 @@ API v1 Endpoints 模块初始化
 ===================================
 
 职责：
-1. 导出所有 endpoint 路由模块
+1. 声明所有 endpoint 路由模块
 """
 
 from api.v1.endpoints import (
@@ -20,7 +20,6 @@ from api.v1.endpoints import (
     usage,
     portfolio,
 )
-
 __all__ = [
     "health",
     "analysis",

@@ -10,10 +10,11 @@ from datetime import date
 from pathlib import Path
 
 import pandas as pd
+from sqlalchemy import select
 
 from src.config import Config
 from src.services.portfolio_service import PortfolioService
-from src.storage import DatabaseManager
+from src.storage import DatabaseManager, PortfolioPosition, PortfolioPositionLot
 
 
 class PortfolioServiceTestCase(unittest.TestCase):
@@ -276,6 +277,112 @@ class PortfolioServiceTestCase(unittest.TestCase):
         self.assertAlmostEqual(acc["total_cash"], 1600.0, places=6)
         self.assertAlmostEqual(pos["quantity"], 100.0, places=6)
         self.assertAlmostEqual(pos["avg_cost"], 5.0, places=6)
+
+    def test_backdated_snapshot_preserves_date_scoped_position_cache(self) -> None:
+        account = self.service.create_account(name="Main", broker="Demo", market="cn", base_currency="CNY")
+        aid = account["id"]
+
+        self.service.record_cash_ledger(
+            account_id=aid,
+            event_date=date(2026, 1, 1),
+            direction="in",
+            amount=5000,
+            currency="CNY",
+        )
+        self.service.record_trade(
+            account_id=aid,
+            symbol="600519",
+            trade_date=date(2026, 1, 2),
+            side="buy",
+            quantity=100,
+            price=10,
+            market="cn",
+            currency="CNY",
+        )
+        self.service.record_trade(
+            account_id=aid,
+            symbol="600519",
+            trade_date=date(2026, 1, 3),
+            side="sell",
+            quantity=40,
+            price=12,
+            market="cn",
+            currency="CNY",
+        )
+        self._save_close("600519", date(2026, 1, 2), 10.5)
+        self._save_close("600519", date(2026, 1, 3), 12.0)
+
+        self.service.get_portfolio_snapshot(account_id=aid, as_of=date(2026, 1, 3), cost_method="fifo")
+        self.service.get_portfolio_snapshot(account_id=aid, as_of=date(2026, 1, 2), cost_method="fifo")
+
+        with self.db.get_session() as session:
+            latest_positions = session.execute(
+                select(PortfolioPosition).where(
+                    PortfolioPosition.account_id == aid,
+                    PortfolioPosition.snapshot_date == date(2026, 1, 3),
+                    PortfolioPosition.cost_method == "fifo",
+                )
+            ).scalars().all()
+            historical_positions = session.execute(
+                select(PortfolioPosition).where(
+                    PortfolioPosition.account_id == aid,
+                    PortfolioPosition.snapshot_date == date(2026, 1, 2),
+                    PortfolioPosition.cost_method == "fifo",
+                )
+            ).scalars().all()
+            latest_lots = session.execute(
+                select(PortfolioPositionLot).where(
+                    PortfolioPositionLot.account_id == aid,
+                    PortfolioPositionLot.snapshot_date == date(2026, 1, 3),
+                    PortfolioPositionLot.cost_method == "fifo",
+                )
+            ).scalars().all()
+            historical_lots = session.execute(
+                select(PortfolioPositionLot).where(
+                    PortfolioPositionLot.account_id == aid,
+                    PortfolioPositionLot.snapshot_date == date(2026, 1, 2),
+                    PortfolioPositionLot.cost_method == "fifo",
+                )
+            ).scalars().all()
+
+        self.assertEqual(len(latest_positions), 1)
+        self.assertEqual(len(historical_positions), 1)
+        self.assertEqual(len(latest_lots), 1)
+        self.assertEqual(len(historical_lots), 1)
+        self.assertAlmostEqual(latest_positions[0].quantity, 60.0, places=6)
+        self.assertAlmostEqual(historical_positions[0].quantity, 100.0, places=6)
+        self.assertAlmostEqual(latest_lots[0].remaining_quantity, 60.0, places=6)
+        self.assertAlmostEqual(historical_lots[0].remaining_quantity, 100.0, places=6)
+
+    def test_snapshot_price_lookup_handles_hk_code_variants(self) -> None:
+        account = self.service.create_account(name="HK Main", broker="Demo", market="hk", base_currency="HKD")
+        aid = account["id"]
+
+        self.service.record_cash_ledger(
+            account_id=aid,
+            event_date=date(2026, 1, 1),
+            direction="in",
+            amount=5000,
+            currency="HKD",
+        )
+        self.service.record_trade(
+            account_id=aid,
+            symbol="HK00700",
+            trade_date=date(2026, 1, 2),
+            side="buy",
+            quantity=100,
+            price=10,
+            market="hk",
+            currency="HKD",
+        )
+        self._save_close("00700", date(2026, 1, 3), 15.0)
+
+        snapshot = self.service.get_portfolio_snapshot(account_id=aid, as_of=date(2026, 1, 3), cost_method="fifo")
+        acc = snapshot["accounts"][0]
+        pos = acc["positions"][0]
+
+        self.assertAlmostEqual(pos["last_price"], 15.0, places=6)
+        self.assertAlmostEqual(acc["total_market_value"], 1500.0, places=6)
 
 
 if __name__ == "__main__":

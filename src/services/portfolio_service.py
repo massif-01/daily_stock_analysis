@@ -621,7 +621,7 @@ class PortfolioService:
                     }
                 )
 
-            last_price = self.repo.get_latest_close(symbol=symbol, as_of=as_of_date)
+            last_price = self.repo.get_latest_close(symbol=symbol, market=market, as_of=as_of_date)
             if last_price is None or last_price <= 0:
                 last_price = avg_cost
 
