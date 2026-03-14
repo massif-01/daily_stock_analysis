@@ -10,7 +10,7 @@ import logging
 from datetime import date, datetime
 from typing import Any, Dict, Iterable, List, Optional
 
-from sqlalchemy import and_, delete, desc, select
+from sqlalchemy import and_, delete, desc, func, select
 from sqlalchemy.exc import IntegrityError
 
 from src.storage import (
@@ -300,6 +300,39 @@ class PortfolioRepository:
                 .order_by(PortfolioCorporateAction.effective_date.asc(), PortfolioCorporateAction.id.asc())
             ).scalars().all()
             return list(rows)
+
+    def get_first_activity_date(self, *, account_id: int, as_of: date) -> Optional[date]:
+        """Return earliest event date (trade/cash/corporate action) for one account."""
+        with self.db.get_session() as session:
+            first_trade = session.execute(
+                select(func.min(PortfolioTrade.trade_date)).where(
+                    and_(
+                        PortfolioTrade.account_id == account_id,
+                        PortfolioTrade.trade_date <= as_of,
+                    )
+                )
+            ).scalar_one()
+            first_cash = session.execute(
+                select(func.min(PortfolioCashLedger.event_date)).where(
+                    and_(
+                        PortfolioCashLedger.account_id == account_id,
+                        PortfolioCashLedger.event_date <= as_of,
+                    )
+                )
+            ).scalar_one()
+            first_action = session.execute(
+                select(func.min(PortfolioCorporateAction.effective_date)).where(
+                    and_(
+                        PortfolioCorporateAction.account_id == account_id,
+                        PortfolioCorporateAction.effective_date <= as_of,
+                    )
+                )
+            ).scalar_one()
+
+            candidates = [item for item in (first_trade, first_cash, first_action) if item is not None]
+            if not candidates:
+                return None
+            return min(candidates)
 
     # ------------------------------------------------------------------
     # Price / FX

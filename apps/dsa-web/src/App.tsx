@@ -30,7 +30,7 @@ const BacktestIcon: React.FC<{ active?: boolean }> = ({active}) => (
 );
 
 const PortfolioIcon: React.FC<{ active?: boolean }> = ({active}) => (
-    <RiExchangeFundsLine className="w-6 h-6" size={24} />
+    <RiExchangeFundsLine className="w-6 h-6" size={active ? 25 : 24} />
 );
 
 const SettingsIcon: React.FC<{ active?: boolean }> = ({active}) => (

@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 from src.config import Config, get_config
@@ -52,6 +52,12 @@ class PortfolioRiskService:
             thresholds["concentration_alert_pct"],
             as_of_date=as_of_date,
         )
+        self._ensure_drawdown_snapshot_window(
+            account_id=account_id,
+            as_of_date=as_of_date,
+            cost_method=cost_method,
+            lookback_days=thresholds["lookback_days"],
+        )
         drawdown = self._build_drawdown(
             account_id=account_id,
             as_of_date=as_of_date,
@@ -71,6 +77,82 @@ class PortfolioRiskService:
             "drawdown": drawdown,
             "stop_loss": stop_loss,
         }
+
+    def _ensure_drawdown_snapshot_window(
+        self,
+        *,
+        account_id: Optional[int],
+        as_of_date: date,
+        cost_method: str,
+        lookback_days: int,
+    ) -> None:
+        if lookback_days <= 0:
+            return
+
+        start_date = self._resolve_backfill_start_date(
+            account_id=account_id,
+            as_of_date=as_of_date,
+            lookback_days=lookback_days,
+        )
+        if start_date > as_of_date:
+            return
+
+        existing_rows = self.repo.list_daily_snapshots_for_risk(
+            as_of=as_of_date,
+            cost_method=cost_method,
+            account_id=account_id,
+            lookback_days=lookback_days,
+        )
+        if account_id is not None:
+            existing_dates = {row.snapshot_date for row in existing_rows if int(row.account_id) == int(account_id)}
+            current_date = start_date
+            while current_date <= as_of_date:
+                if current_date not in existing_dates:
+                    self.portfolio_service.get_portfolio_snapshot(
+                        account_id=account_id,
+                        as_of=current_date,
+                        cost_method=cost_method,
+                    )
+                    existing_dates.add(current_date)
+                current_date += timedelta(days=1)
+            return
+
+        account_ids = [int(account.id) for account in self.repo.list_accounts(include_inactive=False)]
+        if not account_ids:
+            return
+        existing_pairs = {(int(row.account_id), row.snapshot_date) for row in existing_rows}
+        current_date = start_date
+        while current_date <= as_of_date:
+            if not all((aid, current_date) in existing_pairs for aid in account_ids):
+                self.portfolio_service.get_portfolio_snapshot(
+                    account_id=None,
+                    as_of=current_date,
+                    cost_method=cost_method,
+                )
+                for aid in account_ids:
+                    existing_pairs.add((aid, current_date))
+            current_date += timedelta(days=1)
+
+    def _resolve_backfill_start_date(
+        self,
+        *,
+        account_id: Optional[int],
+        as_of_date: date,
+        lookback_days: int,
+    ) -> date:
+        window_start = as_of_date - timedelta(days=lookback_days)
+        if account_id is not None:
+            first_activity = self.repo.get_first_activity_date(account_id=account_id, as_of=as_of_date)
+            return max(window_start, first_activity or as_of_date)
+
+        first_activity_candidates: List[date] = []
+        for account in self.repo.list_accounts(include_inactive=False):
+            first_activity = self.repo.get_first_activity_date(account_id=int(account.id), as_of=as_of_date)
+            if first_activity is not None:
+                first_activity_candidates.append(first_activity)
+        if not first_activity_candidates:
+            return as_of_date
+        return max(window_start, min(first_activity_candidates))
 
     def _build_concentration(self, snapshot: Dict[str, Any], threshold_pct: float, *, as_of_date: date) -> Dict[str, Any]:
         total_mv = float(snapshot.get("total_market_value", 0.0) or 0.0)

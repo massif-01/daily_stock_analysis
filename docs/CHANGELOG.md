@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Changed
 - `POST /api/v1/portfolio/trades` now returns `409` on duplicate `trade_uid` conflict within the same account.
 
+### Fixed
+- Portfolio CSV import dedup now persists/checks key-field hash even when `trade_uid` exists, preventing mixed-source duplicate writes (with/without `trade_uid`) for the same trade.
+- Portfolio risk drawdown now backfills missing daily snapshots inside the configured lookback window on first report call, avoiding cache-warmup dependent underestimation.
+
 ### Tests
 - Added PR1 tests for replay edge cases and API conflict handling.
 - Added PR2 tests for import idempotency, dedup edge cases, threshold boundaries, and FX stale fallback.

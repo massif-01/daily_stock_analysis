@@ -458,9 +458,10 @@ This phase extends portfolio capability with import and risk monitoring while ke
 
 - Broker CSV import (`huatai` / `citic` / `cmb`) via unified parse/commit flow.
 - Dedup strategy:
-  - Prefer `trade_uid` when available.
-  - Fallback to key-field hash when `trade_uid` is absent.
+  - `trade_uid` remains the primary duplicate key when available.
+  - Key-field hash is also persisted/checked for `trade_uid` records, so mixed imports with/without `trade_uid` stay idempotent.
 - New risk API for concentration, drawdown, and stop-loss-near warnings.
+- Risk drawdown now backfills missing daily snapshots inside the lookback window on first report call.
 - FX online refresh with fail-open stale fallback when online quote fetch fails.
 
 New endpoints:

@@ -144,8 +144,8 @@ class PortfolioPr2TestCase(unittest.TestCase):
             broker="huatai",
             records=parsed_hash["records"],
         )
-        self.assertEqual(first_hash["inserted_count"], 1)
-        self.assertEqual(first_hash["duplicate_count"], 0)
+        self.assertEqual(first_hash["inserted_count"], 0)
+        self.assertEqual(first_hash["duplicate_count"], 1)
         self.assertEqual(second_hash["inserted_count"], 0)
 
     def test_import_side_parser_avoids_false_sell_match(self) -> None:
@@ -203,6 +203,34 @@ class PortfolioPr2TestCase(unittest.TestCase):
         self.assertTrue(report["stop_loss"]["near_alert"])
         self.assertGreaterEqual(report["stop_loss"]["triggered_count"], 1)
         self.assertAlmostEqual(report["thresholds"]["drawdown_alert_pct"], 10.0, places=6)
+
+    def test_risk_drawdown_backfills_snapshot_window_on_first_call(self) -> None:
+        account = self.service.create_account(name="Main", broker="Demo", market="cn", base_currency="CNY")
+        aid = account["id"]
+        self.service.record_cash_ledger(
+            account_id=aid,
+            event_date=date(2026, 1, 1),
+            direction="in",
+            amount=20000,
+            currency="CNY",
+        )
+        self.service.record_trade(
+            account_id=aid,
+            symbol="600519",
+            trade_date=date(2026, 1, 1),
+            side="buy",
+            quantity=100,
+            price=100,
+            market="cn",
+            currency="CNY",
+        )
+        self._save_close("600519", date(2026, 1, 1), 100.0)
+        self._save_close("600519", date(2026, 1, 2), 70.0)
+
+        report = self.risk_service.get_risk_report(account_id=aid, as_of=date(2026, 1, 2), cost_method="fifo")
+        self.assertGreaterEqual(report["drawdown"]["series_points"], 2)
+        self.assertGreater(report["drawdown"]["max_drawdown_pct"], 10.0)
+        self.assertTrue(report["drawdown"]["alert"])
 
     def test_concentration_uses_cny_normalized_exposure(self) -> None:
         cn_account = self.service.create_account(name="CN", broker="Demo", market="cn", base_currency="CNY")

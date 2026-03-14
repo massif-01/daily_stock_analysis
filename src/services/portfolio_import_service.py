@@ -117,9 +117,7 @@ class PortfolioImportService:
                 if trade_uid and self.repo.has_trade_uid(account_id, trade_uid):
                     duplicate_count += 1
                     continue
-                dedup_hash_to_use: Optional[str] = None
-                if not trade_uid:
-                    dedup_hash_to_use = dedup_hash
+                dedup_hash_to_use: Optional[str] = dedup_hash or None
                 if dedup_hash_to_use and self.repo.has_trade_dedup_hash(account_id, dedup_hash_to_use):
                     duplicate_count += 1
                     continue
