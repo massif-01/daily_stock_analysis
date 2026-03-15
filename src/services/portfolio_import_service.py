@@ -155,6 +155,10 @@ class PortfolioImportService:
                 skipped += 1
                 continue
             try:
+                # Keep a stable line-level marker so repeated imports of the same
+                # file remain idempotent, while identical split fills on separate
+                # CSV lines do not collapse into one dedup key.
+                normalized["_source_line_number"] = int(idx) + 2
                 normalized["dedup_hash"] = self._build_dedup_hash(normalized)
                 records.append(normalized)
             except Exception as exc:  # pragma: no cover - defensive path
@@ -427,6 +431,7 @@ class PortfolioImportService:
                 f"{float(record.get('fee', 0.0)):.8f}",
                 f"{float(record.get('tax', 0.0)):.8f}",
                 str(record.get("currency") or ""),
+                str(record.get("_source_line_number") or record.get("source_line_number") or ""),
             ]
         )
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()

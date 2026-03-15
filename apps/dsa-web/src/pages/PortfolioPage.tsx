@@ -5,6 +5,7 @@ import { portfolioApi } from '../api/portfolio';
 import type { ParsedApiError } from '../api/error';
 import { getParsedApiError } from '../api/error';
 import { ApiErrorAlert, Card, Badge } from '../components/common';
+import { toDateInputValue } from '../utils/format';
 import type {
   PortfolioAccountItem,
   PortfolioCashDirection,
@@ -39,7 +40,7 @@ type FlatPosition = PortfolioPositionItem & {
 };
 
 function getTodayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+  return toDateInputValue(new Date());
 }
 
 function formatMoney(value: number | undefined | null, currency = 'CNY'): string {

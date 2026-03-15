@@ -205,6 +205,37 @@ class PortfolioPr2TestCase(unittest.TestCase):
         self.assertEqual(result["inserted_count"], 1)
         self.assertEqual(result["duplicate_count"], 1)
 
+    def test_import_allows_identical_split_fills_without_trade_uid(self) -> None:
+        account = self.service.create_account(name="Main", broker="Demo", market="cn", base_currency="CNY")
+        aid = account["id"]
+        csv_text = (
+            "成交日期,证券代码,买卖标志,成交数量,成交均价,手续费,印花税\n"
+            "2026-01-02,600519,买入,10,100,1,0\n"
+            "2026-01-02,600519,买入,10,100,1,0\n"
+        )
+        parsed = self.import_service.parse_trade_csv(
+            broker="huatai",
+            content=csv_text.encode("utf-8"),
+        )
+        self.assertEqual(parsed["record_count"], 2)
+        self.assertEqual(len({item["dedup_hash"] for item in parsed["records"]}), 2)
+
+        first_commit = self.import_service.commit_trade_records(
+            account_id=aid,
+            broker="huatai",
+            records=parsed["records"],
+        )
+        second_commit = self.import_service.commit_trade_records(
+            account_id=aid,
+            broker="huatai",
+            records=parsed["records"],
+        )
+
+        self.assertEqual(first_commit["inserted_count"], 2)
+        self.assertEqual(first_commit["duplicate_count"], 0)
+        self.assertEqual(second_commit["inserted_count"], 0)
+        self.assertEqual(second_commit["duplicate_count"], 2)
+
     def test_risk_threshold_boundary(self) -> None:
         account = self.service.create_account(name="Main", broker="Demo", market="cn", base_currency="CNY")
         aid = account["id"]
