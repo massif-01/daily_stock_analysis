@@ -45,7 +45,7 @@ WEBUI_HOST=0.0.0.0
 # 只启动 Web 界面（不自动执行分析）
 python main.py --webui-only
 
-# 或者：启动 Web 界面 + 每日定时分析
+# 或者：启动 Web 界面（启动时执行一次分析；需每日定时分析请加 --schedule 或设 SCHEDULE_ENABLED=true）
 python main.py --webui
 ```
 

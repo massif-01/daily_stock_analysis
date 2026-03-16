@@ -132,7 +132,7 @@ nohup python main.py --schedule > /dev/null 2>&1 &
 # 启动 Web 管理界面（云服务器需先在 .env 中设置 WEBUI_HOST=0.0.0.0）
 python main.py --webui-only
 
-# 启动 Web 界面 + 定时分析
+# 启动 Web 界面（启动时执行一次分析；需每日定时请加 --schedule 或设 SCHEDULE_ENABLED=true）
 python main.py --webui
 ```
 
