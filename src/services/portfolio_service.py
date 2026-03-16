@@ -174,6 +174,13 @@ class PortfolioService:
         symbol_norm = canonical_stock_code(symbol)
         if not symbol_norm:
             raise ValueError("symbol is required")
+        trade_uid_norm = (trade_uid or "").strip() or None
+        dedup_hash_norm = (dedup_hash or "").strip() or None
+        self._validate_trade_identity(
+            account_id=account_id,
+            trade_uid=trade_uid_norm,
+            dedup_hash=dedup_hash_norm,
+        )
         if side_norm == "sell":
             self._validate_sell_quantity(
                 account_id=account_id,
@@ -187,7 +194,7 @@ class PortfolioService:
         try:
             row = self.repo.add_trade(
                 account_id=account_id,
-                trade_uid=(trade_uid or "").strip() or None,
+                trade_uid=trade_uid_norm,
                 symbol=symbol_norm,
                 market=market_norm,
                 currency=currency_norm,
@@ -198,7 +205,7 @@ class PortfolioService:
                 fee=float(fee),
                 tax=float(tax),
                 note=(note or "").strip() or None,
-                dedup_hash=(dedup_hash or "").strip() or None,
+                dedup_hash=dedup_hash_norm,
             )
         except (DuplicateTradeUidError, DuplicateTradeDedupHashError) as exc:
             raise PortfolioConflictError(str(exc)) from exc
@@ -577,6 +584,18 @@ class PortfolioService:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+    def _validate_trade_identity(
+        self,
+        *,
+        account_id: int,
+        trade_uid: Optional[str],
+        dedup_hash: Optional[str],
+    ) -> None:
+        if trade_uid and self.repo.has_trade_uid(account_id, trade_uid):
+            raise PortfolioConflictError(f"Duplicate trade_uid for account_id={account_id}: {trade_uid}")
+        if dedup_hash and self.repo.has_trade_dedup_hash(account_id, dedup_hash):
+            raise PortfolioConflictError(f"Duplicate dedup_hash for account_id={account_id}: {dedup_hash}")
+
     def _validate_sell_quantity(
         self,
         *,

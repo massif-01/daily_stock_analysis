@@ -223,6 +223,53 @@ class PortfolioApiTestCase(unittest.TestCase):
         self.assertEqual(detail.get("error"), "portfolio_oversell")
         self.assertIn("Oversell detected", detail.get("message", ""))
 
+    def test_duplicate_full_close_sell_still_returns_conflict(self) -> None:
+        create_resp = self.client.post(
+            "/api/v1/portfolio/accounts",
+            json={"name": "Main", "broker": "Demo", "market": "cn", "base_currency": "CNY"},
+        )
+        self.assertEqual(create_resp.status_code, 200)
+        account_id = create_resp.json()["id"]
+
+        buy_resp = self.client.post(
+            "/api/v1/portfolio/trades",
+            json={
+                "account_id": account_id,
+                "symbol": "600519",
+                "trade_date": "2026-01-01",
+                "side": "buy",
+                "quantity": 10,
+                "price": 100,
+                "fee": 0,
+                "tax": 0,
+                "market": "cn",
+                "currency": "CNY",
+            },
+        )
+        self.assertEqual(buy_resp.status_code, 200)
+
+        payload = {
+            "account_id": account_id,
+            "symbol": "600519",
+            "trade_date": "2026-01-02",
+            "side": "sell",
+            "quantity": 10,
+            "price": 90,
+            "fee": 0,
+            "tax": 0,
+            "market": "cn",
+            "currency": "CNY",
+            "trade_uid": "dup-full-close-sell-1",
+        }
+        first_sell = self.client.post("/api/v1/portfolio/trades", json=payload)
+        self.assertEqual(first_sell.status_code, 200)
+
+        second_sell = self.client.post("/api/v1/portfolio/trades", json=payload)
+        self.assertEqual(second_sell.status_code, 409)
+        detail = second_sell.json()
+        self.assertEqual(detail.get("error"), "conflict")
+        self.assertIn("Duplicate trade_uid", detail.get("message", ""))
+
     def test_event_list_endpoints_and_filters(self) -> None:
         create_resp = self.client.post(
             "/api/v1/portfolio/accounts",

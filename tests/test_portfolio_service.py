@@ -13,7 +13,7 @@ import pandas as pd
 from sqlalchemy import select
 
 from src.config import Config
-from src.services.portfolio_service import PortfolioOversellError, PortfolioService
+from src.services.portfolio_service import PortfolioConflictError, PortfolioOversellError, PortfolioService
 from src.storage import DatabaseManager, PortfolioDailySnapshot, PortfolioPosition, PortfolioPositionLot, PortfolioTrade
 
 
@@ -308,6 +308,47 @@ class PortfolioServiceTestCase(unittest.TestCase):
         trades = self.service.list_trade_events(account_id=aid, page=1, page_size=20)
         self.assertEqual(len(trades["items"]), 1)
         self.assertEqual(trades["items"][0]["side"], "buy")
+
+    def test_duplicate_full_close_sell_keeps_conflict_semantics(self) -> None:
+        account = self.service.create_account(name="Main", broker="Demo", market="cn", base_currency="CNY")
+        aid = account["id"]
+
+        self.service.record_trade(
+            account_id=aid,
+            symbol="600519",
+            trade_date=date(2026, 1, 1),
+            side="buy",
+            quantity=10,
+            price=10,
+            market="cn",
+            currency="CNY",
+        )
+        self.service.record_trade(
+            account_id=aid,
+            symbol="600519",
+            trade_date=date(2026, 1, 2),
+            side="sell",
+            quantity=10,
+            price=11,
+            market="cn",
+            currency="CNY",
+            trade_uid="sell-full-close-1",
+        )
+
+        with self.assertRaises(PortfolioConflictError) as ctx:
+            self.service.record_trade(
+                account_id=aid,
+                symbol="600519",
+                trade_date=date(2026, 1, 2),
+                side="sell",
+                quantity=10,
+                price=11,
+                market="cn",
+                currency="CNY",
+                trade_uid="sell-full-close-1",
+            )
+
+        self.assertIn("Duplicate trade_uid", str(ctx.exception))
 
     def test_backdated_trade_write_invalidates_future_cache(self) -> None:
         account = self.service.create_account(name="Main", broker="Demo", market="cn", base_currency="CNY")
