@@ -89,6 +89,7 @@ class StockAnalysisPipeline:
             serpapi_keys=self.config.serpapi_keys,
             minimax_keys=self.config.minimax_api_keys,
             news_max_age_days=self.config.news_max_age_days,
+            news_strategy_profile=getattr(self.config, "news_strategy_profile", "short"),
         )
         
         logger.info(f"调度器初始化完成，最大并发数: {self.max_workers}")
