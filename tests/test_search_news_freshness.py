@@ -196,6 +196,22 @@ class SearchNewsFreshnessTestCase(unittest.TestCase):
         parsed = SearchService._normalize_news_publish_date(timestamp)
         self.assertEqual(parsed, expected_local_date)
 
+    def test_iso_utc_string_normalizes_to_local_date(self) -> None:
+        """ISO datetime with timezone should be converted to local date."""
+        dt_utc = datetime(2026, 3, 15, 23, 30, tzinfo=timezone.utc)
+        iso_text = "2026-03-15T23:30:00Z"
+        expected_local_date = dt_utc.astimezone().date()
+        parsed = SearchService._normalize_news_publish_date(iso_text)
+        self.assertEqual(parsed, expected_local_date)
+
+    def test_rfc_utc_string_normalizes_to_local_date(self) -> None:
+        """RFC datetime with timezone should be converted to local date."""
+        dt_utc = datetime(2026, 3, 15, 23, 30, tzinfo=timezone.utc)
+        rfc_text = "Sun, 15 Mar 2026 23:30:00 +0000"
+        expected_local_date = dt_utc.astimezone().date()
+        parsed = SearchService._normalize_news_publish_date(rfc_text)
+        self.assertEqual(parsed, expected_local_date)
+
 
 if __name__ == "__main__":
     unittest.main()
