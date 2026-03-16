@@ -1168,11 +1168,22 @@ class GeminiAnalyzer:
 """
         
         # 添加新闻搜索结果（重点区域）
-        prompt_config = get_config()
-        news_window_days = resolve_news_window_days(
-            news_max_age_days=getattr(prompt_config, "news_max_age_days", 3),
-            news_strategy_profile=getattr(prompt_config, "news_strategy_profile", "short"),
-        )
+        news_window_days: Optional[int] = None
+        context_window = context.get("news_window_days")
+        try:
+            if context_window is not None:
+                parsed_window = int(context_window)
+                if parsed_window > 0:
+                    news_window_days = parsed_window
+        except (TypeError, ValueError):
+            news_window_days = None
+
+        if news_window_days is None:
+            prompt_config = get_config()
+            news_window_days = resolve_news_window_days(
+                news_max_age_days=getattr(prompt_config, "news_max_age_days", 3),
+                news_strategy_profile=getattr(prompt_config, "news_strategy_profile", "short"),
+            )
         prompt += """
 ---
 

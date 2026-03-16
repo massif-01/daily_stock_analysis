@@ -428,6 +428,9 @@ class StockAnalysisPipeline:
             enhanced['stock_name'] = stock_name
         elif realtime_quote and getattr(realtime_quote, 'name', None):
             enhanced['stock_name'] = realtime_quote.name
+
+        # 将运行时搜索窗口透传给 analyzer，避免与全局配置重新读取产生窗口不一致
+        enhanced['news_window_days'] = getattr(self.search_service, "news_window_days", 3)
         
         # 添加实时行情（兼容不同数据源的字段差异）
         if realtime_quote:

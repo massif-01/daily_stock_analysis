@@ -37,6 +37,27 @@ class AnalyzerNewsPromptTestCase(unittest.TestCase):
         self.assertIn("超出近7日窗口的新闻一律忽略", prompt)
         self.assertIn("时间未知、无法确定发布日期的新闻一律忽略", prompt)
 
+    def test_prompt_prefers_context_news_window_days(self) -> None:
+        with patch.object(GeminiAnalyzer, "_init_litellm", return_value=None):
+            analyzer = GeminiAnalyzer()
+
+        context = {
+            "code": "600519",
+            "stock_name": "贵州茅台",
+            "date": "2026-03-16",
+            "today": {},
+            "news_window_days": 1,
+        }
+        fake_cfg = SimpleNamespace(
+            news_max_age_days=30,
+            news_strategy_profile="long",  # 30 days if fallback is used
+        )
+        with patch("src.analyzer.get_config", return_value=fake_cfg):
+            prompt = analyzer._format_prompt(context, "贵州茅台", news_context="news")
+
+        self.assertIn("近1日的新闻搜索结果", prompt)
+        self.assertIn("超出近1日窗口的新闻一律忽略", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()
