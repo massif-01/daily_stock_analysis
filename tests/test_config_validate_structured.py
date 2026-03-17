@@ -222,6 +222,26 @@ class TestValidateStructuredLLM:
         issues = cfg.validate_structured()
         assert any(i.severity == "error" and i.field == "LITELLM_MODEL" for i in issues)
 
+    def test_configured_agent_primary_model_missing_from_channels_is_error(self):
+        cfg = _make_config(
+            llm_model_list=[
+                {"model_name": "openai/gpt-4o-mini", "litellm_params": {"model": "openai/gpt-4o-mini", "api_key": "sk-test"}},
+            ],
+            agent_litellm_model="openai/gpt-4o",
+        )
+        issues = cfg.validate_structured()
+        assert any(i.severity == "error" and i.field == "AGENT_LITELLM_MODEL" for i in issues)
+
+    def test_configured_agent_primary_model_without_runtime_source_is_error(self):
+        cfg = _make_config(
+            llm_model_list=[],
+            litellm_model="cohere/command-r-plus",
+            agent_litellm_model="openai/gpt-4o-mini",
+            openai_api_keys=[],
+        )
+        issues = cfg.validate_structured()
+        assert any(i.severity == "error" and i.field == "AGENT_LITELLM_MODEL" for i in issues)
+
     def test_configured_vision_model_missing_from_channels_is_warning(self):
         cfg = _make_config(
             llm_model_list=[
