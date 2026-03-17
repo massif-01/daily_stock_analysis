@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - 暂无。
 
+### 文档
+
+- 新增 Ollama 本地模型配置说明（Fixes #690）
+
 ## [3.8.0] - 2026-03-17
 
 ### 发布亮点
