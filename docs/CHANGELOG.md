@@ -12,13 +12,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### 新功能
 
 - 📱 **Social Sentiment Intelligence (US stocks)** — 新增 Reddit / X (Twitter) / Polymarket 社交媒体情绪数据源，为美股分析提供实时社交舆情情报。数据来自 api.adanos.org，包含 Buzz Score、情绪评分、提及量等指标。完全可选（需配置 `SOCIAL_SENTIMENT_API_KEY`），仅对美股生效，A 股 / 港股不受影响。
+- 📊 **A股财报与分红结构化增强（Issue #710）** — `fundamental_context.earnings.data` 新增 `financial_report` 与 `dividend` 字段；分红采用“仅现金分红、税前口径”并支持 `10派X元 -> 每股X/10` 换算；新增 `ttm_cash_dividend_per_share` 与 `ttm_dividend_yield_pct`，同时在分析/历史 API 的 `details` 中新增 `financial_report`、`dividend_metrics` 可选字段（fail-open，向后兼容）。
+- 🔍 **接入Tushare筹码、行业板块涨跌接口** — 新增 Tushare筹码分布、行业板块涨跌接口获取；修复筹码分布判断部分错误；将筹码分布与行业板块的数据源优先级改为与实时行情获取优先级一致，均在.env配置；默认在上海时间19点之后才能用Tushare获取当天交易日的筹码分布，盘后获取当天交易日的行业板块涨跌，否则用前一个交易日的；行业板块涨跌受数据源影响，结果会不一致，优先使用Tushare的同花顺接口、其次东财接口。
+
 ### 文档
 
 - 新增云服务器 Web 界面部署与访问教程 (Fixes #686)
 
+### Added
+
+- **Web UI foundation refresh** — rebuilt shared design tokens and common primitives, introduced the app shell, theme provider, sidebar navigation, and Electron loading background alignment for the upgraded desktop/web experience
+- **Settings and auth workflow overhaul** — rebuilt the Login, Settings, and Auth management flows, added explicit auth setup-state handling, and aligned the Web UI with the runtime auth configuration APIs
+- **UI regression coverage and smoke checks** — expanded targeted frontend tests and added Playwright smoke coverage for login, home, chat, mobile shell, settings, and backtest entry flows
+
+### Changed
+
+- **Shell-driven page integration** — aligned Home, Chat, Settings, and Backtest with the new shell layout contract so routing, drawer behavior, and page-level scrolling are consistent during the UI migration
+- **Settings state consistency** — refined draft preservation, direct-save synchronization, and conflict handling so module-level saves no longer leave the page out of sync with backend config state
+- **Login visual baseline** — restored the login page visual treatment to the established `006` branch baseline while keeping the newer auth-state logic and unified form interaction model
+
 ### 修复
 
-- 🧵 **桌面端配置生效与可解释性增强**（#633）— 修复异步分析队列未按 `MAX_WORKERS` 配置同步的问题；新增任务队列并发 in-place 同步机制（空闲即时生效、繁忙延后）。同时补强新闻窗口解释：保持 `effective_days = min(profile_days, NEWS_MAX_AGE_DAYS)` 语义不变，并在设置保存反馈与运行日志中明确输出 profile/max/effective，减少“参数未生效”误解。
+- 🧵 **桌面端配置生效与可解释性增强**（#633）— 修复异步分析队列未按 `MAX_WORKERS` 配置同步的问题；新增任务队列并发 in-place 同步机制（空闲即时生效、繁忙延后）。同时补强新闻窗口解释：保持 `effective_days = min(profile_days, NEWS_MAX_AGE_DAYS)` 语义不变，并在设置保存反馈与运行日志中明确输出 profile/max/effective，减少"参数未生效"误解。
+- 🔐 **退出登录立即失效现有会话** — `POST /api/v1/auth/logout` 现在会轮换 session secret，避免旧 cookie 在退出后仍可继续访问受保护接口；同浏览器标签页和并发页面会被同步登出。
+- 💼 **持仓超售拦截与事件删除恢复**（#718）— `POST /api/v1/portfolio/trades` 现在会在写入前校验可卖数量，超售返回 `409 portfolio_oversell`；持仓页新增交易 / 资金流水 / 公司行为删除能力，删除后会同步失效仓位缓存与未来快照，便于从错误流水中直接恢复。
+
 - 📧 **邮件中文发件人名编码**（#708）— 邮件通知现在会对包含中文的 `EMAIL_SENDER_NAME` 自动做 RFC 2047 编码，并在异常路径补充 SMTP 连接清理，修复 GitHub Actions / QQ SMTP 下 `'ascii' codec can't encode characters` 导致的发送失败。
 - 🐛 **港股 Agent 实时行情去重与快速路由** — 统一 `HK01810` / `1810.HK` / `01810` 等港股代码归一规则；港股实时行情改为直接走单次 `akshare_hk` 路径，避免按 A 股 source priority 重复触发同一失败接口；Agent 运行期对显式 `retriable=false` 的工具失败增加短路缓存，减少同轮分析中的重复失败调用。
 - 📰 **新闻时效硬过滤与策略分窗**（#697）— 新增 `NEWS_STRATEGY_PROFILE`（`ultra_short/short/medium/long`）并与 `NEWS_MAX_AGE_DAYS` 统一计算有效窗口；搜索结果在返回后执行发布时间硬过滤（时间未知剔除、超窗剔除、未来仅容忍 1 天），并在历史 fallback 链路追加相同约束，避免旧闻再次进入“最新动态/风险警报”。
