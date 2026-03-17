@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### 新功能
 
 - 📱 **Social Sentiment Intelligence (US stocks)** — 新增 Reddit / X (Twitter) / Polymarket 社交媒体情绪数据源，为美股分析提供实时社交舆情情报。数据来自 api.adanos.org，包含 Buzz Score、情绪评分、提及量等指标。完全可选（需配置 `SOCIAL_SENTIMENT_API_KEY`），仅对美股生效，A 股 / 港股不受影响。
+- 📊 **A股财报与分红结构化增强（Issue #710）** — `fundamental_context.earnings.data` 新增 `financial_report` 与 `dividend` 字段；分红采用“仅现金分红、税前口径”并支持 `10派X元 -> 每股X/10` 换算；新增 `ttm_cash_dividend_per_share` 与 `ttm_dividend_yield_pct`，同时在分析/历史 API 的 `details` 中新增 `financial_report`、`dividend_metrics` 可选字段（fail-open，向后兼容）。
 ### 文档
 
 - 新增云服务器 Web 界面部署与访问教程 (Fixes #686)
