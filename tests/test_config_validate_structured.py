@@ -242,6 +242,16 @@ class TestValidateStructuredLLM:
         issues = cfg.validate_structured()
         assert any(i.severity == "error" and i.field == "AGENT_LITELLM_MODEL" for i in issues)
 
+    def test_configured_agent_primary_model_matching_yaml_alias_is_allowed(self):
+        cfg = _make_config(
+            llm_model_list=[
+                {"model_name": "gpt4o", "litellm_params": {"model": "openai/gpt-4o-mini", "api_key": "sk-test"}},
+            ],
+            agent_litellm_model="gpt4o",
+        )
+        issues = cfg.validate_structured()
+        assert not any(i.severity == "error" and i.field == "AGENT_LITELLM_MODEL" for i in issues)
+
     def test_configured_vision_model_missing_from_channels_is_warning(self):
         cfg = _make_config(
             llm_model_list=[

@@ -141,6 +141,27 @@ class SystemConfigServiceTestCase(unittest.TestCase):
     @patch.object(
         Config,
         "_parse_litellm_yaml",
+        return_value=[
+            {
+                "model_name": "gpt4o",
+                "litellm_params": {"model": "openai/gpt-4o-mini", "api_key": "sk-test-value"},
+            }
+        ],
+    )
+    def test_validate_accepts_unprefixed_agent_model_when_yaml_declares_alias(self, _mock_parse_yaml) -> None:
+        validation = self.service.validate(
+            items=[
+                {"key": "LITELLM_CONFIG", "value": "/tmp/litellm.yaml"},
+                {"key": "AGENT_LITELLM_MODEL", "value": "gpt4o"},
+            ]
+        )
+
+        self.assertTrue(validation["valid"])
+        self.assertEqual(validation["issues"], [])
+
+    @patch.object(
+        Config,
+        "_parse_litellm_yaml",
         return_value=[{"model_name": "gemini/gemini-2.5-flash", "litellm_params": {"model": "gemini/gemini-2.5-flash"}}],
     )
     def test_validate_skips_channel_checks_when_litellm_yaml_is_active(self, _mock_parse_yaml) -> None:

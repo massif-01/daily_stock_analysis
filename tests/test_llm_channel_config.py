@@ -263,6 +263,37 @@ class LLMChannelConfigTestCase(unittest.TestCase):
             ["openai/gpt-4o-mini"],
         )
 
+    @patch("src.config.setup_env")
+    @patch.object(
+        Config,
+        "_parse_litellm_yaml",
+        return_value=[
+            {
+                "model_name": "gpt4o",
+                "litellm_params": {
+                    "model": "openai/gpt-4o-mini",
+                    "api_key": "sk-test-value",
+                },
+            }
+        ],
+    )
+    def test_agent_model_preserves_yaml_alias_without_provider_prefix(self, _mock_parse_yaml, _mock_setup_env) -> None:
+        env = {
+            "LITELLM_CONFIG": "/tmp/litellm.yaml",
+            "AGENT_LITELLM_MODEL": "gpt4o",
+            "LITELLM_FALLBACK_MODELS": "openai/gpt-4o-mini",
+        }
+
+        with patch.dict(os.environ, env, clear=True):
+            config = Config._load_from_env()
+
+        self.assertEqual(config.agent_litellm_model, "gpt4o")
+        self.assertEqual(get_effective_agent_primary_model(config), "gpt4o")
+        self.assertEqual(
+            get_effective_agent_models_to_try(config),
+            ["gpt4o", "openai/gpt-4o-mini"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

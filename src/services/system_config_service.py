@@ -769,7 +769,10 @@ class SystemConfigService:
                 return issues
 
             configured_agent_model_raw = (effective_map.get("AGENT_LITELLM_MODEL") or "").strip()
-            configured_agent_model = normalize_agent_litellm_model(configured_agent_model_raw)
+            configured_agent_model = normalize_agent_litellm_model(
+                configured_agent_model_raw,
+                configured_models=available_model_set,
+            )
             primary_model = (effective_map.get("LITELLM_MODEL") or "").strip()
             if primary_model and not SystemConfigService._has_runtime_source_for_model(primary_model, effective_map):
                 issues.append(
@@ -867,7 +870,10 @@ class SystemConfigService:
             )
 
         configured_agent_model_raw = (effective_map.get("AGENT_LITELLM_MODEL") or "").strip()
-        configured_agent_model = normalize_agent_litellm_model(configured_agent_model_raw)
+        configured_agent_model = normalize_agent_litellm_model(
+            configured_agent_model_raw,
+            configured_models=available_model_set,
+        )
         if (
             configured_agent_model_raw
             and configured_agent_model

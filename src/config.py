@@ -244,20 +244,29 @@ def _uses_direct_env_provider(model: str) -> bool:
     return bool(provider) and provider not in _MANAGED_LITELLM_KEY_PROVIDERS
 
 
-def normalize_agent_litellm_model(model: str) -> str:
-    """Normalize AGENT_LITELLM_MODEL into provider/model format."""
+def normalize_agent_litellm_model(
+    model: str,
+    configured_models: Optional[set[str]] = None,
+) -> str:
+    """Normalize AGENT_LITELLM_MODEL while preserving configured router aliases."""
     normalized_model = (model or "").strip()
     if not normalized_model:
         return ""
     if "/" not in normalized_model:
+        if configured_models and normalized_model in configured_models:
+            return normalized_model
         return f"openai/{normalized_model}"
     return normalized_model
 
 
 def get_effective_agent_primary_model(config: "Config") -> str:
     """Return the effective Agent primary model with fallback inheritance."""
+    configured_router_models = set(
+        get_configured_llm_models(getattr(config, "llm_model_list", []) or [])
+    )
     configured_agent_model = normalize_agent_litellm_model(
-        getattr(config, "agent_litellm_model", "")
+        getattr(config, "agent_litellm_model", ""),
+        configured_models=configured_router_models,
     )
     if configured_agent_model:
         return configured_agent_model
@@ -266,6 +275,9 @@ def get_effective_agent_primary_model(config: "Config") -> str:
 
 def get_effective_agent_models_to_try(config: "Config") -> List[str]:
     """Return Agent model try-order: primary + global fallbacks (deduped)."""
+    configured_router_models = set(
+        get_configured_llm_models(getattr(config, "llm_model_list", []) or [])
+    )
     raw_models = [get_effective_agent_primary_model(config)] + (
         getattr(config, "litellm_fallback_models", []) or []
     )
@@ -275,10 +287,9 @@ def get_effective_agent_models_to_try(config: "Config") -> List[str]:
         normalized_model = (model or "").strip()
         if not normalized_model:
             continue
-        dedupe_key = (
-            normalized_model
-            if "/" in normalized_model
-            else f"openai/{normalized_model}"
+        dedupe_key = normalize_agent_litellm_model(
+            normalized_model,
+            configured_models=configured_router_models,
         )
         if dedupe_key in seen:
             continue
@@ -862,7 +873,8 @@ class Config:
             ]
 
         agent_litellm_model = normalize_agent_litellm_model(
-            os.getenv('AGENT_LITELLM_MODEL', '')
+            os.getenv('AGENT_LITELLM_MODEL', ''),
+            configured_models=set(get_configured_llm_models(llm_model_list)),
         )
 
         # 解析搜索引擎 API Keys（支持多个 key，逗号分隔）
