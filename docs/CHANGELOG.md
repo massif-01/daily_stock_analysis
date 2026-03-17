@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### 新功能
 
 - 📱 **Social Sentiment Intelligence (US stocks)** — 新增 Reddit / X (Twitter) / Polymarket 社交媒体情绪数据源，为美股分析提供实时社交舆情情报。数据来自 api.adanos.org，包含 Buzz Score、情绪评分、提及量等指标。完全可选（需配置 `SOCIAL_SENTIMENT_API_KEY`），仅对美股生效，A 股 / 港股不受影响。
+- 📈 **TickFlow market review enhancement** (#632) — 新增可选 `TICKFLOW_API_KEY`；配置后，A 股大盘复盘的主要指数行情优先尝试 TickFlow；若当前 TickFlow 套餐支持标的池查询，市场涨跌统计也会优先尝试 TickFlow。失败或权限不足时立即回退到现有 `AkShare / Tushare / efinance` 链路；板块涨跌榜回退顺序保持不变。接入层同时适配了真实 SDK 契约：主指数查询按单次请求上限分批拉取，并将 TickFlow 返回的比例型 `change_pct` / `amplitude` 统一转换为项目内部的百分比口径。
 ### 文档
 
 - 新增云服务器 Web 界面部署与访问教程 (Fixes #686)
