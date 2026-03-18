@@ -363,10 +363,13 @@ class TestSearXNGSearchProvider(unittest.TestCase):
         self.assertIn("公共 SearXNG 实例", resp.error_message or "")
         self.assertEqual(mock_get.call_count, 1)
 
+    @patch("src.search_service.time.time")
     @patch("src.search_service.requests.get")
-    def test_public_mode_retries_feed_after_initial_failure(self, mock_get):
+    def test_public_mode_cold_start_failure_honors_backoff_then_retries(self, mock_get, mock_time):
         import requests as req_module
 
+        current_time = [1000.0]
+        mock_time.side_effect = lambda: current_time[0]  # noqa: E731
         mock_get.side_effect = [
             req_module.exceptions.ConnectionError("dns failed"),
             self._response(json_payload=self._public_feed(["https://public-1.example/"])),
@@ -375,10 +378,14 @@ class TestSearXNGSearchProvider(unittest.TestCase):
 
         provider = self._create_provider(use_public_instances=True)
         first = provider.search("first", max_results=5)
+        current_time[0] = 1001.0
         second = provider.search("second", max_results=5)
+        current_time[0] = 1000.0 + SearXNGSearchProvider.PUBLIC_INSTANCES_STALE_REFRESH_BACKOFF_SECONDS + 1
+        third = provider.search("third", max_results=5)
 
         self.assertFalse(first.success)
-        self.assertTrue(second.success)
+        self.assertFalse(second.success)
+        self.assertTrue(third.success)
         self.assertEqual(mock_get.call_count, 3)
         self.assertEqual(mock_get.call_args_list[0][0][0], SearXNGSearchProvider.PUBLIC_INSTANCES_URL)
         self.assertEqual(mock_get.call_args_list[1][0][0], SearXNGSearchProvider.PUBLIC_INSTANCES_URL)
@@ -389,11 +396,17 @@ class TestSearXNGSearchProvider(unittest.TestCase):
     def test_public_instance_refresh_failure_reuses_stale_cache(self, mock_get, mock_time):
         import requests as req_module
 
-        mock_time.side_effect = [
-            1000.0,
-            1000.0 + SearXNGSearchProvider.PUBLIC_INSTANCES_CACHE_TTL_SECONDS + 1,
-            1000.0 + SearXNGSearchProvider.PUBLIC_INSTANCES_CACHE_TTL_SECONDS + 2,
-        ]
+        fallback_time = (
+            1000.0 + SearXNGSearchProvider.PUBLIC_INSTANCES_CACHE_TTL_SECONDS + 2
+        )
+        time_values = iter(
+            [
+                1000.0,
+                1000.0 + SearXNGSearchProvider.PUBLIC_INSTANCES_CACHE_TTL_SECONDS + 1,
+                fallback_time,
+            ]
+        )
+        mock_time.side_effect = lambda: next(time_values, fallback_time)  # noqa: E731
         mock_get.side_effect = [
             self._response(json_payload=self._public_feed(["https://public-1.example/"])),
             req_module.exceptions.ConnectionError("dns failed"),

@@ -1267,6 +1267,12 @@ class SearXNGSearchProvider(BaseSearchProvider):
         now = time.time()
         with cls._public_instances_lock:
             stale_urls: List[str] = []
+            if cls._public_instances_cache is None and cls._public_instances_stale_retry_after > now:
+                logger.debug(
+                    "[SearXNG] 公共实例冷启动刷新退避中，剩余 %.0fs",
+                    cls._public_instances_stale_retry_after - now,
+                )
+                return []
             if cls._public_instances_cache is not None:
                 cached_at, cached_urls = cls._public_instances_cache
                 if now - cached_at < cls.PUBLIC_INSTANCES_CACHE_TTL_SECONDS:
@@ -1311,6 +1317,13 @@ class SearXNGSearchProvider(BaseSearchProvider):
                     cls.PUBLIC_INSTANCES_STALE_REFRESH_BACKOFF_SECONDS,
                 )
                 return stale_urls
+            cls._public_instances_stale_retry_after = (
+                now + cls.PUBLIC_INSTANCES_STALE_REFRESH_BACKOFF_SECONDS
+            )
+            logger.warning(
+                "[SearXNG] 公共实例冷启动刷新失败，%.0fs 内不再刷新",
+                cls.PUBLIC_INSTANCES_STALE_REFRESH_BACKOFF_SECONDS,
+            )
             return []
 
     def _rotate_candidates(self, pool: List[str], *, max_attempts: int) -> List[str]:
