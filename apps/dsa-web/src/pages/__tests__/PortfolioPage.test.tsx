@@ -360,6 +360,30 @@ describe('PortfolioPage FX refresh', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: '刷新汇率' })).not.toBeDisabled());
   });
 
+  it('does not keep success feedback when snapshot reload fails after FX refresh succeeds', async () => {
+    getSnapshot
+      .mockResolvedValueOnce(makeSnapshot({ fxStale: true }))
+      .mockRejectedValueOnce(
+        createApiError(
+          createParsedApiError({
+            title: '快照刷新失败',
+            message: '无法加载最新持仓快照',
+          }),
+        ),
+      );
+
+    render(<PortfolioPage />);
+
+    await waitForInitialLoad();
+
+    fireEvent.click(screen.getByRole('button', { name: '刷新汇率' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('快照刷新失败');
+    expect(screen.getByRole('alert')).toHaveTextContent('无法加载最新持仓快照');
+    await waitFor(() => expect(screen.queryByText('汇率已刷新，共更新 1 对。')).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('button', { name: '刷新汇率' })).not.toBeDisabled());
+  });
+
   it('drops late FX refresh results after switching to another account scope', async () => {
     getAccounts.mockResolvedValueOnce(makeAccounts([{ id: 1, name: 'Main' }, { id: 2, name: 'Alt' }]));
     getSnapshot.mockImplementation(async ({ accountId }: { accountId?: number } = {}) => {

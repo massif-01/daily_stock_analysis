@@ -629,9 +629,9 @@ const PortfolioPage: React.FC = () => {
     requestedRequestId: number,
     requestedAccountId: number | undefined,
     requestedCostMethod: PortfolioCostMethod,
-  ) => {
+  ): Promise<boolean> => {
     if (!isActiveRefreshContext(requestedViewKey, requestedRequestId)) {
-      return;
+      return false;
     }
 
     setRiskWarning(null);
@@ -642,7 +642,7 @@ const PortfolioPage: React.FC = () => {
         costMethod: requestedCostMethod,
       });
       if (!isActiveRefreshContext(requestedViewKey, requestedRequestId)) {
-        return;
+        return false;
       }
       setSnapshot(snapshotData);
       setError(null);
@@ -653,25 +653,27 @@ const PortfolioPage: React.FC = () => {
           costMethod: requestedCostMethod,
         });
         if (!isActiveRefreshContext(requestedViewKey, requestedRequestId)) {
-          return;
+          return false;
         }
         setRisk(riskData);
         setRiskWarning(null);
       } catch (riskErr) {
         if (!isActiveRefreshContext(requestedViewKey, requestedRequestId)) {
-          return;
+          return false;
         }
         setRisk(null);
         const parsed = getParsedApiError(riskErr);
         setRiskWarning(parsed.message || '风险数据获取失败，已降级为仅展示快照数据。');
       }
+      return true;
     } catch (err) {
       if (!isActiveRefreshContext(requestedViewKey, requestedRequestId)) {
-        return;
+        return false;
       }
       setSnapshot(null);
       setRisk(null);
       setError(getParsedApiError(err));
+      return false;
     }
   }, []);
 
@@ -698,13 +700,16 @@ const PortfolioPage: React.FC = () => {
       if (!isActiveRefreshContext(requestedViewKey, requestedRequestId)) {
         return;
       }
-      setFxRefreshFeedback(buildFxRefreshFeedback(result));
-      await reloadSnapshotAndRiskForScope(
+      const reloaded = await reloadSnapshotAndRiskForScope(
         requestedViewKey,
         requestedRequestId,
         requestedAccountId,
         requestedCostMethod,
       );
+      if (!reloaded || !isActiveRefreshContext(requestedViewKey, requestedRequestId)) {
+        return;
+      }
+      setFxRefreshFeedback(buildFxRefreshFeedback(result));
     } catch (err) {
       if (!isActiveRefreshContext(requestedViewKey, requestedRequestId)) {
         return;
