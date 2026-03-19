@@ -291,11 +291,13 @@ class AgentExecutor:
         llm_adapter: LLMToolAdapter,
         skill_instructions: str = "",
         max_steps: int = 10,
+        timeout_seconds: Optional[float] = None,
     ):
         self.tool_registry = tool_registry
         self.llm_adapter = llm_adapter
         self.skill_instructions = skill_instructions
         self.max_steps = max_steps
+        self.timeout_seconds = timeout_seconds
 
     def run(self, task: str, context: Optional[Dict[str, Any]] = None) -> AgentResult:
         """Execute the agent loop for a given task.
@@ -410,6 +412,7 @@ class AgentExecutor:
             llm_adapter=self.llm_adapter,
             max_steps=self.max_steps,
             progress_callback=progress_callback,
+            max_wall_clock_seconds=self.timeout_seconds,
         )
 
         model_str = loop_result.model

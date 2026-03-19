@@ -119,6 +119,28 @@ class ConfigEnvCompatibilityTestCase(unittest.TestCase):
         self.assertFalse(config.schedule_run_immediately)
         self.assertTrue(config.run_immediately)
 
+    @patch("src.config.setup_env")
+    @patch.object(Config, "_parse_litellm_yaml", return_value=[])
+    def test_invalid_numeric_env_values_fall_back_to_defaults(
+        self,
+        _mock_parse_yaml,
+        _mock_setup_env,
+    ) -> None:
+        env = {
+            "AGENT_ORCHESTRATOR_TIMEOUT_S": "oops",
+            "NEWS_MAX_AGE_DAYS": "bad",
+            "MAX_WORKERS": "",
+            "WEBUI_PORT": "invalid",
+        }
+
+        with patch.dict(os.environ, env, clear=True):
+            config = Config._load_from_env()
+
+        self.assertEqual(config.agent_orchestrator_timeout_s, 600)
+        self.assertEqual(config.news_max_age_days, 3)
+        self.assertEqual(config.max_workers, 3)
+        self.assertEqual(config.webui_port, 8000)
+
 
 if __name__ == "__main__":
     unittest.main()

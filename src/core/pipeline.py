@@ -140,6 +140,7 @@ class StockAnalysisPipeline:
         Returns:
             Tuple[是否成功, 错误信息]
         """
+        stock_name = code
         try:
             # 首先获取股票名称
             stock_name = self.fetcher_manager.get_stock_name(code)
