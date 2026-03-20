@@ -66,6 +66,32 @@ describe('ReportOverview', () => {
     expect(screen.queryByText('领跌')).not.toBeInTheDocument();
   });
 
+  it('prioritizes ranked boards when trimming related board list', () => {
+    render(
+      <ReportOverview
+        meta={baseMeta}
+        summary={baseSummary}
+        details={{
+          belongBoards: [
+            { name: '白酒', type: '行业' },
+            { name: '消费', type: '概念' },
+            { name: '新能源' },
+            { name: '半导体', type: '行业' },
+          ],
+          sectorRankings: {
+            top: [{ name: '半导体', changePct: 3.18 }],
+            bottom: [],
+          },
+        }}
+      />,
+    );
+
+    expect(screen.getByText('半导体')).toBeInTheDocument();
+    expect(screen.getByText('领涨')).toBeInTheDocument();
+    expect(screen.getByText('+3.18%')).toBeInTheDocument();
+    expect(screen.queryByText('新能源')).not.toBeInTheDocument();
+  });
+
   it('hides related boards section when no boards are available', () => {
     render(<ReportOverview meta={baseMeta} summary={baseSummary} details={{ belongBoards: [] }} />);
 

@@ -22,6 +22,8 @@ type BoardSignal = {
   changePct?: number;
 };
 
+const MAX_RELATED_BOARDS = 3;
+
 const normalizeBoardName = (value?: string): string =>
   (value || '').trim().replace(/\s+/g, ' ');
 
@@ -70,6 +72,32 @@ const buildBoardSignalMap = (details?: ReportDetailsType): Map<string, BoardSign
   return signalMap;
 };
 
+const prioritizeRelatedBoards = (
+  boards: NonNullable<ReportDetailsType['belongBoards']>,
+  signalMap: Map<string, BoardSignal>,
+): NonNullable<ReportDetailsType['belongBoards']> => {
+  if (boards.length <= MAX_RELATED_BOARDS) {
+    return boards;
+  }
+
+  const rankedBoards: NonNullable<ReportDetailsType['belongBoards']> = [];
+  const unrankedBoards: NonNullable<ReportDetailsType['belongBoards']> = [];
+
+  boards.forEach((board) => {
+    const boardName = normalizeBoardName(board?.name);
+    if (!boardName) {
+      return;
+    }
+    if (signalMap.has(boardName)) {
+      rankedBoards.push(board);
+      return;
+    }
+    unrankedBoards.push(board);
+  });
+
+  return [...rankedBoards, ...unrankedBoards].slice(0, MAX_RELATED_BOARDS);
+};
+
 /**
  * 报告概览区组件 - 终端风格
  */
@@ -80,10 +108,12 @@ export const ReportOverview: React.FC<ReportOverviewProps> = ({
 }) => {
   const reportLanguage = normalizeReportLanguage(meta.reportLanguage);
   const text = getReportText(reportLanguage);
-  const relatedBoards = (Array.isArray(details?.belongBoards) ? details.belongBoards : [])
-    .filter((board) => normalizeBoardName(board?.name).length > 0)
-    .slice(0, 3);
   const boardSignals = buildBoardSignalMap(details);
+  const relatedBoards = prioritizeRelatedBoards(
+    (Array.isArray(details?.belongBoards) ? details.belongBoards : [])
+      .filter((board) => normalizeBoardName(board?.name).length > 0),
+    boardSignals,
+  );
 
   const getPriceChangeStyle = (changePct: number | undefined): React.CSSProperties | undefined => {
     if (changePct === undefined || changePct === null) {
