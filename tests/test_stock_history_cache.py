@@ -357,6 +357,32 @@ class StockHistoryCacheTestCase(unittest.TestCase):
         self.assertEqual(second_source, "Fetcher")
         self.assertEqual(manager.get_daily_data.call_count, 2)
 
+    def test_load_recent_history_prefers_fresher_bucket_over_longer_legacy_bucket(self) -> None:
+        target_date = date(2026, 4, 16)
+        db = _DummyDB()
+        db.seed("SH600519", 120, end_date=target_date - timedelta(days=1), source="legacy")
+
+        from unittest.mock import MagicMock, patch
+
+        manager = MagicMock()
+        manager.get_daily_data.return_value = (
+            _make_history_df("600519", 50, end_date=target_date),
+            "Fetcher",
+        )
+
+        with patch("src.services.stock_history_cache.get_db", return_value=db):
+            df, source = load_recent_history_df(
+                "SH600519",
+                days=90,
+                target_date=target_date,
+                fetcher_manager=manager,
+            )
+
+        self.assertEqual(len(df), 50)
+        self.assertEqual(df.iloc[-1]["date"], target_date)
+        self.assertEqual(source, "Fetcher")
+        manager.get_daily_data.assert_called_once_with("600519", days=AGENT_HISTORY_BASELINE_DAYS)
+
 
 if __name__ == "__main__":
     unittest.main()

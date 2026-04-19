@@ -17,6 +17,7 @@ from src.agent.tools.registry import ToolParameter, ToolDefinition
 from src.services.stock_history_cache import (
     get_shared_fetcher_manager,
     load_recent_history_df,
+    resolve_history_storage_code,
     reset_shared_history_runtime,
 )
 
@@ -316,7 +317,10 @@ get_chip_distribution_tool = ToolDefinition(
 def _handle_get_analysis_context(stock_code: str) -> dict:
     """Get stored analysis context from database."""
     db = _get_db()
-    context = db.get_analysis_context(stock_code)
+    resolved_code = resolve_history_storage_code(stock_code, days=2)
+    context = db.get_analysis_context(resolved_code)
+    if context is None and resolved_code != stock_code:
+        context = db.get_analysis_context(stock_code)
 
     if context is None:
         return {"error": f"No analysis context in DB for {stock_code}"}

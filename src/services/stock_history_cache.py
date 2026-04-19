@@ -107,6 +107,11 @@ def _get_latest_bar_date(bars: List[object]) -> Optional[date]:
     return _coerce_to_date(getattr(bars[-1], "date", None))
 
 
+def _rank_bars(bars: List[object]) -> Tuple[date, int]:
+    latest_bar_date = _get_latest_bar_date(bars) or date.min
+    return latest_bar_date, len(bars)
+
+
 def _resolve_expected_target_date(stock_code: str, target_date: Optional[date] = None) -> date:
     if target_date is not None:
         return target_date
@@ -202,11 +207,26 @@ def _load_recent_bars_from_db(
             logger.debug("load_recent_bars_from_db(%s): DB lookup failed for %s: %s", stock_code, code, exc)
             continue
 
-        if len(bars) > len(best_bars):
+        if _rank_bars(bars) > _rank_bars(best_bars):
             best_bars = list(bars)
             best_code = code
 
     return best_bars, _infer_source(best_bars), best_code
+
+
+def resolve_history_storage_code(
+    stock_code: str,
+    *,
+    days: int = 2,
+    target_date: Optional[date] = None,
+) -> str:
+    """Resolve the best storage code bucket for DB-backed historical reads."""
+    _bars, _source, storage_code = _load_recent_bars_from_db(
+        stock_code,
+        days=days,
+        target_date=target_date,
+    )
+    return storage_code or _normalize_cache_code(stock_code) or (stock_code or "").strip()
 
 
 def get_shared_fetcher_manager():
