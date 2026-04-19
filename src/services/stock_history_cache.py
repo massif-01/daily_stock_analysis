@@ -285,11 +285,6 @@ def ensure_min_history_cached(
     if not force_refresh:
         if _has_sufficient_history(existing_bars, requested_days, expected_target_date):
             return True, existing_source
-        if attempt_state.successful_days >= requested_days and _is_history_fresh(
-            existing_bars,
-            expected_target_date,
-        ):
-            return True, existing_source
         if attempt_state.attempted_days >= requested_days and attempt_state.last_error:
             return False, attempt_state.last_error
 
@@ -303,11 +298,6 @@ def ensure_min_history_cached(
         attempt_state = _get_attempt_state(attempt_key)
         if not force_refresh:
             if _has_sufficient_history(existing_bars, requested_days, expected_target_date):
-                return True, existing_source
-            if attempt_state.successful_days >= requested_days and _is_history_fresh(
-                existing_bars,
-                expected_target_date,
-            ):
                 return True, existing_source
             if attempt_state.attempted_days >= requested_days and attempt_state.last_error:
                 return False, attempt_state.last_error
@@ -358,21 +348,62 @@ def ensure_min_history_cached(
                 exc,
             )
             return False, error_message
+
+        persisted_bars, persisted_source, _persisted_storage_code = _load_recent_bars_from_db(
+            stock_code,
+            requested_days,
+            target_date=target_date,
+        )
+        persisted_days = len(persisted_bars)
+        if _has_sufficient_history(persisted_bars, requested_days, expected_target_date):
+            _record_attempt(
+                attempt_key,
+                attempted_days=fetch_days,
+                successful_days=persisted_days,
+                last_error=None,
+            )
+            logger.info(
+                "ensure_min_history_cached(%s): cached %d rows via %s (requested=%d, storage_code=%s)",
+                stock_code,
+                len(df),
+                source_name,
+                requested_days,
+                save_code,
+            )
+            return True, persisted_source or source_name
+
+        latest_bar_date = _get_latest_bar_date(persisted_bars)
+        if latest_bar_date is None:
+            error_message = f"No historical data available for {stock_code}"
+        elif not _is_history_fresh(persisted_bars, expected_target_date):
+            error_message = (
+                f"Stale historical data for {stock_code} "
+                f"(latest={latest_bar_date}, expected>={expected_target_date})"
+            )
+        else:
+            error_message = (
+                f"Insufficient historical data for {stock_code} "
+                f"(got={persisted_days}, need>={requested_days})"
+            )
+
         _record_attempt(
             attempt_key,
             attempted_days=fetch_days,
-            successful_days=fetch_days,
+            successful_days=persisted_days if _is_history_fresh(persisted_bars, expected_target_date) else 0,
             last_error=None,
         )
-        logger.info(
-            "ensure_min_history_cached(%s): cached %d rows via %s (requested=%d, storage_code=%s)",
+        logger.warning(
+            "ensure_min_history_cached(%s): cached history is not ready after refresh "
+            "(got=%d, latest=%s, expected>=%s, requested=%d, source=%s, storage_code=%s)",
             stock_code,
-            len(df),
-            source_name,
+            persisted_days,
+            latest_bar_date,
+            expected_target_date,
             requested_days,
+            source_name,
             save_code,
         )
-        return True, source_name
+        return False, error_message
 
 
 def load_recent_history_df(

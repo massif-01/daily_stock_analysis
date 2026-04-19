@@ -378,7 +378,7 @@ class StockAnalysisPipeline:
             try:
                 normalized_code = canonical_stock_code(normalize_stock_code(code))
                 _mkt = get_market_for_stock(normalized_code)
-                end_date = get_market_now(_mkt).date()
+                end_date = get_effective_trading_date(_mkt)
                 start_date = end_date - timedelta(days=89)  # ~60 trading days for MA60
                 historical_bars = self.db.get_data_range(normalized_code, start_date, end_date)
                 if normalized_code != code:
@@ -395,6 +395,17 @@ class StockAnalysisPipeline:
                     )
                     if original_rank > normalized_rank:
                         historical_bars = original_bars
+                if historical_bars:
+                    latest_bar_date = getattr(historical_bars[-1], "date", None)
+                    if latest_bar_date is None or latest_bar_date < end_date:
+                        logger.warning(
+                            "%s(%s) 历史K线仍停留在 %s，目标交易日为 %s，跳过趋势分析",
+                            stock_name,
+                            code,
+                            latest_bar_date,
+                            end_date,
+                        )
+                        historical_bars = []
                 if historical_bars:
                     df = pd.DataFrame([bar.to_dict() for bar in historical_bars])
                     # Issue #234: Augment with realtime for intraday MA calculation

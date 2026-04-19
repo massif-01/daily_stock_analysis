@@ -173,17 +173,23 @@ class StockHistoryCacheTestCase(unittest.TestCase):
         self.assertEqual(len(df), 60)
         manager.get_daily_data.assert_called_once_with("600519", days=AGENT_HISTORY_BASELINE_DAYS)
 
-    def test_short_history_is_not_refetched_twice_in_same_process(self) -> None:
+    def test_short_history_can_retry_again_when_requested_coverage_not_met(self) -> None:
         target_date = date(2026, 4, 16)
         db = _DummyDB()
 
         from unittest.mock import MagicMock, patch
 
         manager = MagicMock()
-        manager.get_daily_data.return_value = (
-            _make_history_df("600519", 20, end_date=target_date),
-            "Fetcher",
-        )
+        manager.get_daily_data.side_effect = [
+            (
+                _make_history_df("600519", 20, end_date=target_date),
+                "Fetcher",
+            ),
+            (
+                _make_history_df("600519", AGENT_HISTORY_BASELINE_DAYS, end_date=target_date),
+                "Fetcher",
+            ),
+        ]
 
         with patch("src.services.stock_history_cache.get_db", return_value=db):
             first_df, first_source = load_recent_history_df(
@@ -200,9 +206,37 @@ class StockHistoryCacheTestCase(unittest.TestCase):
             )
 
         self.assertEqual(len(first_df), 20)
-        self.assertEqual(len(second_df), 20)
+        self.assertEqual(len(second_df), 60)
         self.assertEqual(first_source, "Fetcher")
         self.assertEqual(second_source, "Fetcher")
+        self.assertEqual(manager.get_daily_data.call_count, 2)
+
+    def test_ensure_min_history_cached_returns_false_for_stale_saved_history(self) -> None:
+        target_date = date(2026, 4, 16)
+        db = _DummyDB()
+
+        from unittest.mock import MagicMock, patch
+
+        manager = MagicMock()
+        manager.get_daily_data.return_value = (
+            _make_history_df(
+                "600519",
+                AGENT_HISTORY_BASELINE_DAYS,
+                end_date=target_date - timedelta(days=1),
+            ),
+            "Fetcher",
+        )
+
+        with patch("src.services.stock_history_cache.get_db", return_value=db):
+            ok, source = ensure_min_history_cached(
+                "600519",
+                days=120,
+                target_date=target_date,
+                fetcher_manager=manager,
+            )
+
+        self.assertFalse(ok)
+        self.assertIn("Stale historical data", source)
         manager.get_daily_data.assert_called_once_with("600519", days=AGENT_HISTORY_BASELINE_DAYS)
 
     def test_stale_history_without_target_date_triggers_refresh(self) -> None:
