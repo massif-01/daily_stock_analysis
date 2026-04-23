@@ -11,9 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
-- [修复] Pipeline Agent 工具主路径改为 DB-first 加载 K 线，消除同一只股票 9x5=45 次重复 HTTP 请求 (Fixes #1066)
-- [修复] Pipeline Agent 执行前按需预热 240 天历史到 DB，正常情况下工具调用无需重复网络请求
-- [修复] 冻结 target_date 通过 ContextVar 透传到 Pipeline Agent 工具线程，消除跨收盘边界时间漂移
+- [修复] Pipeline Agent 5 个 K 线工具（get_daily_history / analyze_trend / calculate_ma / get_volume_analysis / analyze_pattern）改为 DB-first 加载，消除同一只股票 9x5=45 次重复 HTTP 请求 (Fixes #1066)
+- [修复] Pipeline Agent 执行前按需预热 240 天 K 线历史到 DB，正常情况下 K 线工具调用无需重复网络请求
+- [修复] 冻结 target_date 通过 ContextVar 透传到 Pipeline Agent K 线工具线程，消除跨收盘边界时间漂移
 
 ## [3.13.0] - 2026-04-21
 
