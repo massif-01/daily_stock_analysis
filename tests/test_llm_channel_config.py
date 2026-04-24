@@ -136,6 +136,31 @@ class LLMChannelConfigTestCase(unittest.TestCase):
 
     @patch("src.config.setup_env")
     @patch.object(Config, "_parse_litellm_yaml", return_value=[])
+    def test_deepseek_key_defaults_to_v4_flash_model(self, _mock_parse_yaml, _mock_setup_env) -> None:
+        env = {
+            "DEEPSEEK_API_KEY": "sk-test-value",
+        }
+
+        with patch.dict(os.environ, env, clear=True):
+            config = Config._load_from_env()
+
+        self.assertEqual(config.litellm_model, "deepseek/deepseek-v4-flash")
+
+    @patch("src.config.setup_env")
+    @patch.object(Config, "_parse_litellm_yaml", return_value=[])
+    def test_explicit_deepseek_litellm_model_is_preserved(self, _mock_parse_yaml, _mock_setup_env) -> None:
+        env = {
+            "DEEPSEEK_API_KEY": "sk-test-value",
+            "LITELLM_MODEL": "deepseek/deepseek-chat",
+        }
+
+        with patch.dict(os.environ, env, clear=True):
+            config = Config._load_from_env()
+
+        self.assertEqual(config.litellm_model, "deepseek/deepseek-chat")
+
+    @patch("src.config.setup_env")
+    @patch.object(Config, "_parse_litellm_yaml", return_value=[])
     def test_llm_temperature_prefers_unified_setting_when_present(self, _mock_parse_yaml, _mock_setup_env) -> None:
         env = {
             "GEMINI_API_KEY": "secret-key-value",
