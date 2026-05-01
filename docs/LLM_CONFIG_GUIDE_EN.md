@@ -99,7 +99,27 @@ The backend exposes a read-only status endpoint at `GET /api/v1/system/config/se
 - Moonshot / Kimi official compatibility docs: <https://platform.moonshot.ai/docs/guide/compatibility>
 - Anthropic official Messages API: <https://docs.anthropic.com/en/api/messages>
 - Gemini official OpenAI compatibility docs: <https://ai.google.dev/gemini-api/docs/openai>
+- Zhipu OpenAI API compatibility: <https://docs.bigmodel.cn/cn/guide/develop/openai/introduction>
+- MiniMax OpenAI Compatible API: <https://platform.minimax.io/docs/api-reference/text-openai-api>
+- Volcengine Ark Base URL / authentication: <https://www.volcengine.com/docs/82379/1298459?lang=zh>; OpenAI SDK compatibility: <https://www.volcengine.com/docs/82379/1330626?lang=zh>
 - Ollama API docs: <https://github.com/ollama/ollama/blob/main/docs/api.md>
+
+### Common Provider Template Reference
+
+This table only provides generic templates and boundaries that can be checked against official documentation. JSON output, tool calling, vision, and streaming support often depend on the exact model, plan, region, or compatibility mode. When in doubt, follow the provider's latest official docs and the model you enabled.
+
+| Provider | Recommended channel id | protocol | Base URL example | Sample model | Capability notes |
+| --- | --- | --- | --- | --- | --- |
+| OpenAI official | `openai` | `openai` | `https://api.openai.com/v1` | `gpt-4o-mini` | JSON / tools / vision / stream depend on the specific OpenAI model. |
+| DeepSeek official | `deepseek` | `deepseek` | `https://api.deepseek.com` | `deepseek-v4-flash` | Text and streaming use DeepSeek's official protocol; verify JSON / tools against the specific model docs. |
+| Gemini official | `gemini` | `gemini` | Usually not required | `gemini-2.5-flash` | Direct Gemini keys support vision / stream; check Google's compatibility docs before using OpenAI-compatible mode. |
+| Claude / Anthropic | `anthropic` | `anthropic` | Usually not required | `claude-3-5-sonnet-20241022` | Messages API supports streaming and some vision models; tools / JSON depend on Anthropic model capabilities. |
+| Kimi / Moonshot | `moonshot` | `openai` | `https://api.moonshot.ai/v1` | `kimi-k2.6` | OpenAI compatible; `kimi-k2.6` has thinking / non-thinking temperature constraints documented above. |
+| Qwen / DashScope | `dashscope` | `openai` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-plus` | Official compatibility docs include non-streaming, streaming, and function calling examples; verify tool + stream combinations in provider docs. |
+| Zhipu GLM | `zhipu` | `openai` | `https://open.bigmodel.cn/api/paas/v4/` | `glm-5.1` | Official OpenAI-compatible docs include streaming, tools, and image-understanding examples; capabilities vary by GLM model. |
+| MiniMax | `minimax` | `openai` | `https://api.minimax.io/v1` | `minimax/MiniMax-M2.7` | Official OpenAI-compatible docs include streaming and tool-use examples; image / audio input is not supported by every text model in that mode. |
+| Volcengine Ark | `ark` | `openai` | `https://ark.cn-beijing.volces.com/api/v3` | `<your-endpoint-or-model-id>` | Base URL, region, plan type, and model / endpoint id must match the Ark console and official docs; validate structured output, vision, tools, and stream per enabled model. |
+| Ollama | `ollama` | `ollama` | `http://localhost:11434` | `qwen3:8b` | Local models require no API key; avoid using `OPENAI_BASE_URL`; capabilities depend on the local model. |
 
 If you prefer modifying files, configuring this in the `.env` file is also very smooth. It allows you to manage multiple platforms simultaneously. The rules are:
 
@@ -147,6 +167,7 @@ LITELLM_MODEL=ollama/qwen3:8b
 
 - If you access MiniMax through an OpenAI-compatible channel, enter the model as `minimax/<model-name>` in the channel model list, for example `minimax/MiniMax-M1`.
 - The Web settings page now keeps that value unchanged in Primary, Agent Primary, Fallback, and Vision selectors instead of rewriting it to `openai/minimax/<model-name>`.
+- `LLM_MINIMAX_API_KEY` / `LLM_MINIMAX_API_KEYS` are for the LLM channel. The search provider uses `MINIMAX_API_KEYS`; do not mix the two.
 
 ### Ask-Stock Agent / LiteLLM compatibility notes
 
@@ -210,9 +231,46 @@ The bundled `daily_analysis.yml` explicitly passes the common LLM runtime fields
 
 - Runtime selection: `LLM_CHANNELS`, `LITELLM_MODEL`, `LITELLM_FALLBACK_MODELS`, `AGENT_LITELLM_MODEL`, `VISION_MODEL`, `VISION_PROVIDER_PRIORITY`, `LLM_TEMPERATURE`
 - Multiple keys: `GEMINI_API_KEYS`, `ANTHROPIC_API_KEYS`, `OPENAI_API_KEYS`, `DEEPSEEK_API_KEYS` (the current workflow imports these from repository Secrets only, not from same-named Variables)
-- Common channel names: `primary`, `secondary`, `gemini`, `deepseek`, `aihubmix`, `openai`, `anthropic`, `moonshot`, `ollama`
+- Common channel names: `primary`, `secondary`, `gemini`, `deepseek`, `aihubmix`, `openai`, `anthropic`, `moonshot`, `ollama`, `dashscope`, `zhipu`, `minimax`, `ark`
 
 For example, if you set `LLM_CHANNELS=primary,deepseek` in GitHub Actions, also configure the corresponding `LLM_PRIMARY_*` and `LLM_DEEPSEEK_*` entries. The `LLM_<NAME>_API_KEY` / `LLM_<NAME>_API_KEYS` fields are also imported from repository Secrets only right now, so storing them in Variables will not work at runtime. If you use a custom channel name such as `my_proxy`, GitHub Actions must explicitly add matching `LLM_MY_PROXY_*` mappings in the workflow `env:` block. Local `.env` and Docker runs do not have this limitation.
+
+Common Actions examples:
+
+```text
+# DashScope / Zhipu: non-sensitive fields can use Variables; API keys must use Secrets
+Variables:
+  LLM_CHANNELS=dashscope,zhipu
+  LLM_DASHSCOPE_PROTOCOL=openai
+  LLM_DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+  LLM_DASHSCOPE_MODELS=qwen-plus
+  LLM_ZHIPU_PROTOCOL=openai
+  LLM_ZHIPU_BASE_URL=https://open.bigmodel.cn/api/paas/v4/
+  LLM_ZHIPU_MODELS=glm-5.1
+Secrets:
+  LLM_DASHSCOPE_API_KEY=sk-xxx
+  LLM_ZHIPU_API_KEY=sk-xxx
+
+# MiniMax LLM channel: do not mix it with the search-service MINIMAX_API_KEYS
+Variables:
+  LLM_CHANNELS=minimax
+  LLM_MINIMAX_PROTOCOL=openai
+  LLM_MINIMAX_BASE_URL=https://api.minimax.io/v1
+  LLM_MINIMAX_MODELS=minimax/MiniMax-M2.7
+Secrets:
+  LLM_MINIMAX_API_KEY=sk-xxx
+
+# Volcengine Ark: the bundled workflow only maps LLM_ARK_* by default
+Variables:
+  LLM_CHANNELS=ark
+  LLM_ARK_PROTOCOL=openai
+  LLM_ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
+  LLM_ARK_MODELS=<your-endpoint-or-model-id>
+Secrets:
+  LLM_ARK_API_KEY=sk-xxx
+```
+
+`ark` is this repository's recommended default channel id for Volcengine Ark because it matches the `LLM_ARK_*` variables explicitly passed by `daily_analysis.yml`. If you rename the channel to `volcengine` or anything else, local `.env` still works, but GitHub Actions must add matching `LLM_VOLCENGINE_*` or equivalent mappings in the workflow `env:` block.
 
 ---
 

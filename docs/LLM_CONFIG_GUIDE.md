@@ -99,7 +99,27 @@ LITELLM_MODEL=ollama/qwen3:8b
 - Moonshot / Kimi 官方：<https://platform.moonshot.ai/docs/guide/compatibility>
 - Anthropic 官方：<https://docs.anthropic.com/en/api/messages>
 - Gemini 官方：<https://ai.google.dev/gemini-api/docs/openai>
+- 智谱 OpenAI API 兼容：<https://docs.bigmodel.cn/cn/guide/develop/openai/introduction>
+- MiniMax OpenAI Compatible API：<https://platform.minimax.io/docs/api-reference/text-openai-api>
+- 火山方舟 Base URL / 鉴权：<https://www.volcengine.com/docs/82379/1298459?lang=zh>；OpenAI SDK 兼容：<https://www.volcengine.com/docs/82379/1330626?lang=zh>
 - Ollama 官方：<https://github.com/ollama/ollama/blob/main/docs/api.md>
+
+### 常用 Provider 模板速查
+
+下表只给出通用模板和官方来源可验证的边界。JSON 输出、tool calling、vision、stream 的支持经常与具体模型、套餐、region 或兼容模式有关；不确定时请以厂商官方最新文档和你实际启用的模型说明为准。
+
+| 渠道 | 推荐 channel id | protocol | Base URL 示例 | 模型示例 | 能力说明 |
+| --- | --- | --- | --- | --- | --- |
+| OpenAI 官方 | `openai` | `openai` | `https://api.openai.com/v1` | `gpt-4o-mini` | JSON / tools / vision / stream 取决于具体 OpenAI 模型能力。 |
+| DeepSeek 官方 | `deepseek` | `deepseek` | `https://api.deepseek.com` | `deepseek-v4-flash` | 文本与 stream 走 DeepSeek 官方协议；JSON / tools 按官方模型说明验证。 |
+| Gemini 官方 | `gemini` | `gemini` | 通常不需要 Base URL | `gemini-2.5-flash` | Gemini key 直连支持 vision / stream；OpenAI compatible 用法请单独核对 Google 官方兼容文档。 |
+| Claude / Anthropic | `anthropic` | `anthropic` | 通常不需要 Base URL | `claude-3-5-sonnet-20241022` | Messages API 支持 stream 和部分 vision 模型；tools / JSON 按 Anthropic 模型能力确认。 |
+| Kimi / Moonshot | `moonshot` | `openai` | `https://api.moonshot.ai/v1` | `kimi-k2.6` | OpenAI 兼容；`kimi-k2.6` 有 thinking / non-thinking temperature 约束，见上文说明。 |
+| Qwen / DashScope | `dashscope` | `openai` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-plus` | 官方兼容文档提供非流式、stream 和 function call 示例；tools 与 stream 组合限制按官方文档确认。 |
+| 智谱 GLM | `zhipu` | `openai` | `https://open.bigmodel.cn/api/paas/v4/` | `glm-5.1` | 官方 OpenAI 兼容文档给出 stream、tools、图像理解示例；能力随 GLM 模型变化。 |
+| MiniMax | `minimax` | `openai` | `https://api.minimax.io/v1` | `minimax/MiniMax-M2.7` | 官方 OpenAI compatible 文档提供 stream 与 tool use 示例；图像 / 音频输入并非所有 OpenAI compatible 文本模型都支持。 |
+| 火山方舟 / Ark | `ark` | `openai` | `https://ark.cn-beijing.volces.com/api/v3` | `<your-endpoint-or-model-id>` | Base URL、region、套餐类型和模型 / endpoint id 以控制台与官方文档为准；结构化输出、vision、tools、stream 均需按启用模型验证。 |
+| Ollama | `ollama` | `ollama` | `http://localhost:11434` | `qwen3:8b` | 本地模型无需 API Key；避免误用 `OPENAI_BASE_URL`，能力由本地模型决定。 |
 
 如果不方便用网页版，在 `.env` 文件中配置也非常丝滑，它能让你同时管理多个第三方平台。规则如下：
 
@@ -147,6 +167,7 @@ LITELLM_MODEL=ollama/qwen3:8b
 
 - 如果你通过 OpenAI Compatible 渠道接 MiniMax，请在渠道模型里直接填写 `minimax/<模型名>`，例如 `minimax/MiniMax-M1`。
 - Web 设置页里的主模型、Agent 主模型、Fallback、Vision 下拉会保留这个值原样展示，不会再错误改写成 `openai/minimax/<模型名>`。
+- `LLM_MINIMAX_API_KEY` / `LLM_MINIMAX_API_KEYS` 用于 LLM 渠道；搜索服务使用的是 `MINIMAX_API_KEYS`，两者不要混用。
 
 ### 问股 Agent / LiteLLM 配置兼容说明
 
@@ -233,10 +254,46 @@ model_list:
 
 - 运行时选择：`LLM_CHANNELS`、`LITELLM_MODEL`、`LITELLM_FALLBACK_MODELS`、`AGENT_LITELLM_MODEL`、`VISION_MODEL`、`VISION_PROVIDER_PRIORITY`、`LLM_TEMPERATURE`
 - 多 Key：`GEMINI_API_KEYS`、`ANTHROPIC_API_KEYS`、`OPENAI_API_KEYS`、`DEEPSEEK_API_KEYS`（当前 workflow 仅从 repository secrets 导入，不会读取同名 Variables）
-- 常用渠道名：`primary`、`secondary`、`gemini`、`deepseek`、`aihubmix`、`openai`、`anthropic`、`moonshot`、`ollama`
+- 常用渠道名：`primary`、`secondary`、`gemini`、`deepseek`、`aihubmix`、`openai`、`anthropic`、`moonshot`、`ollama`、`dashscope`、`zhipu`、`minimax`、`ark`
 
 例如在 GitHub Actions 中配置 `LLM_CHANNELS=primary,deepseek` 时，需同步配置 `LLM_PRIMARY_*` / `LLM_DEEPSEEK_*`。其中 `LLM_<NAME>_API_KEY` / `LLM_<NAME>_API_KEYS` 当前也仅从 repository secrets 导入；如果你把这些值放在 Variables，运行时不会生效。若使用自定义渠道名（如 `my_proxy`），GitHub Actions 还必须在 workflow `env:` 中显式新增对应的 `LLM_MY_PROXY_*` 映射；本地 `.env` 和 Docker 不受这个限制。
 
+常用 Actions 配置示例：
+
+```text
+# DashScope / 智谱：非敏感字段可以放 Variables，API Key 必须放 Secrets
+Variables:
+  LLM_CHANNELS=dashscope,zhipu
+  LLM_DASHSCOPE_PROTOCOL=openai
+  LLM_DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+  LLM_DASHSCOPE_MODELS=qwen-plus
+  LLM_ZHIPU_PROTOCOL=openai
+  LLM_ZHIPU_BASE_URL=https://open.bigmodel.cn/api/paas/v4/
+  LLM_ZHIPU_MODELS=glm-5.1
+Secrets:
+  LLM_DASHSCOPE_API_KEY=sk-xxx
+  LLM_ZHIPU_API_KEY=sk-xxx
+
+# MiniMax LLM 渠道：不要和搜索服务 MINIMAX_API_KEYS 混用
+Variables:
+  LLM_CHANNELS=minimax
+  LLM_MINIMAX_PROTOCOL=openai
+  LLM_MINIMAX_BASE_URL=https://api.minimax.io/v1
+  LLM_MINIMAX_MODELS=minimax/MiniMax-M2.7
+Secrets:
+  LLM_MINIMAX_API_KEY=sk-xxx
+
+# 火山方舟 / Volcengine Ark：默认 workflow 只映射 LLM_ARK_*
+Variables:
+  LLM_CHANNELS=ark
+  LLM_ARK_PROTOCOL=openai
+  LLM_ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
+  LLM_ARK_MODELS=<your-endpoint-or-model-id>
+Secrets:
+  LLM_ARK_API_KEY=sk-xxx
+```
+
+火山方舟的 `ark` 是本仓库推荐的默认 channel id，用于匹配 `daily_analysis.yml` 已显式透传的 `LLM_ARK_*`。如果你把 channel 改成 `volcengine` 或其他名字，本地 `.env` 仍可工作，但 GitHub Actions 需要自己在 workflow `env:` 中新增 `LLM_VOLCENGINE_*` 或对应前缀映射。
 
 > **三层配置互斥准则**：YAML 优先级最高！只要配置了 YAML，**渠道模式** 和 **新手极简模式** 统统被忽略。系统优先级为：`YAML配置 > 渠道模式 > 极简单模型`。
 
