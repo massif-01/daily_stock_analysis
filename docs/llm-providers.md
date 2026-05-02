@@ -60,6 +60,24 @@ LITELLM_MODEL=deepseek/deepseek-v4-flash
 
 当前仓库锁定 `litellm>=1.80.10,<1.82.7`（见 `requirements.txt`）。本页预设只保证配置形状与当前依赖的 OpenAI-compatible 路由规则一致；实际连通性仍取决于服务商账号权限、地域、额度和模型开通状态。回退方式：在 Web 设置页删除对应渠道，或从 `.env` 移除 `LLM_MINIMAX_*` / `LLM_VOLCENGINE_*` 并恢复原 `LITELLM_MODEL`、`LITELLM_FALLBACK_MODELS`。
 
+## GitHub Actions 配置
+
+仓库自带 `.github/workflows/daily_analysis.yml` 只会透传 workflow 中显式列出的环境变量。使用渠道模式时，先在 Repository Variables 或 Secrets 中设置 `LLM_CHANNELS`，再按渠道名补齐对应 `LLM_<CHANNEL>_*`。
+
+| 字段 | 建议位置 | 说明 |
+| --- | --- | --- |
+| `LLM_CHANNELS` | Variables 或 Secrets | 逗号分隔渠道名，例如 `deepseek,minimax,volcengine`。 |
+| `LLM_<CHANNEL>_PROTOCOL` | Variables 或 Secrets | 非敏感，通常为 `openai`、`deepseek`、`gemini`、`anthropic` 或 `ollama`。 |
+| `LLM_<CHANNEL>_BASE_URL` | Variables 或 Secrets | 非敏感时优先放 Variables；私有网关地址可放 Secrets。 |
+| `LLM_<CHANNEL>_MODELS` | Variables 或 Secrets | 非敏感模型列表，逗号分隔。 |
+| `LLM_<CHANNEL>_ENABLED` | Variables 或 Secrets | 可选，未配置时默认启用；设为 `false` 可跳过该渠道。 |
+| `LLM_<CHANNEL>_API_KEY` / `LLM_<CHANNEL>_API_KEYS` | Secrets | 密钥字段必须放 Repository Secrets；同名 Variables 不会被 workflow 读取。 |
+| `LLM_<CHANNEL>_EXTRA_HEADERS` | Secrets 或 Variables | JSON 字符串；只要包含鉴权、租户、组织或私有网关信息，就应放 Secrets。 |
+
+默认 workflow 已显式映射 `primary`、`secondary`、`aihubmix`、`deepseek`、`dashscope`、`zhipu`、`moonshot`、`minimax`、`volcengine`、`siliconflow`、`openrouter`、`gemini`、`anthropic`、`openai`、`ollama`。如果使用自定义渠道名（如 `my_proxy`），仅在 Repository Secrets / Variables 中新增 `LLM_MY_PROXY_*` 不会自动生效，需要同步扩展 workflow 的 `env:` 映射；本地 `.env`、Docker 和自托管脚本不受这个限制。
+
+Ollama 默认 Base URL `http://127.0.0.1:11434` 主要面向本地、Docker 或能访问该服务的 self-hosted runner。GitHub-hosted runner 通常没有本地 Ollama 服务，直接配置 `LLM_CHANNELS=ollama` 大概率会连接失败。
+
 ## 排障要点
 
 - 鉴权失败：检查 API Key 是否填错、复制了空格，或服务商是否要求额外项目权限。
