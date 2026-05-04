@@ -1155,6 +1155,38 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         self.assertTrue(mock_completion.call_args_list[1].kwargs["stream"])
 
     @patch("litellm.completion")
+    def test_test_llm_channel_ignores_stream_close_failures(self, mock_completion) -> None:
+        class _Stream:
+            def __init__(self):
+                self.close_attempted = False
+
+            def __iter__(self):
+                yield SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="OK"))])
+
+            def close(self):
+                self.close_attempted = True
+                raise RuntimeError("transport already closed")
+
+        stream = _Stream()
+        mock_completion.side_effect = [
+            self._mock_completion_response("OK"),
+            stream,
+        ]
+
+        payload = self.service.test_llm_channel(
+            name="primary",
+            protocol="openai",
+            base_url="https://api.example.com/v1",
+            api_key="sk-test-value",
+            models=["gpt-4o-mini"],
+            capability_checks=["stream"],
+        )
+
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["capability_results"]["stream"]["status"], "passed")
+        self.assertTrue(stream.close_attempted)
+
+    @patch("litellm.completion")
     def test_test_llm_channel_runs_vision_capability_check(self, mock_completion) -> None:
         mock_completion.side_effect = [
             self._mock_completion_response("OK"),
@@ -1205,6 +1237,7 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         cases = [
             (Exception("account balance insufficient"), "quota", "insufficient_balance"),
             (RateLimitError("account balance insufficient"), "quota", "insufficient_balance"),
+            (RateLimitError("insufficient_quota"), "quota", "quota_exceeded"),
             (Exception("DNS lookup failed"), "network_error", "dns_error"),
             (Exception("TLS certificate verify failed"), "network_error", "tls_error"),
             (Exception("Connection refused"), "network_error", "connection_refused"),
@@ -1286,6 +1319,10 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         billing_response.json.return_value = {"error": {"message": "account balance insufficient"}}
         billing_rate_limit_response = Mock(ok=False, status_code=429, text="account balance insufficient")
         billing_rate_limit_response.json.return_value = {"error": {"message": "account balance insufficient"}}
+        quota_exceeded_response = Mock(ok=False, status_code=429, text="insufficient_quota")
+        quota_exceeded_response.json.return_value = {"error": {"message": "insufficient_quota"}}
+        rate_limit_response = Mock(ok=False, status_code=429, text="too many requests")
+        rate_limit_response.json.return_value = {"error": {"message": "too many requests"}}
         invalid_json_response = Mock(ok=True, status_code=200, text="<html>bad gateway</html>")
         invalid_json_response.json.side_effect = ValueError("invalid json")
 
@@ -1294,6 +1331,8 @@ class SystemConfigServiceTestCase(unittest.TestCase):
             (not_found_response, "network_error", "model_discovery", False, "endpoint_not_found"),
             (billing_response, "quota", "model_discovery", True, "insufficient_balance"),
             (billing_rate_limit_response, "quota", "model_discovery", True, "insufficient_balance"),
+            (quota_exceeded_response, "quota", "model_discovery", True, "quota_exceeded"),
+            (rate_limit_response, "quota", "model_discovery", True, "rate_limit"),
             (invalid_json_response, "format_error", "response_parse", False, "non_json"),
         ]:
             with self.subTest(error_code=error_code):

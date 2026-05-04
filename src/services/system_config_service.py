@@ -875,7 +875,10 @@ class SystemConfigService:
         finally:
             close_stream = getattr(stream, "close", None)
             if callable(close_stream):
-                close_stream()
+                try:
+                    close_stream()
+                except Exception as exc:
+                    logger.debug("Failed to close LLM stream capability probe: %s", exc)
 
     @classmethod
     def _run_vision_capability_check(
@@ -2162,19 +2165,19 @@ class SystemConfigService:
                 "LLM request was rejected by quota or billing limits",
                 "insufficient_balance",
             )
-        if status_code == 429 or any(token in lowered for token in ("rate limit", "too many requests", "rpm", "tpm")):
-            return _LLMDiagnostic(
-                "quota",
-                True,
-                "LLM request was rejected by quota or rate limiting",
-                "rate_limit",
-            )
         if any(token in lowered for token in ("quota", "insufficient_quota", "quota exceeded")):
             return _LLMDiagnostic(
                 "quota",
                 True,
                 "LLM request was rejected by quota or rate limiting",
                 "quota_exceeded",
+            )
+        if status_code == 429 or any(token in lowered for token in ("rate limit", "too many requests", "rpm", "tpm")):
+            return _LLMDiagnostic(
+                "quota",
+                True,
+                "LLM request was rejected by quota or rate limiting",
+                "rate_limit",
             )
         if status_code == 404:
             return _LLMDiagnostic(
@@ -2239,19 +2242,19 @@ class SystemConfigService:
                 "LLM request was rejected by quota or billing limits",
                 "insufficient_balance",
             )
-        if "ratelimit" in exc_name or any(token in text for token in ("rate limit", "too many requests", "rpm", "tpm")):
-            return _LLMDiagnostic(
-                "quota",
-                True,
-                "LLM request was rejected by quota or rate limiting",
-                "rate_limit",
-            )
         if any(token in text for token in ("quota", "insufficient_quota", "quota exceeded")):
             return _LLMDiagnostic(
                 "quota",
                 True,
                 "LLM request was rejected by quota or rate limiting",
                 "quota_exceeded",
+            )
+        if "ratelimit" in exc_name or any(token in text for token in ("rate limit", "too many requests", "rpm", "tpm")):
+            return _LLMDiagnostic(
+                "quota",
+                True,
+                "LLM request was rejected by quota or rate limiting",
+                "rate_limit",
             )
         if SystemConfigService._has_provider_prefix_mismatch_signal(text):
             return _LLMDiagnostic(
