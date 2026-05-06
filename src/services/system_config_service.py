@@ -2222,6 +2222,9 @@ class SystemConfigService:
         if "model" not in lowered:
             return False
 
+        # Best-effort classifier for observed provider messages. Keep it gated by
+        # an explicit "model" mention plus access/disabled/unavailable signals so
+        # unrelated provider-specific failures continue to use the fallback path.
         access_denied_tokens = (
             "not authorized",
             "not allowed",
