@@ -2593,6 +2593,13 @@ class SystemConfigService:
                 "LLM request was rejected by quota or rate limiting",
                 "rate_limit",
             )
+        if SystemConfigService._has_transport_blocked_signal(error_text or ""):
+            return _LLMDiagnostic(
+                "network_error",
+                True,
+                "LLM request failed before a valid response was returned",
+                "network_error",
+            )
         if SystemConfigService._has_request_blocked_signal(error_text or ""):
             return _LLMDiagnostic(
                 "request_blocked",
@@ -2666,6 +2673,8 @@ class SystemConfigService:
     @staticmethod
     def _has_request_blocked_signal(text: str) -> bool:
         lowered = text.lower()
+        if SystemConfigService._has_transport_blocked_signal(lowered):
+            return False
         blocked_tokens = (
             "your request was blocked",
             "the request was blocked",
@@ -2677,6 +2686,19 @@ class SystemConfigService:
             "请求被拦截",
         )
         return any(token in lowered for token in blocked_tokens)
+
+    @staticmethod
+    def _has_transport_blocked_signal(text: str) -> bool:
+        lowered = text.lower()
+        transport_tokens = (
+            "connection blocked",
+            "connection request was blocked",
+            "network blocked",
+            "blocked by network policy",
+            "blocked by firewall",
+            "firewall blocked",
+        )
+        return any(token in lowered for token in transport_tokens)
 
     @staticmethod
     def _has_provider_prefix_mismatch_signal(text: str) -> bool:
@@ -2756,7 +2778,9 @@ class SystemConfigService:
             return _LLMDiagnostic("network_error", True, "LLM request failed before a valid response was returned", "connection_refused")
         if "ssl" in text or "tls" in text or "certificate" in text:
             return _LLMDiagnostic("network_error", True, "LLM request failed before a valid response was returned", "tls_error")
-        if any(token in exc_name for token in ("connection", "network")) or any(token in text for token in ("connection", "network")):
+        if any(token in exc_name for token in ("connection", "network")) or any(
+            token in text for token in ("connection", "network", "firewall")
+        ):
             return _LLMDiagnostic("network_error", True, "LLM request failed before a valid response was returned", "network_error")
         return _LLMDiagnostic("network_error", False, "LLM channel test failed", "unknown_error")
 

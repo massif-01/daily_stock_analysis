@@ -1411,6 +1411,8 @@ class SystemConfigServiceTestCase(unittest.TestCase):
             (Exception("TLS certificate verify failed"), "network_error", "tls_error"),
             (Exception("Connection refused"), "network_error", "connection_refused"),
             (Exception("connection request was blocked by firewall"), "network_error", "network_error"),
+            (Exception("connection blocked by policy"), "network_error", "network_error"),
+            (Exception("request blocked by firewall"), "network_error", "network_error"),
             (Exception("blocked"), "network_error", "unknown_error"),
             (Exception("model gpt-4o is not authorized for this account"), "model_not_found", "model_access_denied"),
             (Exception("litellm.APIError: APIError: OpenAIException - Model disabled."), "model_not_found", "model_access_denied"),
@@ -1512,6 +1514,8 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         rate_limit_response.json.return_value = {"error": {"message": "too many requests"}}
         blocked_response = Mock(ok=False, status_code=403, text="Forbidden: your request was blocked by content policy")
         blocked_response.json.return_value = {"error": {"message": "Forbidden: your request was blocked by content policy"}}
+        connection_blocked_response = Mock(ok=False, status_code=403, text="connection blocked by policy")
+        connection_blocked_response.json.return_value = {"error": {"message": "connection blocked by policy"}}
         invalid_json_response = Mock(ok=True, status_code=200, text="<html>bad gateway</html>")
         invalid_json_response.json.side_effect = ValueError("invalid json")
 
@@ -1524,6 +1528,7 @@ class SystemConfigServiceTestCase(unittest.TestCase):
             (quota_blocked_response, "quota", "model_discovery", True, "insufficient_balance"),
             (rate_limit_response, "quota", "model_discovery", True, "rate_limit"),
             (blocked_response, "request_blocked", "model_discovery", False, "provider_blocked"),
+            (connection_blocked_response, "network_error", "model_discovery", True, "network_error"),
             (invalid_json_response, "format_error", "response_parse", False, "non_json"),
         ]:
             with self.subTest(error_code=error_code):
