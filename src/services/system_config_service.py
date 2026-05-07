@@ -2572,8 +2572,6 @@ class SystemConfigService:
                 "Configured model could not be found on this channel",
                 "model_not_found",
             )
-        if status_code in {401, 403} or any(token in lowered for token in ("unauthorized", "forbidden", "invalid api key", "authentication")):
-            return _LLMDiagnostic("auth", False, "LLM authentication failed", "api_key_rejected")
         if status_code == 402 or any(token in lowered for token in ("billing", "balance", "insufficient balance")):
             return _LLMDiagnostic(
                 "quota",
@@ -2595,6 +2593,15 @@ class SystemConfigService:
                 "LLM request was rejected by quota or rate limiting",
                 "rate_limit",
             )
+        if SystemConfigService._has_request_blocked_signal(error_text or ""):
+            return _LLMDiagnostic(
+                "request_blocked",
+                False,
+                "LLM request was blocked by provider or gateway policy",
+                "provider_blocked",
+            )
+        if status_code in {401, 403} or any(token in lowered for token in ("unauthorized", "forbidden", "invalid api key", "authentication")):
+            return _LLMDiagnostic("auth", False, "LLM authentication failed", "api_key_rejected")
         if status_code == 404:
             return _LLMDiagnostic(
                 "network_error",
@@ -2657,6 +2664,21 @@ class SystemConfigService:
         return any(token in lowered for token in access_denied_tokens)
 
     @staticmethod
+    def _has_request_blocked_signal(text: str) -> bool:
+        lowered = text.lower()
+        blocked_tokens = (
+            "your request was blocked",
+            "the request was blocked",
+            "request blocked by policy",
+            "blocked by policy",
+            "blocked due to policy",
+            "moderation_blocked",
+            "policy_blocked",
+            "请求被拦截",
+        )
+        return any(token in lowered for token in blocked_tokens)
+
+    @staticmethod
     def _has_provider_prefix_mismatch_signal(text: str) -> bool:
         lowered = text.lower()
         mismatch_tokens = (
@@ -2709,6 +2731,13 @@ class SystemConfigService:
                 False,
                 "Configured model is not available for this channel",
                 "model_access_denied",
+            )
+        if SystemConfigService._has_request_blocked_signal(str(exc)):
+            return _LLMDiagnostic(
+                "request_blocked",
+                False,
+                "LLM request was blocked by provider or gateway policy",
+                "provider_blocked",
             )
         if any(token in exc_name for token in ("auth", "permission")) or any(token in text for token in ("unauthorized", "forbidden", "invalid api key", "authentication")):
             return _LLMDiagnostic("auth", False, "LLM authentication failed", "api_key_rejected")
