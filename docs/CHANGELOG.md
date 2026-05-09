@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [测试] 补充设置项帮助元数据、API schema、前端弹窗交互测试，并修复 Bot 名称路由与调度时间 provider 测试的离线 CI 稳定性问题。
 - [修复] 港股日线跳过不支持港股的内置历史数据源，避免港股代码错配到非港股市场数据。
 - [修复] 修正分析 API 对北交所 `BJ` 前缀与 `.BJ` 后缀股票代码的校验，保持前端自动补全与 Tushare `ts_code` 调用格式一致。
+- [新功能] 新增通知路由策略，支持按 report、alert、system_error 将通知收窄到指定已配置渠道。
 
 ## [3.15.0] - 2026-05-05
 
