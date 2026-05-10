@@ -1921,6 +1921,8 @@ class StockAnalysisPipeline:
             results: 分析结果列表
             skip_push: 是否跳过推送（仅保存到本地，用于单股推送模式）
         """
+        noise_decision = None
+        noise_finalized = False
         try:
             logger.info("生成决策仪表盘日报...")
             report = self._generate_aggregate_report(results, report_type)
@@ -1934,8 +1936,6 @@ class StockAnalysisPipeline:
                 channels = self.notifier.get_available_channels()
                 channels = self.notifier.get_channels_for_route("report", channels=channels)
                 context_success = self.notifier.send_to_context(report)
-                noise_decision = None
-
                 if channels and hasattr(self.notifier, "evaluate_noise_control"):
                     report_type_key = report_type.value if isinstance(report_type, ReportType) else str(report_type)
                     codes_key = ",".join(
@@ -2123,6 +2123,13 @@ class StockAnalysisPipeline:
                     and hasattr(self.notifier, "record_noise_control")
                 ):
                     self.notifier.record_noise_control(noise_decision)
+                    noise_finalized = True
+                elif (
+                    noise_decision is not None
+                    and hasattr(self.notifier, "release_noise_control")
+                ):
+                    self.notifier.release_noise_control(noise_decision)
+                    noise_finalized = True
                 if success:
                     logger.info("决策仪表盘推送成功")
                 else:
@@ -2131,6 +2138,12 @@ class StockAnalysisPipeline:
                 logger.info("通知渠道未配置，跳过推送")
                 
         except Exception as e:
+            if (
+                noise_decision is not None
+                and not noise_finalized
+                and hasattr(self.notifier, "release_noise_control")
+            ):
+                self.notifier.release_noise_control(noise_decision)
             import traceback
             logger.error(f"发送通知失败: {e}\n{traceback.format_exc()}")
 

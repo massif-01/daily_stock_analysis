@@ -31,6 +31,7 @@ from src.notification_noise import (
     NotificationNoiseDecision,
     evaluate_notification_noise,
     record_notification_noise,
+    release_notification_noise,
 )
 from src.report_language import (
     get_localized_stock_name,
@@ -417,6 +418,11 @@ class NotificationService(
     def record_noise_control(decision: NotificationNoiseDecision) -> None:
         """Record static-channel notification noise state after a successful send."""
         record_notification_noise(decision)
+
+    @staticmethod
+    def release_noise_control(decision: NotificationNoiseDecision) -> None:
+        """Release static-channel in-flight noise reservation after send failure."""
+        release_notification_noise(decision)
 
     # ===== Context channel =====
     def _has_context_channel(self) -> bool:
@@ -1815,6 +1821,8 @@ class NotificationService(
         logger.info(f"通知发送完成：成功 {success_count} 个，失败 {fail_count} 个")
         if success_count > 0:
             self.record_noise_control(noise_decision)
+        else:
+            self.release_noise_control(noise_decision)
         return success_count > 0 or context_success
    
     def save_report_to_file(

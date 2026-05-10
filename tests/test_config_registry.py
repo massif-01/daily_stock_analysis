@@ -264,7 +264,10 @@ class TestNotificationNoiseFieldsRegistered(unittest.TestCase):
         self.assertEqual(get_field_definition("NOTIFICATION_DEDUP_TTL_SECONDS")["data_type"], "integer")
         self.assertEqual(get_field_definition("NOTIFICATION_COOLDOWN_SECONDS")["data_type"], "integer")
         self.assertEqual(get_field_definition("NOTIFICATION_DAILY_DIGEST_ENABLED")["data_type"], "boolean")
-        self.assertIn("warning", get_field_definition("NOTIFICATION_MIN_SEVERITY")["validation"]["enum"])
+        min_severity = get_field_definition("NOTIFICATION_MIN_SEVERITY")
+        self.assertEqual(min_severity["options"][0]["value"], "")
+        self.assertIn("", min_severity["validation"]["enum"])
+        self.assertIn("warning", min_severity["validation"]["enum"])
 
     def test_schema_response_includes_noise_fields(self):
         schema = build_schema_response()

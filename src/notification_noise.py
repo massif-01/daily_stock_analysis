@@ -12,6 +12,7 @@ import hashlib
 import logging
 import re
 import threading
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, Optional, Tuple
@@ -41,6 +42,7 @@ P4_NOISE_ENV_KEYS: Tuple[str, ...] = (
 )
 
 _QUIET_HOURS_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)-([01]\d|2[0-3]):([0-5]\d)$")
+_INFLIGHT_RESERVATION_SECONDS = 300
 
 
 @dataclass(frozen=True)
@@ -57,10 +59,15 @@ class NotificationNoiseDecision:
     dedup_ttl_seconds: int = 0
     cooldown_seconds: int = 0
     evaluated_at: Optional[datetime] = None
+    dedup_reserved: bool = False
+    cooldown_reserved: bool = False
+    reservation_token: Optional[str] = None
 
 
 _dedup_expires_at: Dict[str, float] = {}
 _cooldown_expires_at: Dict[str, float] = {}
+_dedup_inflight_until: Dict[str, Tuple[float, str]] = {}
+_cooldown_inflight_until: Dict[str, Tuple[float, str]] = {}
 _state_lock = threading.Lock()
 
 
@@ -69,6 +76,8 @@ def reset_notification_noise_state() -> None:
     with _state_lock:
         _dedup_expires_at.clear()
         _cooldown_expires_at.clear()
+        _dedup_inflight_until.clear()
+        _cooldown_inflight_until.clear()
 
 
 def is_supported_notification_severity(value: object) -> bool:
@@ -156,6 +165,22 @@ def _cleanup_expired(now_ts: float) -> None:
     expired_cooldown = [key for key, expires_at in _cooldown_expires_at.items() if expires_at <= now_ts]
     for key in expired_cooldown:
         _cooldown_expires_at.pop(key, None)
+
+    expired_dedup_inflight = [
+        key
+        for key, (expires_at, _token) in _dedup_inflight_until.items()
+        if expires_at <= now_ts
+    ]
+    for key in expired_dedup_inflight:
+        _dedup_inflight_until.pop(key, None)
+
+    expired_cooldown_inflight = [
+        key
+        for key, (expires_at, _token) in _cooldown_inflight_until.items()
+        if expires_at <= now_ts
+    ]
+    for key in expired_cooldown_inflight:
+        _cooldown_inflight_until.pop(key, None)
 
 
 def _stable_content_hash(content: str) -> str:
@@ -287,6 +312,16 @@ def _evaluate_notification_noise(
                 cooldown_key=cooldown_state_key,
                 **decision_base,
             )
+        dedup_inflight = _dedup_inflight_until.get(dedup_state_key)
+        if dedup_ttl > 0 and dedup_inflight and dedup_inflight[0] > now_ts:
+            return NotificationNoiseDecision(
+                should_send=False,
+                reason_code="dedup_inflight",
+                message="同一通知正在发送中，已跳过静态通知渠道。",
+                dedup_key=dedup_state_key,
+                cooldown_key=cooldown_state_key,
+                **decision_base,
+            )
         if cooldown > 0 and _cooldown_expires_at.get(cooldown_state_key, 0) > now_ts:
             return NotificationNoiseDecision(
                 should_send=False,
@@ -296,24 +331,73 @@ def _evaluate_notification_noise(
                 cooldown_key=cooldown_state_key,
                 **decision_base,
             )
+        cooldown_inflight = _cooldown_inflight_until.get(cooldown_state_key)
+        if cooldown > 0 and cooldown_inflight and cooldown_inflight[0] > now_ts:
+            return NotificationNoiseDecision(
+                should_send=False,
+                reason_code="cooldown_inflight",
+                message="同一通知正在发送中，已跳过静态通知渠道。",
+                dedup_key=dedup_state_key,
+                cooldown_key=cooldown_state_key,
+                **decision_base,
+            )
+
+        reservation_until = now_ts + _INFLIGHT_RESERVATION_SECONDS
+        dedup_reserved = dedup_ttl > 0
+        cooldown_reserved = cooldown > 0
+        reservation_token = uuid.uuid4().hex if dedup_reserved or cooldown_reserved else None
+        if dedup_reserved:
+            _dedup_inflight_until[dedup_state_key] = (reservation_until, reservation_token)
+        if cooldown_reserved:
+            _cooldown_inflight_until[cooldown_state_key] = (reservation_until, reservation_token)
 
     return NotificationNoiseDecision(
         should_send=True,
         dedup_key=dedup_state_key,
         cooldown_key=cooldown_state_key,
+        dedup_reserved=dedup_reserved,
+        cooldown_reserved=cooldown_reserved,
+        reservation_token=reservation_token,
         **decision_base,
     )
 
 
-def record_notification_noise(decision: NotificationNoiseDecision) -> None:
+def _release_reserved_locked(decision: NotificationNoiseDecision) -> None:
+    if decision.dedup_reserved and decision.dedup_key:
+        dedup_inflight = _dedup_inflight_until.get(decision.dedup_key)
+        if dedup_inflight and dedup_inflight[1] == decision.reservation_token:
+            _dedup_inflight_until.pop(decision.dedup_key, None)
+    if decision.cooldown_reserved and decision.cooldown_key:
+        cooldown_inflight = _cooldown_inflight_until.get(decision.cooldown_key)
+        if cooldown_inflight and cooldown_inflight[1] == decision.reservation_token:
+            _cooldown_inflight_until.pop(decision.cooldown_key, None)
+
+
+def release_notification_noise(decision: NotificationNoiseDecision) -> None:
+    """Release in-flight reservation without recording dedup/cooldown state."""
+    if not decision.should_send:
+        return
+
+    try:
+        with _state_lock:
+            _release_reserved_locked(decision)
+    except Exception as exc:  # pragma: no cover - defensive branch.
+        logger.warning("通知降噪发送中状态释放失败，忽略该错误: %s", exc)
+
+
+def record_notification_noise(decision: NotificationNoiseDecision, now: Optional[datetime] = None) -> None:
     """Record dedup/cooldown state after a static notification send succeeds."""
     if not decision.should_send or decision.evaluated_at is None:
         return
 
     try:
-        now_ts = _timestamp(decision.evaluated_at)
+        record_at = now
+        if record_at is None:
+            record_at = datetime.now(decision.evaluated_at.tzinfo)
+        now_ts = _timestamp(record_at)
         with _state_lock:
             _cleanup_expired(now_ts)
+            _release_reserved_locked(decision)
             if decision.dedup_ttl_seconds > 0 and decision.dedup_key:
                 _dedup_expires_at[decision.dedup_key] = now_ts + decision.dedup_ttl_seconds
             if decision.cooldown_seconds > 0 and decision.cooldown_key:

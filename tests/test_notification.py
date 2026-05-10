@@ -250,6 +250,34 @@ class TestNotificationServiceSendToMethods(unittest.TestCase):
         mock_custom.assert_called_once_with("content at 12:00")
 
     @mock.patch("src.notification.get_config")
+    def test_send_releases_noise_reservation_when_static_channels_fail(self, mock_get_config: mock.MagicMock):
+        cfg = _make_config(
+            custom_webhook_urls=["https://example.com/webhook"],
+            notification_dedup_ttl_seconds=60,
+        )
+        mock_get_config.return_value = cfg
+
+        service = NotificationService()
+
+        with mock.patch.object(service, "send_to_custom", side_effect=[False, True]) as mock_custom:
+            self.assertFalse(
+                service.send(
+                    "content at 12:00",
+                    route_type="report",
+                    dedup_key="report:aggregate:simple:600519",
+                )
+            )
+            self.assertTrue(
+                service.send(
+                    "content at 12:01",
+                    route_type="report",
+                    dedup_key="report:aggregate:simple:600519",
+                )
+            )
+
+        self.assertEqual(mock_custom.call_count, 2)
+
+    @mock.patch("src.notification.get_config")
     def test_send_to_context_is_not_limited_by_noise_controls(self, mock_get_config: mock.MagicMock):
         cfg = _make_config(
             custom_webhook_urls=["https://example.com/webhook"],

@@ -1567,8 +1567,11 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "is_required": False,
         "is_editable": True,
         "default_value": "",
-        "options": [{"label": severity, "value": severity} for severity in NOTIFICATION_SEVERITIES],
-        "validation": {"enum": list(NOTIFICATION_SEVERITIES)},
+        "options": [
+            {"label": "Not set", "value": ""},
+            *({"label": severity, "value": severity} for severity in NOTIFICATION_SEVERITIES),
+        ],
+        "validation": {"enum": ["", *NOTIFICATION_SEVERITIES]},
         "display_order": 69,
     },
     "NOTIFICATION_DAILY_DIGEST_ENABLED": {

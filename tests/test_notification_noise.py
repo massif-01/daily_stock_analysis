@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from src.notification_noise import (
     evaluate_notification_noise,
     record_notification_noise,
+    release_notification_noise,
     reset_notification_noise_state,
 )
 
@@ -37,7 +38,7 @@ def test_dedup_ttl_suppresses_until_expiry_with_explicit_key():
         now=now,
     )
     assert first.should_send
-    record_notification_noise(first)
+    record_notification_noise(first, now=now)
 
     duplicate = evaluate_notification_noise(
         config,
@@ -71,7 +72,7 @@ def test_cooldown_keys_are_independent():
         now=now,
     )
     assert first.should_send
-    record_notification_noise(first)
+    record_notification_noise(first, now=now)
 
     same_key = evaluate_notification_noise(
         config,
@@ -91,6 +92,143 @@ def test_cooldown_keys_are_independent():
     assert not same_key.should_send
     assert same_key.reason_code == "cooldown"
     assert other_key.should_send
+
+
+def test_inflight_reservation_suppresses_same_key_until_released():
+    config = _config(notification_dedup_ttl_seconds=60)
+    now = datetime(2026, 5, 10, 12, 0, tzinfo=timezone.utc)
+
+    first = evaluate_notification_noise(
+        config,
+        content="first",
+        route_type="report",
+        dedup_key="report:aggregate:simple:600519",
+        now=now,
+    )
+    assert first.should_send
+
+    duplicate = evaluate_notification_noise(
+        config,
+        content="second",
+        route_type="report",
+        dedup_key="report:aggregate:simple:600519",
+        now=now + timedelta(seconds=1),
+    )
+    assert not duplicate.should_send
+    assert duplicate.reason_code == "dedup_inflight"
+
+    release_notification_noise(first)
+    retried = evaluate_notification_noise(
+        config,
+        content="retry",
+        route_type="report",
+        dedup_key="report:aggregate:simple:600519",
+        now=now + timedelta(seconds=2),
+    )
+    assert retried.should_send
+
+
+def test_cooldown_inflight_reservation_suppresses_same_key_until_released():
+    config = _config(notification_cooldown_seconds=60)
+    now = datetime(2026, 5, 10, 12, 0, tzinfo=timezone.utc)
+
+    first = evaluate_notification_noise(
+        config,
+        content="first",
+        route_type="report",
+        cooldown_key="report:single:600519:simple",
+        now=now,
+    )
+    assert first.should_send
+
+    duplicate = evaluate_notification_noise(
+        config,
+        content="second",
+        route_type="report",
+        cooldown_key="report:single:600519:simple",
+        now=now + timedelta(seconds=1),
+    )
+    assert not duplicate.should_send
+    assert duplicate.reason_code == "cooldown_inflight"
+
+    release_notification_noise(first)
+    retried = evaluate_notification_noise(
+        config,
+        content="retry",
+        route_type="report",
+        cooldown_key="report:single:600519:simple",
+        now=now + timedelta(seconds=2),
+    )
+    assert retried.should_send
+
+
+def test_record_uses_success_time_for_expiry_not_evaluate_time():
+    config = _config(notification_dedup_ttl_seconds=60)
+    evaluated_at = datetime(2026, 5, 10, 12, 0, tzinfo=timezone.utc)
+    success_at = evaluated_at + timedelta(minutes=5)
+
+    first = evaluate_notification_noise(
+        config,
+        content="content",
+        route_type="report",
+        dedup_key="report:aggregate:simple:600519",
+        now=evaluated_at,
+    )
+    assert first.should_send
+    record_notification_noise(first, now=success_at)
+
+    duplicate = evaluate_notification_noise(
+        config,
+        content="content",
+        route_type="report",
+        dedup_key="report:aggregate:simple:600519",
+        now=success_at + timedelta(seconds=59),
+    )
+    assert not duplicate.should_send
+    assert duplicate.reason_code == "dedup"
+
+    expired = evaluate_notification_noise(
+        config,
+        content="content",
+        route_type="report",
+        dedup_key="report:aggregate:simple:600519",
+        now=success_at + timedelta(seconds=61),
+    )
+    assert expired.should_send
+
+
+def test_stale_release_does_not_clear_newer_inflight_reservation():
+    config = _config(notification_dedup_ttl_seconds=60)
+    now = datetime(2026, 5, 10, 12, 0, tzinfo=timezone.utc)
+
+    first = evaluate_notification_noise(
+        config,
+        content="content",
+        route_type="report",
+        dedup_key="report:aggregate:simple:600519",
+        now=now,
+    )
+    assert first.should_send
+
+    newer = evaluate_notification_noise(
+        config,
+        content="content",
+        route_type="report",
+        dedup_key="report:aggregate:simple:600519",
+        now=now + timedelta(seconds=301),
+    )
+    assert newer.should_send
+
+    release_notification_noise(first)
+    duplicate = evaluate_notification_noise(
+        config,
+        content="content",
+        route_type="report",
+        dedup_key="report:aggregate:simple:600519",
+        now=now + timedelta(seconds=302),
+    )
+    assert not duplicate.should_send
+    assert duplicate.reason_code == "dedup_inflight"
 
 
 def test_quiet_hours_same_day_and_overnight():

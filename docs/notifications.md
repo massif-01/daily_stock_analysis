@@ -160,8 +160,9 @@ P4 新增进程内降噪，只影响静态配置渠道，不影响 `send_to_cont
 
 - 去重 / 冷却状态是当前 Python 进程内 dict，适用于 `main.py` 单进程和 `--serve` 单 worker。
 - `uvicorn --workers N`、多容器或多台机器场景下状态不共享，降噪为 per-worker 近似生效。
-- report 路径使用稳定 key，避免报告内生成时间变化击穿去重；单股和聚合报告使用不同 key，避免冷却误伤不同股票。
+- pipeline 单股和聚合报告路径使用稳定 key，避免报告内生成时间变化击穿去重；其他未显式传入 `dedup_key` 的 report 通知按内容 hash 去重。
 - 未显式传入 `cooldown_key` 的调用按路由和严重级别共享默认冷却槽位，例如 report / info 的普通通知会共用同一个槽位。
+- 同一进程内相同 key 的并发发送会先占用短生命周期 in-flight 槽位，避免突发重复发送；静态渠道全部失败时释放该槽位，不写入正式去重 / 冷却状态。
 - 降噪判断异常时 fail-open：记录日志并继续发送静态渠道。
 - `NOTIFICATION_TIMEZONE` 留空时使用 `datetime.now().astimezone()` 解析到的运行时本地时区；Actions / Docker 场景建议显式配置 `NOTIFICATION_TIMEZONE` 以避免时区歧义。
 

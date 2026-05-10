@@ -121,7 +121,10 @@ class SystemConfigApiTestCase(unittest.TestCase):
         self.assertEqual(item_map["NOTIFICATION_DEDUP_TTL_SECONDS"]["schema"]["data_type"], "integer")
         self.assertEqual(item_map["NOTIFICATION_COOLDOWN_SECONDS"]["schema"]["data_type"], "integer")
         self.assertEqual(item_map["NOTIFICATION_DAILY_DIGEST_ENABLED"]["schema"]["data_type"], "boolean")
-        self.assertIn("warning", item_map["NOTIFICATION_MIN_SEVERITY"]["schema"]["validation"]["enum"])
+        min_severity_schema = item_map["NOTIFICATION_MIN_SEVERITY"]["schema"]
+        self.assertEqual(min_severity_schema["options"][0]["value"], "")
+        self.assertIn("", min_severity_schema["validation"]["enum"])
+        self.assertIn("warning", min_severity_schema["validation"]["enum"])
 
     def test_get_setup_status_returns_readiness_payload(self) -> None:
         self.env_path.write_text(
