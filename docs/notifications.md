@@ -145,7 +145,7 @@ P4 新增进程内降噪，只影响静态配置渠道，不影响 `send_to_cont
 | `NOTIFICATION_DEDUP_TTL_SECONDS` | `0` | 同一稳定去重 key 在 TTL 内只发送一次；`0` 关闭 |
 | `NOTIFICATION_COOLDOWN_SECONDS` | `0` | 同一冷却 key 在窗口内限频；`0` 关闭 |
 | `NOTIFICATION_QUIET_HOURS` | 空 | 静默时段，格式 `HH:MM-HH:MM`，支持跨午夜 |
-| `NOTIFICATION_TIMEZONE` | 空 | 静默时段时区，如 `Asia/Shanghai`；留空跟随 `TZ` 或系统本地时区 |
+| `NOTIFICATION_TIMEZONE` | 空 | 静默时段时区，如 `Asia/Shanghai`；留空使用 Python 运行时本地时区（通常由进程 `TZ` 或系统时区决定） |
 | `NOTIFICATION_MIN_SEVERITY` | 空 | `info`, `warning`, `error`, `critical`；留空不过滤 |
 | `NOTIFICATION_DAILY_DIGEST_ENABLED` | `false` | 预留配置；当前不会发送每日摘要或持久化摘要内容 |
 
@@ -163,7 +163,7 @@ P4 新增进程内降噪，只影响静态配置渠道，不影响 `send_to_cont
 - report 路径使用稳定 key，避免报告内生成时间变化击穿去重；单股和聚合报告使用不同 key，避免冷却误伤不同股票。
 - 未显式传入 `cooldown_key` 的调用按路由和严重级别共享默认冷却槽位，例如 report / info 的普通通知会共用同一个槽位。
 - 降噪判断异常时 fail-open：记录日志并继续发送静态渠道。
-- GitHub Actions 默认 UTC；如未设置 `TZ`，静默时段按 Actions 运行环境的本地时区解释。建议在 Actions 中显式配置 `NOTIFICATION_TIMEZONE`。
+- `NOTIFICATION_TIMEZONE` 留空时使用 `datetime.now().astimezone()` 解析到的运行时本地时区；Actions / Docker 场景建议显式配置 `NOTIFICATION_TIMEZONE` 以避免时区歧义。
 
 ## 场景占位
 
