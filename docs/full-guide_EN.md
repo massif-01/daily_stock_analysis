@@ -101,7 +101,7 @@ Go to your forked repo → `Settings` → `Secrets and variables` → `Actions` 
 | `CUSTOM_WEBHOOK_URLS` | Custom Webhook (supports DingTalk, etc., comma-separated) | Optional |
 | `CUSTOM_WEBHOOK_BEARER_TOKEN` | Bearer Token for custom webhooks (for authenticated webhooks) | Optional |
 | `CUSTOM_WEBHOOK_BODY_TEMPLATE` | Custom Webhook JSON body template for AstrBot, NapCat, or self-hosted services with special payloads | Optional |
-| `WEBHOOK_VERIFY_SSL` | HTTPS certificate verification for custom webhook / AstrBot / ntfy (default true). Set to false for self-signed certs. WARNING: Disabling has serious security risk (MITM), use only on trusted internal networks | Optional |
+| `WEBHOOK_VERIFY_SSL` | HTTPS certificate verification for webhook-style notification requests that read this setting (default true). Set to false for self-signed certs. WARNING: Disabling has serious security risk (MITM), use only on trusted internal networks | Optional |
 
 > *Note: Configure at least one channel; multiple channels will all receive notifications
 >
@@ -231,7 +231,7 @@ For the P0 notification baseline and diagnostics, see [Notification Baseline](no
 | `STOCK_GROUP_N` / `EMAIL_GROUP_N` | Email routing groups (Issue #268): `STOCK_GROUP_N` should stay within `STOCK_LIST` and only changes email recipients | Optional |
 | `CUSTOM_WEBHOOK_URLS` | Custom Webhook (comma-separated) | Optional |
 | `CUSTOM_WEBHOOK_BEARER_TOKEN` | Custom Webhook Bearer Token | Optional |
-| `WEBHOOK_VERIFY_SSL` | HTTPS certificate verification for custom webhook / AstrBot / ntfy (default true). Set to false for self-signed certs. WARNING: Disabling has serious security risk | Optional |
+| `WEBHOOK_VERIFY_SSL` | HTTPS certificate verification for webhook-style notification requests that read this setting (default true). Set to false for self-signed certs. WARNING: Disabling has serious security risk | Optional |
 | `PUSHOVER_USER_KEY` | Pushover User Key | Optional |
 | `PUSHOVER_API_TOKEN` | Pushover API Token | Optional |
 | `NTFY_URL` | Full ntfy topic endpoint, must include topic path, e.g. `https://ntfy.sh/my-topic` | Optional |

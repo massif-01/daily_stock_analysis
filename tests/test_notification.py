@@ -643,6 +643,17 @@ class TestNotificationServiceReportGeneration(unittest.TestCase):
         self.assertFalse(service.is_available())
 
     @mock.patch("src.notification.get_config")
+    def test_ntfy_url_with_unsupported_scheme_is_not_available(
+        self, mock_get_config: mock.MagicMock
+    ):
+        mock_get_config.return_value = _make_config(ntfy_url="ntfy://ntfy.sh/dsa-topic")
+
+        service = NotificationService()
+
+        self.assertNotIn(NotificationChannel.NTFY, service.get_available_channels())
+        self.assertFalse(service.is_available())
+
+    @mock.patch("src.notification.get_config")
     @mock.patch("requests.post")
     def test_send_to_ntfy_does_not_trigger_markdown_to_image(
         self, mock_post: mock.MagicMock, mock_get_config: mock.MagicMock

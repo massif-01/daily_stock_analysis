@@ -102,6 +102,14 @@ class NotificationDiagnosticsTestCase(unittest.TestCase):
         self.assertIn("invalid_ntfy_url", {item.code for item in result.errors})
         self.assertIn("NTFY_URL", {item.key for item in result.errors})
 
+    def test_ntfy_url_with_unsupported_scheme_reports_error(self):
+        result = run_notification_diagnostics(_config(ntfy_url="ftp://ntfy.example/dsa-topic"))
+
+        self.assertFalse(result.ok)
+        self.assertNotIn("ntfy", result.configured_channels)
+        self.assertIn("invalid_ntfy_url", {item.code for item in result.errors})
+        self.assertIn("NTFY_URL", {item.key for item in result.errors})
+
     def test_advanced_key_without_minimal_warns_but_is_structured(self):
         result = run_notification_diagnostics(_config(pushplus_topic="topic-only"))
 

@@ -28,7 +28,7 @@
 - Advanced key：只影响认证、安全、格式、线程、群组、证书校验或展示行为，不能单独启用渠道。
 - P3 的 `NOTIFICATION_*_CHANNELS` 属于 Advanced key：只收窄已启用渠道，不会单独启用渠道。
 - P4 的 `NOTIFICATION_DEDUP_TTL_SECONDS`、`NOTIFICATION_COOLDOWN_SECONDS`、`NOTIFICATION_QUIET_HOURS`、`NOTIFICATION_TIMEZONE`、`NOTIFICATION_MIN_SEVERITY`、`NOTIFICATION_DAILY_DIGEST_ENABLED` 属于 Advanced key：只影响已启用静态渠道的发送策略，不会单独启用渠道。
-- `WEBHOOK_VERIFY_SSL` 是 custom webhook / AstrBot / ntfy 共用的 HTTPS 证书校验开关。
+- `WEBHOOK_VERIFY_SSL` 是读取该配置的 webhook-style HTTPS 通知请求共用的证书校验开关。
 - Gotify、WebPush、Apprise、Bark、更细粒度路由、跨进程降噪和真实每日摘要不在 P6-A 范围内；相关配置如未来引入，应先更新本文档、`.env.example`、Web 元数据与回归测试。
 
 ## GitHub Actions 映射

@@ -408,6 +408,16 @@ class TestNtfySender(unittest.TestCase):
         mock_post.assert_not_called()
 
     @mock.patch("src.notification_sender.ntfy_sender.requests.post")
+    def test_send_returns_false_when_url_scheme_is_not_http(self, mock_post):
+        cfg = _config(ntfy_url="ftp://ntfy.example/dsa-topic")
+        sender = NtfySender(cfg)
+
+        result = sender.send_to_ntfy("body")
+
+        self.assertFalse(result)
+        mock_post.assert_not_called()
+
+    @mock.patch("src.notification_sender.ntfy_sender.requests.post")
     def test_send_http_error_returns_false(self, mock_post):
         mock_post.return_value = _response(500)
         cfg = _config(ntfy_url="https://ntfy.sh/dsa-topic")

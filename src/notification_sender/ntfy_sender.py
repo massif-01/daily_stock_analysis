@@ -23,7 +23,7 @@ def resolve_ntfy_endpoint(ntfy_url: Optional[str]) -> Tuple[Optional[str], Optio
         return None, None
 
     parsed = urlparse(raw_url)
-    if not parsed.scheme or not parsed.netloc:
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
         return None, None
 
     path_segments = [segment for segment in parsed.path.split("/") if segment]
