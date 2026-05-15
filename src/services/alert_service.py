@@ -23,6 +23,7 @@ from src.storage import AlertNotificationRecord, AlertRuleRecord, AlertTriggerRe
 SUPPORTED_ALERT_TYPES = frozenset({"price_cross", "price_change_percent", "volume_spike"})
 SUPPORTED_TARGET_SCOPES = frozenset({"single_symbol"})
 SUPPORTED_SEVERITIES = frozenset({"info", "warning", "critical"})
+NULLABLE_RULE_UPDATE_FIELDS = frozenset({"cooldown_policy", "notification_policy"})
 
 
 class AlertServiceError(ValueError):
@@ -66,6 +67,7 @@ class AlertService:
             raise AlertNotFoundError(f"Alert rule not found: {rule_id}")
         if not payload:
             raise AlertServiceError("No fields provided for update")
+        self._validate_rule_update_payload(payload)
 
         merged = self._serialize_rule(row)
         merged.update(payload)
@@ -364,6 +366,11 @@ class AlertService:
             "cooldown_policy": self._dump_json_or_none(payload.get("cooldown_policy")),
             "notification_policy": self._dump_json_or_none(payload.get("notification_policy")),
         }
+
+    def _validate_rule_update_payload(self, payload: Dict[str, Any]) -> None:
+        for field_name, value in payload.items():
+            if value is None and field_name not in NULLABLE_RULE_UPDATE_FIELDS:
+                raise AlertServiceError(f"{field_name} must not be null")
 
     def _normalize_parameters(self, alert_type: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(parameters, dict):

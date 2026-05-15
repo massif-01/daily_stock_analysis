@@ -141,6 +141,38 @@ class AlertApiTestCase(unittest.TestCase):
         self.assertEqual(resp.status_code, 400)
         self.assertEqual(resp.json()["error"], "validation_error")
 
+    def test_rule_update_rejects_null_for_non_nullable_fields(self) -> None:
+        rule = self._create_rule()
+
+        for field_name in ("enabled", "severity", "name"):
+            resp = self.client.patch(f"/api/v1/alerts/rules/{rule['id']}", json={field_name: None})
+            self.assertEqual(resp.status_code, 400, resp.text)
+            self.assertEqual(resp.json()["error"], "validation_error")
+
+        detail_resp = self.client.get(f"/api/v1/alerts/rules/{rule['id']}")
+        self.assertEqual(detail_resp.status_code, 200)
+        detail = detail_resp.json()
+        self.assertTrue(detail["enabled"])
+        self.assertEqual(detail["severity"], "warning")
+        self.assertEqual(detail["name"], "Moutai breakout")
+
+    def test_rule_update_allows_null_for_reserved_policy_fields(self) -> None:
+        rule = self._create_rule(
+            {
+                "cooldown_policy": {"cooldown_seconds": 60},
+                "notification_policy": {"channels": ["wechat"]},
+            }
+        )
+
+        resp = self.client.patch(
+            f"/api/v1/alerts/rules/{rule['id']}",
+            json={"cooldown_policy": None, "notification_policy": None},
+        )
+
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertIsNone(resp.json()["cooldown_policy"])
+        self.assertIsNone(resp.json()["notification_policy"])
+
     def test_supported_rule_types_and_filters(self) -> None:
         self._create_rule()
         self._create_rule(
