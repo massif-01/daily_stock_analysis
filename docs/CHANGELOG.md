@@ -15,12 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [新功能] 通知网关新增 Gotify 一等渠道，支持通过 `GOTIFY_URL` / `GOTIFY_TOKEN` 推送 Markdown 文本并接入 Web 测试、路由、Actions 与诊断。
 - [修复] 收紧 ntfy 结构化校验，避免 URL 编码空白 topic 被误判为有效通知端点。
 - [文档] 补充 Bark custom webhook 示例和 WebPush / Apprise 通知渠道评估，明确本轮不新增运行时依赖或配置入口。
+- [文档] 收口通知专题场景文档，并为 GitHub Actions 通知 env 对照表加入自动化校验。
 - [修复] 聚合报告通知按静态渠道隔离发送失败，并补充自定义 Webhook 部分成功诊断与脱敏测试。
 - [修复] 未配置 Tushare / Longbridge 凭据时不再实例化对应可选 fetcher，避免缺失凭据的数据源进入候选集。
 - [修复] Longbridge 遇到连接关闭类异常后会进入冷却期，并在美股/港股实时与日线请求中临时跳过该数据源，避免请求级频繁重连。
 - [修复] Pytdx 股票名称查询在全部服务器不可达时会短暂冷却，并在冷却期内跳过重复探测，减少无效拨号与告警噪音。
 - [修复] 调度模式未显式设置 `SCHEDULE_RUN_IMMEDIATELY` 时，会继续继承 `RUN_IMMEDIATELY` 的运行时覆盖语义，避免被持久化 `.env` 别名反向覆盖。
 - [文档] 补充 Longbridge 冷却开关与调度启动兼容语义说明。
+- [文档] 明确本轮仅新增市场复盘底层数据源能力（概念排行、人气股、涨停池），未修改模型名、provider、Base URL、LLM 运行时入口或 `.env` 兼容语义；回退路径为回滚本次变更版本，不需要执行配置迁移。
 - [新功能] Windows 桌面安装版接入 electron-updater，发现新版本后可后台下载并在用户确认后重启安装；Release 工作流同步上传自动更新所需元数据。
 - [测试] 完善桌面端更新链路验收说明：补充 `apps/dsa-desktop` 与打包产物元数据的本地验证步骤（Web 构建、桌面测试/构建、`latest.yml` 与 `*.blockmap` 检查），并明确 Windows/NSIS 部分需在 Windows 发布链路复核。
 - [测试] 补充 `docs/desktop-package.md` 对 Windows NSIS 与 `desktop-release` 链路的发布级复核要求：注明 Linux 环境不能直接产出 Windows 安装器，要求在 Windows 环境补齐 `latest.yml`/`*.blockmap` 与 installer 的版本一致性与附件核对。
@@ -40,6 +42,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [修复] Docker 启动入口自动修复 `data` / `logs` / `reports` 挂载目录权限并降权运行，文档化的 Compose `exec` 手动命令显式使用 `dsa` 用户，避免普通部署需要手动 `chown` / `chmod`。
 - [修复] Web 首页大盘复盘结果改由主内容滚动区承载，避免 loading 切换到长结果后下方报告区域被截断或无法继续滚动。
 - [文档] 新增告警中心专题文档（docs/alerts.md），说明 EventMonitor 基线、legacy 规则契约和 Phase 边界。
+- [修复] Web 设置页为通知测试与 Agent/通知配置区域增加局部运行时错误兜底，异常时提示提供 Windows 桌面端 `desktop.log`，避免整页黑屏。
+- [修复] 资金流数据不可用时将直接买入结论降级为观察，避免缺失数据被误读为高置信买入依据。
+- [修复] 调高基本面聚合默认超时预算，降低 Windows/Docker 环境下整段基本面 timeout 的概率。
+- [修复] 正式分析链路兼容 OpenAI-compatible `content_blocks` 响应，避免 `message.content=null` 时被误判为空回复。
+- [文档] Issue #1279 外部响应兼容补证据：本次修复以 `litellm>=1.80.10,!=1.82.7,!=1.82.8,<2.0.0` 为运行时前提，交叉参照 [LiteLLM OpenAI-compatible](https://docs.litellm.ai/docs/providers/openai_compatible) / [OpenAI Chat Completion API](https://platform.openai.com/docs/api-reference/chat)、并以 `tests/test_market_analyzer_generate_text.py` 的 `content_blocks` 与 `list content` 回归样例为复现依据，保留 `message.content` 回退逻辑避免兼容断层。
 
 ## [3.16.0] - 2026-05-10
 
