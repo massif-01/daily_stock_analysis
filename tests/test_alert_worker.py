@@ -449,6 +449,38 @@ class AlertWorkerTestCase(unittest.TestCase):
         self.assertEqual(notifier.send.call_count, 2)
         self.assertEqual(len(self._triggers(status="triggered")), 3)
 
+    def test_failed_notification_attempts_do_not_consume_fingerprint_window(self) -> None:
+        self._create_rule(target="600519")
+        notifier = MagicMock()
+        notifier.send.side_effect = [False, RuntimeError("temporary webhook failure"), True]
+        now = {"value": 1000.0}
+
+        worker = AlertWorker(
+            config_provider=lambda: self._config(),
+            service=self.service,
+            notifier=notifier,
+            now_provider=lambda: now["value"],
+            fingerprint_ttl_seconds=60,
+        )
+        with patch(
+            "src.agent.events.EventMonitor._get_realtime_quote",
+            new=AsyncMock(return_value=SimpleNamespace(price=1810.0)),
+        ):
+            first = worker.run_once()
+            now["value"] += 10
+            second = worker.run_once()
+            now["value"] += 10
+            third = worker.run_once()
+            now["value"] += 10
+            fourth = worker.run_once()
+
+        self.assertEqual(first["notified"], 0)
+        self.assertEqual(second["notified"], 0)
+        self.assertEqual(third["notified"], 1)
+        self.assertEqual(fourth["notified"], 0)
+        self.assertEqual(notifier.send.call_count, 3)
+        self.assertEqual(len(self._triggers(status="triggered")), 4)
+
 
 if __name__ == "__main__":
     unittest.main()

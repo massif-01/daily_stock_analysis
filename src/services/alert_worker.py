@@ -122,6 +122,7 @@ class AlertWorker:
                 stats["triggered"] += 1
                 if self._should_notify(runtime_rule.key):
                     if self._send_notification_safely(runtime_rule, result):
+                        self._mark_notified(runtime_rule.key)
                         stats["notified"] += 1
 
         return stats
@@ -259,8 +260,10 @@ class AlertWorker:
         last_seen = self._trigger_fingerprints.get(rule_key)
         if last_seen is not None and now - last_seen < self.fingerprint_ttl_seconds:
             return False
-        self._trigger_fingerprints[rule_key] = now
         return True
+
+    def _mark_notified(self, rule_key: str) -> None:
+        self._trigger_fingerprints[rule_key] = self.now_provider()
 
     def _prune_fingerprints(self) -> None:
         now = self.now_provider()
