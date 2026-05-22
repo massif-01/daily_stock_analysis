@@ -99,14 +99,60 @@ class MarketLightServiceTestCase(unittest.TestCase):
         self.assertEqual(previous["trade_date"], "2026-03-06")
         self.assertEqual(previous["score"], 72)
 
-    def test_load_previous_snapshot_degrades_on_invalid_cross_day_candidate(self) -> None:
+    def test_load_previous_snapshot_prefers_latest_trade_date_over_newer_backfill(self) -> None:
         self._add_history(
-            created_at=datetime(2026, 3, 6, 18, 0),
+            created_at=datetime(2026, 3, 10, 20, 0),
+            context_snapshot={"market_light_snapshots": {"cn": _snapshot("cn", "2026-03-05", 99)}},
+        )
+        self._add_history(
+            created_at=datetime(2026, 3, 9, 18, 0),
+            context_snapshot={"market_light_snapshots": {"cn": _snapshot("cn", "2026-03-09", 72)}},
+        )
+        self._add_history(
+            created_at=datetime(2026, 3, 8, 18, 0),
+            context_snapshot={"market_light_snapshots": {"cn": _snapshot("cn", "2026-03-08", 80)}},
+        )
+
+        previous = load_previous_snapshot("cn", before_trade_date="2026-03-10", db_manager=self.db)
+
+        self.assertIsNotNone(previous)
+        assert previous is not None
+        self.assertEqual(previous["trade_date"], "2026-03-09")
+        self.assertEqual(previous["score"], 72)
+
+    def test_load_previous_snapshot_uses_latest_valid_snapshot_for_target_trade_date(self) -> None:
+        self._add_history(
+            created_at=datetime(2026, 3, 9, 19, 0),
+            context_snapshot={"market_light_snapshots": {"cn": _snapshot("cn", "2026-03-09", 66)}},
+        )
+        self._add_history(
+            created_at=datetime(2026, 3, 9, 18, 0),
+            context_snapshot={"market_light_snapshots": {"cn": _snapshot("cn", "2026-03-09", 72)}},
+        )
+        self._add_history(
+            created_at=datetime(2026, 3, 10, 20, 0),
+            context_snapshot={"market_light_snapshots": {"cn": _snapshot("cn", "2026-03-05", 99)}},
+        )
+
+        previous = load_previous_snapshot("cn", before_trade_date="2026-03-10", db_manager=self.db)
+
+        self.assertIsNotNone(previous)
+        assert previous is not None
+        self.assertEqual(previous["trade_date"], "2026-03-09")
+        self.assertEqual(previous["score"], 66)
+
+    def test_load_previous_snapshot_degrades_when_target_trade_date_has_no_valid_snapshot(self) -> None:
+        self._add_history(
+            created_at=datetime(2026, 3, 8, 18, 0),
+            context_snapshot={"market_light_snapshots": {"cn": _snapshot("cn", "2026-03-08", 80)}},
+        )
+        self._add_history(
+            created_at=datetime(2026, 3, 9, 18, 0),
             context_snapshot={
                 "market_light_snapshots": {
                     "cn": {
                         "region": "cn",
-                        "trade_date": "2026-03-06",
+                        "trade_date": "2026-03-09",
                         "status": "yellow",
                         "score": 72,
                     }
@@ -115,7 +161,7 @@ class MarketLightServiceTestCase(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(ValueError, "invalid persisted market light snapshot"):
-            load_previous_snapshot("cn", before_trade_date="2026-03-07", db_manager=self.db)
+            load_previous_snapshot("cn", before_trade_date="2026-03-10", db_manager=self.db)
 
     def test_load_previous_snapshot_scans_beyond_batch_without_default_cap(self) -> None:
         newest = datetime(2026, 3, 7, 18, 0)

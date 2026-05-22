@@ -56,6 +56,10 @@ def load_previous_snapshot(
         return None
 
     db = db_manager or DatabaseManager.get_instance()
+    best_trade_date: Optional[str] = None
+    best_snapshot: Optional[Dict[str, Any]] = None
+    invalid_target_error: Optional[Exception] = None
+
     with db.get_session() as session:
         query = (
             session.query(AnalysisHistory)
@@ -71,20 +75,37 @@ def load_previous_snapshot(
             snapshot = _extract_region_snapshot(row.context_snapshot, normalized_region)
             if snapshot is None:
                 continue
-            trade_date = str(snapshot.get("trade_date") or "")
-            if trade_date and trade_date < cutoff:
-                try:
-                    return MarketLightSnapshot.model_validate(snapshot).model_dump()
-                except Exception as exc:
-                    logger.warning(
-                        "invalid persisted market light snapshot: row_id=%s region=%s error=%s",
-                        getattr(row, "id", "?"),
-                        normalized_region,
-                        exc,
-                    )
-                    raise ValueError(
-                        f"invalid persisted market light snapshot for {normalized_region}"
-                    ) from exc
+            trade_date = str(snapshot.get("trade_date") or "").strip()
+            if not trade_date or trade_date >= cutoff:
+                continue
+            if best_trade_date is None or trade_date > best_trade_date:
+                best_trade_date = trade_date
+                best_snapshot = None
+                invalid_target_error = None
+            elif trade_date < best_trade_date:
+                continue
+            try:
+                candidate = MarketLightSnapshot.model_validate(snapshot).model_dump()
+            except Exception as exc:
+                logger.warning(
+                    "invalid persisted market light snapshot: row_id=%s region=%s trade_date=%s error=%s",
+                    getattr(row, "id", "?"),
+                    normalized_region,
+                    trade_date,
+                    exc,
+                )
+                if best_snapshot is None:
+                    invalid_target_error = exc
+                continue
+            if best_snapshot is None:
+                best_snapshot = candidate
+
+    if best_snapshot is not None:
+        return best_snapshot
+    if best_trade_date is not None and invalid_target_error is not None:
+        raise ValueError(
+            f"invalid persisted market light snapshot for {normalized_region} on {best_trade_date}"
+        ) from invalid_target_error
     return None
 
 

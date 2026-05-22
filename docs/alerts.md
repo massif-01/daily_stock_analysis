@@ -361,7 +361,8 @@ scope/type 校验是双向约束：`target_scope=market` 只能使用两类 Mark
 ### 基线、交易日与去重
 
 - 大盘复盘持久化必须使用与报告生成共用的同一份 `MarketOverview` 生成 `MarketLightSnapshot`，禁止 persist 阶段二次拉行情。
-- `load_previous_snapshot(region, before_trade_date)` 按 `created_at DESC` 扫描 `analysis_history(code=MARKET, report_type=market_review)`，跳过缺少 `context_snapshot.market_light_snapshots[region]` 的 legacy 记录，返回第一条 `snapshot.trade_date < before_trade_date` 的快照。
+- `load_previous_snapshot(region, before_trade_date)` 扫描 `analysis_history(code=MARKET, report_type=market_review)`，跳过缺少 `context_snapshot.market_light_snapshots[region]` 的 legacy 记录，先选出小于 `before_trade_date` 的最大 `snapshot.trade_date`，再在同一 `trade_date` 内按 `created_at DESC, id DESC` 取最新 valid 快照；更晚插入的旧交易日 backfill 不会覆盖正确基线。
+- 若目标 `trade_date` 只有损坏快照，`market_light_score_drop` 返回 `degraded`，不会自动退回更旧交易日做 best-effort 比较。
 - `market_light_score_drop` 首版只做跨交易日比较；无上一交易日基线或同日基线返回 `skipped`，查询/解析异常返回 `degraded`。
 - worker 对 `target_scope=market` 做 region 交易日 gate，并尊重 `TRADING_DAY_CHECK_ENABLED` / `config.trading_day_check_enabled`；检查关闭时允许评估，检查开启且 region 非交易日时返回 `skipped`，不拉取当前快照。
 - 触发历史写 `target=<region>`、`observed_value=<score>`、`data_source=market_light`、`data_timestamp=<trade_date 00:00:00>`，继续复用 P4 的 `rule_id + target + data_source + data_timestamp` 去重。
