@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const renderDrawer = async (onClose = vi.fn()) => {
@@ -64,6 +64,36 @@ describe('ReportMarkdownDrawer', () => {
 
       expect(screen.getByRole('dialog')).toBeInTheDocument();
       expect(await screen.findByText('加载报告失败')).toBeInTheDocument();
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it('retries loading the lazy panel after a rejected import and remount', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    let loadAttempts = 0;
+
+    vi.resetModules();
+    vi.doMock('../ReportMarkdownPanel', () => {
+      loadAttempts += 1;
+      if (loadAttempts === 1) {
+        return Promise.reject(new Error('chunk load failed'));
+      }
+
+      return {
+        ReportMarkdownPanel: () => <h2>Retried report panel</h2>,
+      };
+    });
+
+    try {
+      await renderDrawer();
+
+      expect(await screen.findByText('加载报告失败')).toBeInTheDocument();
+
+      cleanup();
+      await renderDrawer();
+
+      expect(await screen.findByRole('heading', { name: 'Retried report panel' })).toBeInTheDocument();
     } finally {
       consoleError.mockRestore();
     }

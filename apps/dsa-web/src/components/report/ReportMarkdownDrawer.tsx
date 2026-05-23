@@ -1,12 +1,8 @@
 import type React from 'react';
-import { Component, lazy, Suspense, useCallback, useState } from 'react';
+import { Component, lazy, Suspense, useCallback, useMemo, useState } from 'react';
 import type { ReportLanguage } from '../../types/analysis';
 import { getReportText, normalizeReportLanguage } from '../../utils/reportLanguage';
 import { Drawer } from '../common/Drawer';
-
-const LazyReportMarkdownPanel = lazy(() =>
-  import('./ReportMarkdownPanel').then((m) => ({ default: m.ReportMarkdownPanel })),
-);
 
 interface ReportMarkdownDrawerProps {
   recordId: number;
@@ -95,6 +91,10 @@ export const ReportMarkdownDrawer: React.FC<ReportMarkdownDrawerProps> = ({
 }) => {
   const [isOpen, setIsOpen] = useState(true);
   const text = getReportText(normalizeReportLanguage(reportLanguage));
+  const LazyReportMarkdownPanel = useMemo(
+    () => lazy(() => import('./ReportMarkdownPanel').then((m) => ({ default: m.ReportMarkdownPanel }))),
+    [],
+  );
 
   const handleClose = useCallback(() => {
     setIsOpen(false);

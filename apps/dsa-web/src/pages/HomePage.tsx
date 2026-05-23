@@ -846,6 +846,7 @@ const HomePage: React.FC = () => {
 
       {markdownDrawerOpen && selectedReport?.meta.id ? (
         <ReportMarkdownDrawer
+          key={selectedReport.meta.id}
           recordId={selectedReport.meta.id}
           stockName={selectedReport.meta.stockName || ''}
           stockCode={selectedReport.meta.stockCode}
