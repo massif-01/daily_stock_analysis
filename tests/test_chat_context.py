@@ -216,6 +216,48 @@ def test_bundle_drops_trace_on_model_mismatch_budget_and_summarized_anchor() -> 
     assert all("reasoning_content" not in msg for msg in summarized.context_messages)
 
 
+def test_bundle_injects_trace_for_configured_fallback_model_with_trace_metadata() -> None:
+    db = _reset_db()
+    session_id = "chat-trace-fallback-model"
+    user_id = db.save_conversation_message(session_id, "user", "u1")
+    assistant_id = db.save_conversation_message(session_id, "assistant", "a1-final")
+    db.save_agent_provider_turn(
+        session_id=session_id,
+        run_id="run-fallback",
+        provider="deepseek",
+        model="deepseek/deepseek-chat",
+        anchor_user_message_id=user_id,
+        anchor_assistant_message_id=assistant_id,
+        messages=[
+            {
+                "role": "assistant",
+                "content": "checking",
+                "reasoning_content": "r",
+                "tool_calls": [{"id": "call_1", "name": "echo", "arguments": {}}],
+            },
+            {"role": "tool", "tool_call_id": "call_1", "content": "tool-result"},
+        ],
+        contains_reasoning=True,
+        contains_tool_calls=True,
+        contains_thinking_blocks=False,
+        must_roundtrip=True,
+        estimated_tokens=10,
+    )
+    config = _config(enabled=False)
+    config.agent_litellm_model = "openai/test-model"
+    config.litellm_model = "openai/test-model"
+    config.litellm_fallback_models = ["deepseek/deepseek-chat"]
+
+    bundle = build_agent_chat_context_bundle(session_id, MagicMock(), config)
+
+    assert bundle.diagnostics["trace_injected"] is True
+    assistant_trace = bundle.context_messages[1]
+    assert assistant_trace["role"] == "assistant"
+    assert assistant_trace["reasoning_content"] == "r"
+    assert assistant_trace["_trace_provider"] == "deepseek"
+    assert assistant_trace["_trace_model"] == "deepseek/deepseek-chat"
+
+
 def test_over_trigger_generates_summary_and_updates_covered_message_id() -> None:
     db = _reset_db()
     session_id = "chat-summarize"

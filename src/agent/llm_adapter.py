@@ -25,6 +25,7 @@ from src.config import (
     get_effective_agent_primary_model,
     resolve_litellm_wire_model,
 )
+from src.agent.provider_trace import TRACE_MODEL_KEY, TRACE_PROVIDER_KEY, trace_model_matches
 from src.llm.errors import call_litellm_with_param_recovery
 from src.llm.generation_params import apply_litellm_generation_params
 
@@ -186,6 +187,17 @@ def _extract_provider_blocks(choice: Any) -> Tuple[List[Dict[str, Any]], Optiona
             if block_type == "text" and text:
                 text_parts.append(str(text))
     return blocks, ("".join(text_parts).strip() or None)
+
+
+def _message_trace_matches_target(message: Dict[str, Any], target_model: Optional[str]) -> bool:
+    """Whether provider-specific fields in ``message`` can be sent to target."""
+    if not target_model:
+        return True
+    trace_provider = message.get(TRACE_PROVIDER_KEY)
+    trace_model = message.get(TRACE_MODEL_KEY)
+    if not trace_provider and not trace_model:
+        return True
+    return trace_model_matches(trace_provider, trace_model, target_model)
 
 
 def _model_matches(model: str, entries: List[str]) -> bool:
@@ -516,7 +528,7 @@ class LLMToolAdapter:
         timeout: Optional[float] = None,
     ) -> LLMResponse:
         """Call a specific litellm model with OpenAI-format messages and tools."""
-        openai_messages = self._convert_messages(messages)
+        openai_messages = self._convert_messages(messages, target_model=model)
 
         # Use short model name (without provider prefix) for thinking model lookup
         model_short = model.split("/")[-1] if "/" in model else model
@@ -598,7 +610,12 @@ class LLMToolAdapter:
         """Return the raw configured temperature before per-model normalization."""
         return float(self._config.llm_temperature)
 
-    def _convert_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _convert_messages(
+        self,
+        messages: List[Dict[str, Any]],
+        *,
+        target_model: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         """Convert internal message format to OpenAI-compatible format for litellm."""
         openai_messages: List[Dict[str, Any]] = []
         for msg in messages:
@@ -619,20 +636,27 @@ class LLMToolAdapter:
                             "arguments": json.dumps(tc["arguments"]),
                         },
                     }
-                    provider_specific_fields = dict(tc.get("provider_specific_fields") or {})
-                    sig = tc.get("thought_signature")
-                    if sig is not None:
-                        provider_specific_fields.setdefault("thought_signature", sig)
-                    if provider_specific_fields:
-                        tc_dict["provider_specific_fields"] = provider_specific_fields
+                    include_provider_trace = _message_trace_matches_target(msg, target_model)
+                    if include_provider_trace:
+                        provider_specific_fields = dict(tc.get("provider_specific_fields") or {})
+                        sig = tc.get("thought_signature")
+                        if sig is not None:
+                            provider_specific_fields.setdefault("thought_signature", sig)
+                        if provider_specific_fields:
+                            tc_dict["provider_specific_fields"] = provider_specific_fields
                     openai_tc.append(tc_dict)
-                content = msg.get("provider_blocks") or msg.get("content")
+                include_provider_trace = _message_trace_matches_target(msg, target_model)
+                content = (
+                    msg.get("provider_blocks")
+                    if include_provider_trace and msg.get("provider_blocks")
+                    else msg.get("content")
+                )
                 openai_msg: Dict[str, Any] = {
                     "role": "assistant",
                     "content": content,
                     "tool_calls": openai_tc,
                 }
-                if msg.get("reasoning_content") is not None:
+                if include_provider_trace and msg.get("reasoning_content") is not None:
                     openai_msg["reasoning_content"] = msg["reasoning_content"]
                 openai_messages.append(openai_msg)
             else:

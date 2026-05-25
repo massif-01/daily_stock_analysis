@@ -11,8 +11,11 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from src.config import (
     get_agent_context_compression_preset,
     get_effective_agent_primary_model,
+    get_effective_agent_models_to_try,
 )
 from src.agent.provider_trace import (
+    TRACE_MODEL_KEY,
+    TRACE_PROVIDER_KEY,
     TraceDiagnostics,
     strip_trace_metadata,
     trace_model_matches,
@@ -135,14 +138,19 @@ def build_agent_chat_context_bundle(
     state = _build_visible_history_state(session_id, llm_adapter, config)
     diagnostics = TraceDiagnostics(visible_tokens=state.visible_tokens)
     db = get_db()
-    current_model = get_effective_agent_primary_model(config)
+    candidate_models = get_effective_agent_models_to_try(config)
+    if not candidate_models:
+        candidate_models = [get_effective_agent_primary_model(config)]
     turns = db.get_agent_provider_turns(session_id, must_roundtrip_only=True)
     traces_by_anchor: Dict[int, List[Dict[str, Any]]] = {}
     pending_trace_tokens = 0
     pending_trace_count = 0
 
     for turn in turns:
-        if not trace_model_matches(turn.get("provider"), turn.get("model"), current_model):
+        if not any(
+            trace_model_matches(turn.get("provider"), turn.get("model"), model)
+            for model in candidate_models
+        ):
             diagnostics.model_mismatch += 1
             diagnostics.dropped_trace_count += 1
             diagnostics.trace_dropped_reason = diagnostics.trace_dropped_reason or "model_mismatch"
@@ -153,11 +161,11 @@ def build_agent_chat_context_bundle(
             diagnostics.dropped_trace_count += 1
             diagnostics.trace_dropped_reason = diagnostics.trace_dropped_reason or "anchor_summarized"
             continue
-        trace_messages = [
-            strip_trace_metadata(msg)
-            for msg in (turn.get("messages") or [])
-            if isinstance(msg, dict)
-        ]
+        trace_messages = _restore_trace_metadata(
+            turn.get("messages") or [],
+            provider=turn.get("provider"),
+            model=turn.get("model"),
+        )
         if not trace_messages:
             continue
         pending_trace_count += 1
@@ -417,6 +425,24 @@ def _strip_internal_message_ids(messages: Sequence[Dict[str, Any]]) -> List[Dict
         {key: value for key, value in msg.items() if key != "_message_id"}
         for msg in messages
     ]
+
+
+def _restore_trace_metadata(
+    messages: Sequence[Any],
+    *,
+    provider: Any,
+    model: Any,
+) -> List[Dict[str, Any]]:
+    restored: List[Dict[str, Any]] = []
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        clean = strip_trace_metadata(msg)
+        if clean.get("role") == "assistant" and clean.get("tool_calls"):
+            clean[TRACE_PROVIDER_KEY] = provider
+            clean[TRACE_MODEL_KEY] = model
+        restored.append(clean)
+    return restored
 
 
 def _render_messages(messages: Sequence[Dict[str, Any]]) -> str:
