@@ -11,6 +11,7 @@ from src.agent.chat_context import (  # noqa: E402
     SUMMARY_USER_PREFIX,
     VisibleMessage,
     _split_protected_tail,
+    build_agent_chat_context_bundle,
     build_visible_chat_history,
     estimate_text_tokens,
 )
@@ -97,6 +98,122 @@ def test_existing_summary_under_trigger_returns_summary_and_uncovered_messages()
     assert history[0]["role"] == "user"
     assert history[0]["content"].startswith(SUMMARY_USER_PREFIX)
     assert [msg["content"] for msg in history[1:]] == ["u2", "a2"]
+
+
+def test_bundle_splices_provider_trace_before_visible_final_assistant() -> None:
+    db = _reset_db()
+    session_id = "chat-trace-splice"
+    user_id = db.save_conversation_message(session_id, "user", "u1")
+    assistant_id = db.save_conversation_message(session_id, "assistant", "a1-final")
+    db.save_agent_provider_turn(
+        session_id=session_id,
+        run_id="run-1",
+        provider="openai",
+        model="openai/test-model",
+        anchor_user_message_id=user_id,
+        anchor_assistant_message_id=assistant_id,
+        messages=[
+            {
+                "role": "assistant",
+                "content": "checking",
+                "reasoning_content": "r1",
+                "tool_calls": [{"id": "call_1", "name": "echo", "arguments": {"message": "x"}}],
+            },
+            {"role": "tool", "tool_call_id": "call_1", "content": "tool-result"},
+        ],
+        contains_reasoning=True,
+        contains_tool_calls=True,
+        contains_thinking_blocks=False,
+        must_roundtrip=True,
+        estimated_tokens=10,
+    )
+
+    bundle = build_agent_chat_context_bundle(session_id, MagicMock(), _config(enabled=False))
+
+    assert [msg["role"] for msg in bundle.context_messages] == ["user", "assistant", "tool", "assistant"]
+    assert bundle.context_messages[0]["content"] == "u1"
+    assert bundle.context_messages[1]["reasoning_content"] == "r1"
+    assert bundle.context_messages[2]["tool_call_id"] == "call_1"
+    assert bundle.context_messages[3]["content"] == "a1-final"
+    assert sum(1 for msg in bundle.context_messages if msg.get("content") == "a1-final") == 1
+    assert bundle.diagnostics["trace_injected"] is True
+
+
+def test_bundle_drops_trace_on_model_mismatch_budget_and_summarized_anchor() -> None:
+    db = _reset_db()
+    mismatch_session = "chat-trace-mismatch"
+    user_id = db.save_conversation_message(mismatch_session, "user", "u1")
+    assistant_id = db.save_conversation_message(mismatch_session, "assistant", "a1")
+    db.save_agent_provider_turn(
+        session_id=mismatch_session,
+        run_id="run-mismatch",
+        provider="deepseek",
+        model="deepseek/deepseek-chat",
+        anchor_user_message_id=user_id,
+        anchor_assistant_message_id=assistant_id,
+        messages=[{"role": "assistant", "reasoning_content": "r", "tool_calls": [{"id": "c", "name": "echo", "arguments": {}}]}],
+        contains_reasoning=True,
+        contains_tool_calls=True,
+        contains_thinking_blocks=False,
+        must_roundtrip=True,
+        estimated_tokens=10,
+    )
+
+    mismatch = build_agent_chat_context_bundle(mismatch_session, MagicMock(), _config(enabled=False))
+
+    assert mismatch.diagnostics["model_mismatch"] == 1
+    assert mismatch.diagnostics["trace_injected"] is False
+    assert all("reasoning_content" not in msg for msg in mismatch.context_messages)
+
+    budget_session = "chat-trace-budget"
+    user_id = db.save_conversation_message(budget_session, "user", "u1")
+    assistant_id = db.save_conversation_message(budget_session, "assistant", "a1")
+    db.save_agent_provider_turn(
+        session_id=budget_session,
+        run_id="run-budget",
+        provider="openai",
+        model="openai/test-model",
+        anchor_user_message_id=user_id,
+        anchor_assistant_message_id=assistant_id,
+        messages=[{"role": "assistant", "reasoning_content": "r", "tool_calls": [{"id": "c", "name": "echo", "arguments": {}}]}],
+        contains_reasoning=True,
+        contains_tool_calls=True,
+        contains_thinking_blocks=False,
+        must_roundtrip=True,
+        estimated_tokens=999999,
+    )
+
+    budget = build_agent_chat_context_bundle(budget_session, MagicMock(), _config(enabled=False))
+
+    assert budget.diagnostics["budget_exceeded"] is True
+    assert budget.diagnostics["trace_injected"] is False
+    assert all("reasoning_content" not in msg for msg in budget.context_messages)
+
+    summarized_session = "chat-trace-summary-anchor"
+    user_id = db.save_conversation_message(summarized_session, "user", "u1")
+    assistant_id = db.save_conversation_message(summarized_session, "assistant", "a1")
+    db.save_conversation_message(summarized_session, "user", "u2")
+    db.upsert_conversation_summary(summarized_session, "old summary", assistant_id, 2, 10)
+    db.save_agent_provider_turn(
+        session_id=summarized_session,
+        run_id="run-summary",
+        provider="openai",
+        model="openai/test-model",
+        anchor_user_message_id=user_id,
+        anchor_assistant_message_id=assistant_id,
+        messages=[{"role": "assistant", "reasoning_content": "r", "tool_calls": [{"id": "c", "name": "echo", "arguments": {}}]}],
+        contains_reasoning=True,
+        contains_tool_calls=True,
+        contains_thinking_blocks=False,
+        must_roundtrip=True,
+        estimated_tokens=10,
+    )
+
+    summarized = build_agent_chat_context_bundle(summarized_session, MagicMock(), _config(trigger=999999))
+
+    assert summarized.diagnostics["anchor_summarized"] == 1
+    assert summarized.diagnostics["trace_injected"] is False
+    assert all("reasoning_content" not in msg for msg in summarized.context_messages)
 
 
 def test_over_trigger_generates_summary_and_updates_covered_message_id() -> None:
