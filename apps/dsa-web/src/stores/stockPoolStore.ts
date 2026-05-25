@@ -31,6 +31,7 @@ let reportRequestSeq = 0;
 let analyzeRequestSeq = 0;
 let historyRequestSeq = 0;
 let activeTaskRequestSeq = 0;
+let activeTaskLocalRevision = 0;
 const dismissedTaskIds = new Set<string>();
 
 export interface StockPoolState {
@@ -390,6 +391,7 @@ export const useStockPoolStore = create<StockPoolState>((set, get) => ({
     if (get().activeTasks.some((item) => item.taskId === task.taskId)) {
       return;
     }
+    activeTaskLocalRevision += 1;
     set({ activeTasks: [...get().activeTasks, task] });
   },
 
@@ -401,6 +403,7 @@ export const useStockPoolStore = create<StockPoolState>((set, get) => ({
     const index = nextTasks.findIndex((item) => item.taskId === task.taskId);
     if (index >= 0) {
       nextTasks[index] = task;
+      activeTaskLocalRevision += 1;
       set({ activeTasks: nextTasks });
     }
   },
@@ -412,6 +415,7 @@ export const useStockPoolStore = create<StockPoolState>((set, get) => ({
 
   refreshActiveTasks: async () => {
     const requestId = ++activeTaskRequestSeq;
+    const localRevisionAtRequest = activeTaskLocalRevision;
     try {
       const response = await analysisApi.getTasks({
         status: 'pending,processing',
@@ -427,10 +431,12 @@ export const useStockPoolStore = create<StockPoolState>((set, get) => ({
       const remoteTaskIds = new Set(remoteTasks.map((task) => task.taskId));
       const remoteTaskById = new Map(remoteTasks.map((task) => [task.taskId, task]));
       const isCompleteSnapshot = response.tasks.length === response.pending + response.processing;
+      const canPruneLocalTasks = isCompleteSnapshot && activeTaskLocalRevision === localRevisionAtRequest;
 
-      const nextTasks = get().activeTasks
+      const currentTasks = get().activeTasks;
+      const nextTasks = currentTasks
         .filter((task) => !dismissedTaskIds.has(task.taskId))
-        .filter((task) => !isCompleteSnapshot || remoteTaskIds.has(task.taskId))
+        .filter((task) => !canPruneLocalTasks || remoteTaskIds.has(task.taskId))
         .map((task) => remoteTaskById.get(task.taskId) ?? task);
 
       const localTaskIds = new Set(nextTasks.map((task) => task.taskId));
@@ -440,7 +446,12 @@ export const useStockPoolStore = create<StockPoolState>((set, get) => ({
         }
       }
 
-      set({ activeTasks: nextTasks });
+      const hasActiveTaskChanges = nextTasks.length !== currentTasks.length
+        || nextTasks.some((task, index) => task !== currentTasks[index]);
+      if (hasActiveTaskChanges) {
+        activeTaskLocalRevision += 1;
+        set({ activeTasks: nextTasks });
+      }
     } catch {
       // Keep the current task panel when reconciliation cannot reach the API.
     }
@@ -448,7 +459,12 @@ export const useStockPoolStore = create<StockPoolState>((set, get) => ({
 
   removeTask: (taskId) => {
     dismissedTaskIds.add(taskId);
-    set({ activeTasks: get().activeTasks.filter((task) => task.taskId !== taskId) });
+    const currentTasks = get().activeTasks;
+    const nextTasks = currentTasks.filter((task) => task.taskId !== taskId);
+    if (nextTasks.length !== currentTasks.length) {
+      activeTaskLocalRevision += 1;
+    }
+    set({ activeTasks: nextTasks });
   },
 
   resetDashboardState: () => {
@@ -456,6 +472,7 @@ export const useStockPoolStore = create<StockPoolState>((set, get) => ({
     reportRequestSeq = 0;
     analyzeRequestSeq = 0;
     activeTaskRequestSeq += 1;
+    activeTaskLocalRevision += 1;
     dismissedTaskIds.clear();
     set({ ...initialState });
   },

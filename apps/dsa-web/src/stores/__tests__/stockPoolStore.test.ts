@@ -414,6 +414,32 @@ describe('stockPoolStore', () => {
     expect(useStockPoolStore.getState().activeTasks).toEqual([staleTask]);
   });
 
+  it('does not prune tasks created after an active-task refresh request started', async () => {
+    const emptySnapshot = createDeferred<TaskListResponse>();
+    const createdTask = createTask({
+      taskId: 'task-created-after-request',
+      status: 'pending',
+      progress: 0,
+    });
+    const updatedTask = {
+      ...createdTask,
+      status: 'processing' as const,
+      progress: 35,
+    };
+    vi.mocked(analysisApi.getTasks).mockReturnValue(emptySnapshot.promise);
+
+    const refreshPromise = useStockPoolStore.getState().refreshActiveTasks();
+    useStockPoolStore.getState().syncTaskCreated(createdTask);
+
+    emptySnapshot.resolve(createTaskListResponse([]));
+    await refreshPromise;
+
+    expect(useStockPoolStore.getState().activeTasks).toEqual([createdTask]);
+
+    useStockPoolStore.getState().syncTaskUpdated(updatedTask);
+    expect(useStockPoolStore.getState().activeTasks).toEqual([updatedTask]);
+  });
+
   it('upserts pending and processing tasks from the backend snapshot', async () => {
     const existingTask = createTask({ taskId: 'task-existing', progress: 30 });
     const updatedTask = createTask({ taskId: 'task-existing', progress: 80, message: 'LLM 正在生成分析结果' });
