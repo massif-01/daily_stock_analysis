@@ -243,6 +243,56 @@ class PipelineMarketPhaseContextTestCase(unittest.TestCase):
         enhanced_context = save_kwargs["context_snapshot"]["enhanced_context"]
         self.assertEqual(enhanced_context["stock_name"], "贵州茅台")
 
+    def test_agent_pack_summary_uses_prefetched_news_context_when_present(self):
+        pipeline = _make_pipeline(agent_mode=True, save_context_snapshot=True)
+        pipeline._ensure_agent_history = MagicMock()
+        pipeline.social_sentiment_service = MagicMock()
+        pipeline.social_sentiment_service.is_available = True
+        pipeline.social_sentiment_service.get_social_context.return_value = (
+            "Social sentiment raw payload should stay in legacy news_context only."
+        )
+
+        from src.agent.executor import AgentResult
+
+        executor = MagicMock()
+        executor.run.return_value = AgentResult(
+            success=True,
+            content="{}",
+            dashboard={
+                "stock_name": "Apple",
+                "sentiment_score": 66,
+                "trend_prediction": "震荡",
+                "operation_advice": "持有",
+                "decision_type": "hold",
+            },
+            provider="test",
+        )
+
+        with patch("src.agent.factory.build_agent_executor", return_value=executor):
+            result = pipeline._analyze_with_agent(
+                code="AAPL",
+                report_type=ReportType.SIMPLE,
+                query_id="q-agent-news",
+                stock_name="Apple",
+                realtime_quote=None,
+                chip_data=None,
+                fundamental_context={"market": "us"},
+                trend_result=None,
+                market_phase_context=_phase_payload(),
+            )
+
+        self.assertIsNotNone(result)
+        run_context = executor.run.call_args.kwargs["context"]
+        self.assertIn("Social sentiment raw payload", run_context["news_context"])
+        summary = run_context["analysis_context_pack_summary"]
+        self.assertIn("新闻: available", summary)
+        self.assertNotIn("新闻: missing", summary)
+        self.assertNotIn("Social sentiment raw payload", summary)
+
+        save_kwargs = pipeline.db.save_analysis_history.call_args.kwargs
+        self.assertNotIn("analysis_context_pack_summary", save_kwargs["context_snapshot"])
+        self.assertNotIn("analysis_context_pack", str(save_kwargs["context_snapshot"]))
+
     def test_agent_pipeline_fail_open_when_pack_summary_generation_fails(self):
         pipeline = _make_pipeline(agent_mode=True, save_context_snapshot=True)
         pipeline._ensure_agent_history = MagicMock()

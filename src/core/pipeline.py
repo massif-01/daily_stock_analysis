@@ -986,7 +986,7 @@ class StockAnalysisPipeline:
                     trend_result=initial_context.get("trend_result"),
                     chip_data=initial_context.get("chip_distribution"),
                     fundamental_context=fundamental_context,
-                    news_context=None,
+                    news_context=initial_context.get("news_context"),
                     news_result_count=None,
                     metadata={
                         "query_id": query_id,
