@@ -93,6 +93,48 @@ describe('AnalysisContextSummary', () => {
     expect(screen.getByText('Trigger: api')).toBeVisible();
   });
 
+  it('surfaces degraded non-zero states in the collapsed summary', () => {
+    const degradedOverview: AnalysisContextPackOverview = {
+      ...overview,
+      blocks: [
+        {
+          key: 'quote',
+          label: '行情',
+          status: 'fallback',
+          source: 'cached_quote',
+          warnings: ['quote_fallback'],
+          missingReasons: [],
+        },
+        {
+          key: 'fundamental',
+          label: '基本面',
+          status: 'stale',
+          source: 'fundamental_cache',
+          warnings: ['stale_fundamental'],
+          missingReasons: [],
+        },
+      ],
+      counts: {
+        available: 0,
+        missing: 0,
+        notSupported: 0,
+        fallback: 1,
+        stale: 1,
+        estimated: 0,
+        partial: 0,
+      },
+    };
+
+    render(<AnalysisContextSummary overview={degradedOverview} />);
+
+    const panel = screen.getByTestId('analysis-context-summary');
+    expect(panel).not.toHaveAttribute('open');
+    expect(within(panel).getByText('可用 0')).toBeVisible();
+    expect(within(panel).getByText('缺失 0')).toBeVisible();
+    expect(within(panel).getAllByText('降级 1')[0]).toBeVisible();
+    expect(within(panel).getAllByText('过期 1')[0]).toBeVisible();
+  });
+
   it('does not render without an overview', () => {
     const { container } = render(<AnalysisContextSummary overview={null} />);
     expect(container).toBeEmptyDOMElement();

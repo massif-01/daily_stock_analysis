@@ -102,10 +102,9 @@ export const AnalysisContextSummary: React.FC<AnalysisContextSummaryProps> = ({
   const visibleCounts = STATUS_ORDER
     .map((status) => ({ status, value: getCount(overview, status) }))
     .filter((item) => item.value > 0);
-  const summaryCounts = (['available', 'missing'] as const).map((status) => ({
-    status,
-    value: getCount(overview, status),
-  }));
+  const summaryCounts = STATUS_ORDER
+    .map((status) => ({ status, value: getCount(overview, status) }))
+    .filter((item) => item.status === 'available' || item.status === 'missing' || item.value > 0);
   const metadataItems = [
     typeof overview.metadata?.newsResultCount === 'number'
       ? `${text.newsResultCount}: ${overview.metadata.newsResultCount}`

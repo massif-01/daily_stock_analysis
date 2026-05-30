@@ -276,6 +276,7 @@ def test_analysis_context_pack_doc_defines_p4_visibility_contract() -> None:
         "`AnalysisContextSummary`",
         "位置在策略点位和资讯之后、运行诊断之前",
         "默认折叠",
+        "非零的其他状态计数",
         "不覆盖 pending/processing TaskPanel",
         "不改通知摘要",
         "P5 数据质量评分",
@@ -357,6 +358,7 @@ def test_full_guides_clarify_pack_summary_does_not_replace_legacy_payload_channe
     assert "`report.details.analysis_context_pack_overview`" in guide
     assert "completed `/api/v1/analysis/status/{task_id}`" in guide
     assert "Web 端报告页在“策略点位”和“资讯”之后展示默认折叠的数据块摘要" in guide
+    assert "折叠头部展示可用数、缺失数、非零的其他状态计数和触发来源" in guide
     assert "Web 报告页在策略点位和资讯之后默认折叠展示数据块状态" in guide
     assert "`details.context_snapshot` 会剥离顶层 `analysis_context_pack_overview`" in guide
 
@@ -366,5 +368,6 @@ def test_full_guides_clarify_pack_summary_does_not_replace_legacy_payload_channe
     assert "`report.details.analysis_context_pack_overview`" in guide_en
     assert "completed `/api/v1/analysis/status/{task_id}`" in guide_en
     assert "the Web report page renders a collapsed data-block summary after Strategy and News" in guide_en
+    assert "available/missing counts, non-zero other status counts, and trigger source" in guide_en
     assert "the Web report page shows the data-block summary collapsed after Strategy and News" in guide_en
     assert "API `details.context_snapshot` strips the top-level `analysis_context_pack_overview`" in guide_en
