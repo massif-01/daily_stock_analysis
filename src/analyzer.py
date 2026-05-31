@@ -86,6 +86,25 @@ def _normalize_risk_warning_values(value: Any) -> List[str]:
     return [text] if text else []
 
 
+def _phase_aware_quote_labels(context: Dict[str, Any]) -> Tuple[str, str]:
+    """Choose Chinese quote-table labels that do not conflict with phase context."""
+    phase_context = context.get("market_phase_context")
+    if not isinstance(phase_context, dict):
+        return "今日行情", "收盘价"
+
+    phase = str(phase_context.get("phase") or "").strip()
+    if phase in {"premarket", "non_trading"}:
+        return "上一完整交易日行情", "上一完整交易日收盘价"
+
+    if (
+        phase in {"intraday", "lunch_break", "closing_auction"}
+        and phase_context.get("is_partial_bar") is True
+    ):
+        return "最新行情", "盘中估算价"
+
+    return "今日行情", "收盘价"
+
+
 class _LiteLLMStreamError(RuntimeError):
     """Internal error wrapper that records whether any text was streamed."""
 
@@ -2743,6 +2762,7 @@ class GeminiAnalyzer:
         today = context.get('today', {})
         unknown_text = get_unknown_text(report_language)
         no_data_text = get_no_data_text(report_language)
+        quote_section_title, close_price_label = _phase_aware_quote_labels(context)
         
         # ========== 构建决策仪表盘格式的输入 ==========
         prompt = f"""# 决策仪表盘分析请求
@@ -2762,14 +2782,14 @@ class GeminiAnalyzer:
         )
         if isinstance(analysis_context_pack_summary, str) and analysis_context_pack_summary:
             prompt += analysis_context_pack_summary
-        prompt += """
+        prompt += f"""
 
 ## 📈 技术面数据
 
-### 今日行情
+### {quote_section_title}
 | 指标 | 数值 |
 |------|------|
-| 收盘价 | {today.get('close', 'N/A')} 元 |
+| {close_price_label} | {today.get('close', 'N/A')} 元 |
 | 开盘价 | {today.get('open', 'N/A')} 元 |
 | 最高价 | {today.get('high', 'N/A')} 元 |
 | 最低价 | {today.get('low', 'N/A')} 元 |
