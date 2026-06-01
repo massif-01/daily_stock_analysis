@@ -146,6 +146,41 @@ def test_premarket_high_confidence_immediate_action_is_conservative() -> None:
     assert result.dashboard["phase_decision"]["immediate_action"] == "等待盘中确认，禁止追高。"
 
 
+def test_premarket_medium_confidence_immediate_action_rewrites_action_only() -> None:
+    result = _result(
+        operation_advice="Hold unless confirmed",
+        decision_type="hold",
+        confidence_level="Medium",
+        report_language="en",
+        dashboard={
+            "core_conclusion": {"one_sentence": "Wait"},
+            "phase_decision": {
+                "action_window": "Premarket plan",
+                "immediate_action": "buy now",
+                "watch_conditions": ["breakout with volume"],
+                "next_check_time": "market open",
+                "confidence_reason": "Setup is forming",
+                "data_limitations": [],
+            },
+        },
+    )
+
+    adjustments = apply_phase_decision_guardrails(
+        result,
+        market_phase_summary=_phase("premarket"),
+        analysis_context_pack_overview=_overview("available"),
+        report_language="en",
+    )
+
+    assert "non_intraday_action_adjusted" in adjustments
+    assert "confidence_capped_non_intraday_action" not in adjustments
+    assert result.confidence_level == "Medium"
+    assert result.dashboard["phase_decision"]["immediate_action"] == (
+        "Wait for intraday confirmation; do not chase."
+    )
+    assert "buy now" not in result.dashboard["phase_decision"]["immediate_action"].lower()
+
+
 def test_premarket_degraded_immediate_action_uses_strongest_cap() -> None:
     result = _result()
 

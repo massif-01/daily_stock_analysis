@@ -122,20 +122,22 @@ def apply_phase_decision_guardrails(
         _append_reason(phase_decision, reason)
         adjustments.append("confidence_capped_core_data_degraded")
 
-    if (
+    has_non_intraday_action = (
         phase in CONSERVATIVE_ACTION_PHASES
-        and initially_high_confidence
         and _has_immediate_buy_sell_signal(result, phase_decision, language=language)
-    ):
-        result.confidence_level = "Low" if language == "en" else "低"
+    )
+    if has_non_intraday_action:
+        phase_decision["immediate_action"] = _safe_wait_action(language)
         reason = (
-            "Current market phase does not support high-confidence intraday buy/sell action."
+            "Current market phase does not support immediate intraday buy/sell action."
             if language == "en"
-            else "当前市场阶段不支持高置信盘中买卖动作。"
+            else "当前市场阶段不支持即时盘中买卖动作。"
         )
         _append_reason(phase_decision, reason)
-        phase_decision["immediate_action"] = _safe_wait_action(language)
-        adjustments.append("confidence_capped_non_intraday_action")
+        adjustments.append("non_intraday_action_adjusted")
+        if initially_high_confidence:
+            result.confidence_level = "Low" if language == "en" else "低"
+            adjustments.append("confidence_capped_non_intraday_action")
 
     if phase in INTRADAY_PHASES and _contains_postmarket_recap(result, phase_decision, language=language):
         reason = (
@@ -328,6 +330,8 @@ def _append_reason(phase_decision: Dict[str, Any], reason: str) -> None:
 def _adjustment_limitation_text(adjustment: str, *, language: str) -> str:
     if adjustment == "postmarket_recap_wording_adjusted":
         return "post-market recap wording adjusted" if language == "en" else "已修正盘后复盘口吻"
+    if adjustment == "non_intraday_action_adjusted":
+        return "non-intraday immediate action adjusted" if language == "en" else "非盘中阶段已修正即时买卖动作"
     if adjustment == "confidence_capped_non_intraday_action":
         return "confidence capped for non-intraday action" if language == "en" else "非盘中阶段已限制买卖置信度"
     if adjustment == "confidence_capped_core_data_degraded":
