@@ -34,7 +34,6 @@ from api.v1.schemas.portfolio import (
     PortfolioTradeListResponse,
     PortfolioTradeCreateRequest,
 )
-from data_provider.base import canonical_stock_code
 from src.services.task_queue import get_task_queue
 from src.services.portfolio_import_service import PortfolioImportService
 from src.services.portfolio_risk_service import PortfolioRiskService
@@ -517,7 +516,7 @@ def _resolve_position_analysis_context(
     symbol: str,
     account_id: Optional[int],
 ) -> dict:
-    target = canonical_stock_code(symbol)
+    target = service._normalize_symbol_for_position(symbol)
     if not target:
         raise ValueError("symbol must not be empty")
 
@@ -525,7 +524,9 @@ def _resolve_position_analysis_context(
     matches = []
     for account in snapshot.get("accounts") or []:
         for position in account.get("positions") or []:
-            position_symbol = canonical_stock_code(str(position.get("symbol") or ""))
+            position_symbol = service._normalize_symbol_for_position(
+                str(position.get("symbol") or "")
+            )
             if position_symbol != target:
                 continue
             try:
@@ -534,7 +535,7 @@ def _resolve_position_analysis_context(
                 quantity = 0.0
             if quantity <= 0:
                 continue
-            matches.append((account, position))
+            matches.append((account, position, position_symbol))
 
     if not matches:
         raise HTTPException(
@@ -542,7 +543,11 @@ def _resolve_position_analysis_context(
             detail={"error": "not_found", "message": f"No non-zero portfolio position for {target}"},
         )
     if account_id is None:
-        account_ids = {int(account.get("account_id")) for account, _ in matches if account.get("account_id") is not None}
+        account_ids = {
+            int(account.get("account_id"))
+            for account, _, _ in matches
+            if account.get("account_id") is not None
+        }
         if len(account_ids) > 1:
             raise HTTPException(
                 status_code=400,
@@ -552,11 +557,11 @@ def _resolve_position_analysis_context(
                 },
             )
 
-    account, position = matches[0]
+    account, position, position_symbol = matches[0]
     return {
         "account_id": account.get("account_id"),
         "account_name": account.get("account_name"),
-        "symbol": canonical_stock_code(str(position.get("symbol") or target)),
+        "symbol": position_symbol or target,
         "market": position.get("market"),
         "currency": position.get("currency"),
         "quantity": position.get("quantity"),

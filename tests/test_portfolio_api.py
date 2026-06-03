@@ -90,10 +90,18 @@ class PortfolioApiTestCase(unittest.TestCase):
         )
         self.db.save_daily_data(df, code=symbol, data_source="portfolio-api-test")
 
-    def _create_position(self, *, name: str = "Main", symbol: str = "600519", quantity: float = 10.0) -> int:
+    def _create_position(
+        self,
+        *,
+        name: str = "Main",
+        symbol: str = "600519",
+        quantity: float = 10.0,
+        market: str = "cn",
+        currency: str = "CNY",
+    ) -> int:
         create_resp = self.client.post(
             "/api/v1/portfolio/accounts",
-            json={"name": name, "broker": "Demo", "market": "cn", "base_currency": "CNY"},
+            json={"name": name, "broker": "Demo", "market": market, "base_currency": currency},
         )
         self.assertEqual(create_resp.status_code, 200, create_resp.text)
         account_id = create_resp.json()["id"]
@@ -108,8 +116,8 @@ class PortfolioApiTestCase(unittest.TestCase):
                 "price": 100,
                 "fee": 0,
                 "tax": 0,
-                "market": "cn",
-                "currency": "CNY",
+                "market": market,
+                "currency": currency,
             },
         )
         self.assertEqual(trade_resp.status_code, 200, trade_resp.text)
@@ -203,6 +211,57 @@ class PortfolioApiTestCase(unittest.TestCase):
         self.assertEqual(kwargs["portfolio_context"]["account_id"], account_id)
         self.assertEqual(kwargs["portfolio_context"]["quantity"], 10.0)
         self.assertEqual(kwargs["portfolio_context"]["cost_method"], "fifo")
+
+    def test_position_analysis_matches_exchange_suffix_position_symbol(self) -> None:
+        account_id = self._create_position(symbol="600519.SH", quantity=10)
+        accepted_task = SimpleNamespace(
+            task_id="task-portfolio-sh",
+            trace_id="trace-portfolio-sh",
+            stock_code="SH600519",
+            analysis_phase="auto",
+        )
+        queue = MagicMock()
+        queue.submit_tasks_batch.return_value = ([accepted_task], [])
+
+        with patch("api.v1.endpoints.portfolio.get_task_queue", return_value=queue):
+            resp = self.client.post(
+                "/api/v1/portfolio/positions/600519.SH/analysis",
+                json={"account_id": account_id},
+            )
+
+        self.assertEqual(resp.status_code, 202, resp.text)
+        args, kwargs = queue.submit_tasks_batch.call_args
+        self.assertEqual(args[0], ["SH600519"])
+        self.assertEqual(kwargs["portfolio_context"]["symbol"], "SH600519")
+
+    def test_position_analysis_matches_hk_suffix_position_symbol(self) -> None:
+        account_id = self._create_position(
+            symbol="1810.HK",
+            quantity=10,
+            market="hk",
+            currency="HKD",
+        )
+        accepted_task = SimpleNamespace(
+            task_id="task-portfolio-hk",
+            trace_id="trace-portfolio-hk",
+            stock_code="HK01810",
+            analysis_phase="auto",
+        )
+        queue = MagicMock()
+        queue.submit_tasks_batch.return_value = ([accepted_task], [])
+
+        with patch("api.v1.endpoints.portfolio.get_task_queue", return_value=queue):
+            resp = self.client.post(
+                "/api/v1/portfolio/positions/1810.HK/analysis",
+                json={"account_id": account_id},
+            )
+
+        self.assertEqual(resp.status_code, 202, resp.text)
+        args, kwargs = queue.submit_tasks_batch.call_args
+        self.assertEqual(args[0], ["HK01810"])
+        self.assertEqual(kwargs["portfolio_context"]["symbol"], "HK01810")
+        self.assertEqual(kwargs["portfolio_context"]["market"], "hk")
+        self.assertEqual(kwargs["portfolio_context"]["currency"], "HKD")
 
     def test_position_analysis_returns_404_for_missing_holding(self) -> None:
         resp = self.client.post("/api/v1/portfolio/positions/600519/analysis", json={})
