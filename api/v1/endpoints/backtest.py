@@ -87,6 +87,7 @@ def get_backtest_results(
     eval_window_days: Optional[int] = Query(None, ge=1, le=120, description="评估窗口过滤"),
     analysis_date_from: Optional[date] = Query(None, description="分析日期起始（含）"),
     analysis_date_to: Optional[date] = Query(None, description="分析日期结束（含）"),
+    analysis_phase: Optional[str] = Query(None, description="分析阶段过滤：premarket/intraday/postmarket/unknown"),
     page: int = Query(1, ge=1, description="页码"),
     limit: int = Query(20, ge=1, le=200, description="每页数量"),
     db_manager: DatabaseManager = Depends(get_database_manager),
@@ -101,6 +102,7 @@ def get_backtest_results(
             page=page,
             analysis_date_from=analysis_date_from,
             analysis_date_to=analysis_date_to,
+            analysis_phase=analysis_phase,
         )
         items = [BacktestResultItem(**item) for item in data.get("items", [])]
         return BacktestResultsResponse(
@@ -108,6 +110,11 @@ def get_backtest_results(
             page=page,
             limit=limit,
             items=items,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "invalid_params", "message": str(exc)},
         )
     except HTTPException:
         raise
@@ -133,6 +140,7 @@ def get_overall_performance(
     eval_window_days: Optional[int] = Query(None, ge=1, le=120, description="评估窗口过滤"),
     analysis_date_from: Optional[date] = Query(None, description="分析日期起始（含）"),
     analysis_date_to: Optional[date] = Query(None, description="分析日期结束（含）"),
+    analysis_phase: Optional[str] = Query(None, description="分析阶段过滤：premarket/intraday/postmarket/unknown"),
     db_manager: DatabaseManager = Depends(get_database_manager),
 ) -> PerformanceMetrics:
     try:
@@ -144,6 +152,7 @@ def get_overall_performance(
             eval_window_days=eval_window_days,
             analysis_date_from=analysis_date_from,
             analysis_date_to=analysis_date_to,
+            analysis_phase=analysis_phase,
         )
         if summary is None:
             raise HTTPException(
@@ -181,6 +190,7 @@ def get_stock_performance(
     eval_window_days: Optional[int] = Query(None, ge=1, le=120, description="评估窗口过滤"),
     analysis_date_from: Optional[date] = Query(None, description="分析日期起始（含）"),
     analysis_date_to: Optional[date] = Query(None, description="分析日期结束（含）"),
+    analysis_phase: Optional[str] = Query(None, description="分析阶段过滤：premarket/intraday/postmarket/unknown"),
     db_manager: DatabaseManager = Depends(get_database_manager),
 ) -> PerformanceMetrics:
     try:
@@ -192,6 +202,7 @@ def get_stock_performance(
             eval_window_days=eval_window_days,
             analysis_date_from=analysis_date_from,
             analysis_date_to=analysis_date_to,
+            analysis_phase=analysis_phase,
         )
         if summary is None:
             raise HTTPException(
