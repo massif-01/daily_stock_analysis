@@ -140,6 +140,25 @@ class TestExtractStockCode(unittest.TestCase):
     def test_common_word_trend(self):
         self.assertEqual(_extract_stock_code("the TREND is up"), "")
 
+    def test_finance_abbrev_excluded(self):
+        for text in [
+            "TTM",
+            "市盈率 TTM 怎么看",
+            "PE 怎么看",
+            "PE TTM",
+            "YOY",
+            "QOQ",
+            "EBITDA",
+            "DCF",
+            "CAGR",
+        ]:
+            with self.subTest(text=text):
+                self.assertEqual(_extract_stock_code(text), "")
+
+    def test_finance_abbrev_before_real_ticker(self):
+        self.assertEqual(_extract_stock_code("PE AAPL 怎么看"), "AAPL")
+        self.assertEqual(_extract_stock_code("TTM AAPL 怎么看"), "AAPL")
+
     # --- Priority: A-share > HK > US ---
 
     def test_a_share_takes_priority_over_us(self):
@@ -164,7 +183,10 @@ class TestExtractStockCode(unittest.TestCase):
 
     def test_common_words_set_completeness(self):
         """Ensure critical finance terms are in _COMMON_WORDS."""
-        expected_in_set = {"BUY", "SELL", "HOLD", "ETF", "IPO", "RSI", "MACD", "STOCK", "TREND"}
+        expected_in_set = {
+            "BUY", "SELL", "HOLD", "ETF", "IPO", "RSI", "MACD", "STOCK", "TREND",
+            "TTM", "PE", "YOY", "QOQ", "EBITDA", "DCF", "CAGR",
+        }
         self.assertTrue(expected_in_set.issubset(_COMMON_WORDS))
 
 
