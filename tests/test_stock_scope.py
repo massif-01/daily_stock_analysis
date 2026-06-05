@@ -148,6 +148,41 @@ class TestStockScopeGuard(unittest.TestCase):
         self.assertEqual(payload["active_stock_code"], "600519")
         self.assertEqual(result.tool_calls_log[0]["stock_scope_action"], "block")
 
+    def test_negated_reference_stock_is_blocked_even_with_active_stock_analysis_intent(self):
+        calls = []
+        registry = _make_quote_registry(calls)
+        adapter = MagicMock()
+        adapter.call_with_tools.side_effect = [
+            LLMResponse(
+                content="Checking.",
+                tool_calls=[
+                    ToolCall(id="q1", name="get_realtime_quote", arguments={"stock_code": "AAPL"}),
+                ],
+                provider="openai",
+            ),
+            LLMResponse(content="done", tool_calls=[], provider="openai"),
+        ]
+
+        result = run_agent_loop(
+            messages=[{"role": "user", "content": "分析 600519 时不要参考 AAPL"}],
+            tool_registry=registry,
+            llm_adapter=adapter,
+            max_steps=2,
+            stock_scope=StockScope.from_context(
+                {"stock_code": "600519", "stock_name": "示例股票"},
+                "分析 600519 时不要参考 AAPL",
+            ),
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual(calls, [])
+        tool_msg = adapter.call_with_tools.call_args_list[1].args[0][-1]
+        payload = json.loads(tool_msg["content"])
+        self.assertEqual(payload["error"], "stock_scope_conflict")
+        self.assertEqual(payload["requested_stock_code"], "AAPL")
+        self.assertEqual(payload["active_stock_code"], "600519")
+        self.assertEqual(result.tool_calls_log[0]["stock_scope_action"], "block")
+
     def test_explicit_single_stock_switch_allows_requested_stock_code(self):
         calls = []
         registry = _make_quote_registry(calls)
@@ -210,6 +245,37 @@ class TestStockScopeGuard(unittest.TestCase):
         self.assertEqual(result.tool_calls_log[0]["stock_scope_action"], "allow")
         self.assertEqual(result.tool_calls_log[0]["stock_scope_reason"], "explicit_user_stock")
 
+    def test_explicit_compare_allows_stock_code_against_current_stock(self):
+        calls = []
+        registry = _make_quote_registry(calls)
+        adapter = MagicMock()
+        adapter.call_with_tools.side_effect = [
+            LLMResponse(
+                content="Comparing.",
+                tool_calls=[
+                    ToolCall(id="q1", name="get_realtime_quote", arguments={"stock_code": "AAPL"}),
+                ],
+                provider="openai",
+            ),
+            LLMResponse(content="done", tool_calls=[], provider="openai"),
+        ]
+
+        result = run_agent_loop(
+            messages=[{"role": "user", "content": "比较 AAPL 和当前股票"}],
+            tool_registry=registry,
+            llm_adapter=adapter,
+            max_steps=2,
+            stock_scope=StockScope.from_context(
+                {"stock_code": "600519", "stock_name": "示例股票"},
+                "比较 AAPL 和当前股票",
+            ),
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual(calls, ["AAPL"])
+        self.assertEqual(result.tool_calls_log[0]["stock_scope_action"], "allow")
+        self.assertEqual(result.tool_calls_log[0]["stock_scope_reason"], "explicit_user_stock")
+
     def test_rewrite_keeps_search_stock_name_in_sync_when_active_name_exists(self):
         calls = []
         registry = ToolRegistry()
@@ -263,6 +329,62 @@ class TestStockScopeGuard(unittest.TestCase):
         args = followup_messages[-2]["tool_calls"][0]["arguments"]
         self.assertEqual(args["stock_code"], "600519")
         self.assertEqual(args["stock_name"], "示例股票")
+
+    def test_active_stock_code_syncs_stale_tool_stock_name(self):
+        calls = []
+        registry = ToolRegistry()
+
+        def _search(stock_code, stock_name):
+            calls.append((stock_code, stock_name))
+            return {"code": stock_code, "name": stock_name}
+
+        registry.register(
+            ToolDefinition(
+                name="search_stock_news",
+                description="Search stock news",
+                parameters=[
+                    ToolParameter(name="stock_code", type="string", description="Stock code"),
+                    ToolParameter(name="stock_name", type="string", description="Stock name"),
+                ],
+                handler=_search,
+                category="search",
+            )
+        )
+        adapter = MagicMock()
+        adapter.call_with_tools.side_effect = [
+            LLMResponse(
+                content="Searching.",
+                tool_calls=[
+                    ToolCall(
+                        id="s1",
+                        name="search_stock_news",
+                        arguments={"stock_code": "600519", "stock_name": "TTM"},
+                    ),
+                ],
+                provider="openai",
+            ),
+            LLMResponse(content="done", tool_calls=[], provider="openai"),
+        ]
+
+        result = run_agent_loop(
+            messages=[{"role": "user", "content": "继续看新闻"}],
+            tool_registry=registry,
+            llm_adapter=adapter,
+            max_steps=2,
+            stock_scope=StockScope.from_context(
+                {"stock_code": "600519", "stock_name": "示例股票"},
+                "继续看新闻",
+            ),
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual(calls, [("600519", "示例股票")])
+        followup_messages = adapter.call_with_tools.call_args_list[1].args[0]
+        args = followup_messages[-2]["tool_calls"][0]["arguments"]
+        self.assertEqual(args["stock_code"], "600519")
+        self.assertEqual(args["stock_name"], "示例股票")
+        self.assertEqual(result.tool_calls_log[0]["stock_scope_action"], "allow")
+        self.assertEqual(result.tool_calls_log[0]["stock_scope_reason"], "matches_active_stock")
 
     def test_missing_tool_stock_code_is_rewritten_to_active_stock(self):
         calls = []

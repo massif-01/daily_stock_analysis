@@ -11,16 +11,18 @@ from typing import Any, Dict, List, Optional, Tuple
 from src.agent.llm_adapter import ToolCall
 from src.agent.stock_text import (
     _is_denied_ticker_candidate,
+    StockCodeMention,
     canonicalize_stock_code,
-    extract_stock_codes,
+    iter_stock_code_mentions,
 )
 from src.agent.tools.registry import ToolRegistry
 
 
 _EXPLICIT_STOCK_SCOPE_INTENT = re.compile(
-    r"换成|切换到?|改成|改为|分析|研究|看看|看一下|查一?下|查询|比较|对比|\bvs\b",
+    r"换成|切换到?|改成|改为|分析|研究|看看|看一下|查一?下|查询|诊断|怎么看|怎么样|如何|走势|趋势",
     re.IGNORECASE,
 )
+_COMPARE_INTENT = re.compile(r"比较|对比|\bvs\b", re.IGNORECASE)
 _COMPARE_CONNECTOR = re.compile(r"和|跟|与|\bvs\b", re.IGNORECASE)
 
 
@@ -144,6 +146,8 @@ def guard_tool_call(
         )
 
     if requested_code == active_code:
+        if stock_scope.active_stock_name and _tool_has_parameter(tool_def, "stock_name"):
+            effective_args["stock_name"] = stock_scope.active_stock_name
         return effective_call, StockScopeDecision(
             action="allow",
             reason="matches_active_stock",
@@ -205,11 +209,11 @@ def build_stock_scope_conflict(
 
 
 def _extract_allowed_stock_codes(user_message: str, active_code: str) -> set[str]:
-    codes = {
-        canonicalize_stock_code(code)
-        for code in extract_stock_codes(user_message or "")
-        if canonicalize_stock_code(code)
-    }
+    mentions = [
+        (mention, canonicalize_stock_code(mention.code))
+        for mention in iter_stock_code_mentions(user_message or "")
+    ]
+    codes = {code for _, code in mentions if code}
     if not codes:
         return set()
 
@@ -217,13 +221,47 @@ def _extract_allowed_stock_codes(user_message: str, active_code: str) -> set[str
     if stripped_code in codes:
         return codes
 
-    if _EXPLICIT_STOCK_SCOPE_INTENT.search(user_message or ""):
-        return codes
+    allowed: set[str] = set()
+    for mention, code in mentions:
+        if not code:
+            continue
+        if code == active_code:
+            allowed.add(code)
+            continue
+        if _is_stock_mention_allowed(user_message or "", mention, len(codes)):
+            allowed.add(code)
+    return allowed
 
-    if len(codes) >= 2 and _COMPARE_CONNECTOR.search(user_message or ""):
-        return codes
 
-    return {code for code in codes if code == active_code}
+def _is_stock_mention_allowed(user_message: str, mention: StockCodeMention, code_count: int) -> bool:
+    if _has_negated_stock_scope(user_message, mention):
+        return False
+
+    if _COMPARE_INTENT.search(user_message):
+        return True
+
+    if code_count >= 2 and _COMPARE_CONNECTOR.search(user_message) and _EXPLICIT_STOCK_SCOPE_INTENT.search(user_message):
+        return True
+
+    return bool(_EXPLICIT_STOCK_SCOPE_INTENT.search(_mention_window(user_message, mention)))
+
+
+def _has_negated_stock_scope(user_message: str, mention: StockCodeMention) -> bool:
+    left = user_message[max(0, mention.start - 12):mention.start]
+    right = user_message[mention.end:min(len(user_message), mention.end + 8)]
+    if re.search(r"(不要|别|无需|不用|不必|别再|排除|避免|忽略|不参考|不要参考)\s*.{0,8}$", left):
+        return True
+    if re.search(r"(not|without|exclude|ignore)\s*.{0,16}$", left, re.IGNORECASE):
+        return True
+    if re.search(r"^\s*(不用|不必|不要|别|排除|忽略)", right):
+        return True
+    return False
+
+
+def _mention_window(user_message: str, mention: StockCodeMention) -> str:
+    start = max(0, mention.start - 10)
+    end = min(len(user_message), mention.end + 10)
+    return user_message[start:end]
 
 
 def _get_tool_definition(tool_registry: ToolRegistry, tool_name: str):

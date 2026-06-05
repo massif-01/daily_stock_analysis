@@ -25,7 +25,11 @@ import {
 } from '../utils/chatFollowUp';
 import { isNearBottom } from '../utils/chatScroll';
 import { getReportText } from '../utils/reportLanguage';
-import { extractStockCodeFromMessage, isDeniedTickerCandidate } from '../utils/chatStockCode';
+import {
+  extractStockCodeForScopeSwitch,
+  hasNegatedStockScope,
+  isDeniedTickerCandidate,
+} from '../utils/chatStockCode';
 import { normalizeStockCode } from '../utils/stockCode';
 import { useStockIndex } from '../hooks/useStockIndex';
 import { searchStocks } from '../utils/searchStocks';
@@ -117,6 +121,8 @@ function findExactStockByCode(stockCode: string, stockIndex: StockIndexItem[]): 
 function extractNameSwitchQuery(message: string): string | null {
   const match = message.match(EXPLICIT_NAME_SWITCH_PATTERN);
   if (!match) return null;
+  const matchStart = match.index ?? 0;
+  if (hasNegatedStockScope(message, matchStart, matchStart + match[0].length)) return null;
   const candidate = match[1].replace(NAME_SWITCH_TRAILING_PATTERN, '').trim();
   if (!candidate || isDeniedTickerCandidate(candidate)) return null;
   return candidate;
@@ -555,7 +561,7 @@ const ChatPage: React.FC = () => {
       const usedSkillIds = normalizeSelectedSkillIds(overrideSkillIds ?? selectedSkillIds);
       const usedSkillNames = usedSkillIds.length > 0 ? getSkillNames(usedSkillIds) : ['通用'];
 
-      const stockCode = extractStockCodeFromMessage(msgText);
+      const stockCode = extractStockCodeForScopeSwitch(msgText);
       const stockIndexReady = stockIndexLoaded && !stockIndexFallback;
       let nextActiveStockContext = activeStockContext;
       if (stockCode) {

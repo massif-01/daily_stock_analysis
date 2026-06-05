@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import List
 
 
@@ -48,6 +49,16 @@ _LOWERCASE_TICKER_HINTS = re.compile(
 )
 
 
+@dataclass(frozen=True)
+class StockCodeMention:
+    """A stock-code candidate plus its source span in the input text."""
+
+    code: str
+    raw: str
+    start: int
+    end: int
+
+
 def _is_denied_ticker_candidate(candidate: str) -> bool:
     """Return whether a text token should not be auto-treated as a ticker."""
     return (candidate or "").strip().upper() in _COMMON_WORDS
@@ -61,30 +72,35 @@ def _extract_stock_code(text: str) -> str:
 
 def extract_stock_codes(text: str, *, limit: int | None = None) -> List[str]:
     """Return explicit stock-code candidates from free text in encounter order."""
+    return [mention.code for mention in iter_stock_code_mentions(text, limit=limit)]
+
+
+def iter_stock_code_mentions(text: str, *, limit: int | None = None) -> List[StockCodeMention]:
+    """Return explicit stock-code candidates with source spans."""
     if not text:
         return []
 
-    found: List[str] = []
+    found: List[StockCodeMention] = []
     seen: set[str] = set()
 
-    def add(candidate: str) -> None:
+    def add(candidate: str, start: int, end: int) -> None:
         if not candidate:
             return
         normalized = candidate.upper()
         if normalized in seen:
             return
         seen.add(normalized)
-        found.append(normalized)
+        found.append(StockCodeMention(code=normalized, raw=candidate, start=start, end=end))
 
     # A-share / BSE 6-digit codes.
     for match in re.finditer(r'(?<!\d)((?:[03648]\d{5}|92\d{4}))(?!\d)', text):
-        add(match.group(1))
+        add(match.group(1), match.start(1), match.end(1))
         if limit is not None and len(found) >= limit:
             return found
 
     # HK — same lookaround approach.
     for match in re.finditer(r'(?<![a-zA-Z])(hk\d{5})(?!\d)', text, re.IGNORECASE):
-        add(match.group(1))
+        add(match.group(1), match.start(1), match.end(1))
         if limit is not None and len(found) >= limit:
             return found
 
@@ -92,7 +108,7 @@ def extract_stock_codes(text: str, *, limit: int | None = None) -> List[str]:
     for match in re.finditer(r'(?<![a-zA-Z])([A-Z]{2,5}(?:\.[A-Z]{1,2})?)(?![a-zA-Z])', text):
         candidate = match.group(1)
         if not _is_denied_ticker_candidate(candidate):
-            add(candidate)
+            add(candidate, match.start(1), match.end(1))
             if limit is not None and len(found) >= limit:
                 return found
 
@@ -101,7 +117,8 @@ def extract_stock_codes(text: str, *, limit: int | None = None) -> List[str]:
     if bare_match:
         candidate = bare_match.group(1).upper()
         if not _is_denied_ticker_candidate(candidate):
-            add(candidate)
+            start = text.find(bare_match.group(1))
+            add(candidate, max(start, 0), max(start, 0) + len(bare_match.group(1)))
             if limit is not None and len(found) >= limit:
                 return found
 
@@ -113,7 +130,7 @@ def extract_stock_codes(text: str, *, limit: int | None = None) -> List[str]:
         candidate = raw_candidate.upper()
         if _is_denied_ticker_candidate(candidate):
             continue
-        add(candidate)
+        add(candidate, match.start(1), match.end(1))
         if limit is not None and len(found) >= limit:
             return found
 

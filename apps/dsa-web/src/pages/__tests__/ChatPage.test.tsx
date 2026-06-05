@@ -5,7 +5,7 @@ import { createParsedApiError } from '../../api/error';
 import { historyApi } from '../../api/history';
 import type { Message } from '../../stores/agentChatStore';
 import ChatPage from '../ChatPage';
-import { extractStockCodeFromMessage } from '../../utils/chatStockCode';
+import { extractStockCodeForScopeSwitch, extractStockCodeFromMessage } from '../../utils/chatStockCode';
 
 function createDeferred<T>() {
   let resolve!: (value: T) => void;
@@ -919,6 +919,62 @@ describe('ChatPage', () => {
     });
   });
 
+  it('does not switch active stock context for negated ticker references', async () => {
+    render(
+      <MemoryRouter initialEntries={['/chat?stock=600519&name=%E8%B4%B5%E5%B7%9E%E8%8C%85%E5%8F%B0']}>
+        <ChatPage />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByDisplayValue('请深入分析 贵州茅台(600519)')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText(/分析 600519/), {
+      target: { value: '不要参考 AAPL 的趋势' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => {
+      expect(mockStartStream).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: '不要参考 AAPL 的趋势',
+          context: {
+            stock_code: '600519',
+            stock_name: '贵州茅台',
+          },
+        }),
+        expect.anything(),
+      );
+    });
+  });
+
+  it('does not switch active stock context when analysis intent is negated', async () => {
+    render(
+      <MemoryRouter initialEntries={['/chat?stock=600519&name=%E8%B4%B5%E5%B7%9E%E8%8C%85%E5%8F%B0']}>
+        <ChatPage />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByDisplayValue('请深入分析 贵州茅台(600519)')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText(/分析 600519/), {
+      target: { value: '不要分析 AAPL，继续看当前股票' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => {
+      expect(mockStartStream).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: '不要分析 AAPL，继续看当前股票',
+          context: {
+            stock_code: '600519',
+            stock_name: '贵州茅台',
+          },
+        }),
+        expect.anything(),
+      );
+    });
+  });
+
   it('switches active stock context for explicit stock codes', async () => {
     render(
       <MemoryRouter initialEntries={['/chat?stock=600519&name=%E8%B4%B5%E5%B7%9E%E8%8C%85%E5%8F%B0']}>
@@ -1312,6 +1368,21 @@ describe('extractStockCodeFromMessage', () => {
 
   it('returns SZ-prefixed code when standalone (normalized)', () => {
     expect(extractStockCodeFromMessage('SZ000001')).toBe('000001');
+  });
+});
+
+describe('extractStockCodeForScopeSwitch', () => {
+  it('keeps explicit code switches', () => {
+    expect(extractStockCodeForScopeSwitch('换成 AAPL 看看')).toBe('AAPL');
+    expect(extractStockCodeForScopeSwitch('分析 600519 趋势')).toBe('600519');
+    expect(extractStockCodeForScopeSwitch('比较 AAPL 和当前股票')).toBe('AAPL');
+    expect(extractStockCodeForScopeSwitch('AAPL')).toBe('AAPL');
+  });
+
+  it('ignores negated reference tickers', () => {
+    expect(extractStockCodeForScopeSwitch('不要参考 AAPL 的趋势')).toBeNull();
+    expect(extractStockCodeForScopeSwitch('不要分析 AAPL，继续看当前股票')).toBeNull();
+    expect(extractStockCodeForScopeSwitch('分析 600519 时不要参考 AAPL')).toBe('600519');
   });
 });
 
