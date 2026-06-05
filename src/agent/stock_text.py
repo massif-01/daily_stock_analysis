@@ -31,6 +31,7 @@ _COMMON_WORDS: set[str] = {
     "BUY", "SELL", "HOLD", "LONG", "PUT", "CALL",
     "ETF", "IPO", "RSI", "EPS", "PEG", "ROE", "ROA",
     "USA", "USD", "CNY", "HKD", "EUR", "GBP",
+    "HK",
     "STOCK", "TRADE", "PRICE", "INDEX", "FUND",
     "HIGH", "LOW", "OPEN", "CLOSE", "STOP", "LOSS",
     "TREND", "BULL", "BEAR", "RISK", "CASH", "BOND",
@@ -89,7 +90,9 @@ def iter_stock_code_mentions(text: str, *, limit: int | None = None) -> List[Sto
     def add(candidate: str, start: int, end: int) -> None:
         if not candidate:
             return
-        normalized = candidate.upper()
+        normalized = canonicalize_stock_code(candidate)
+        if not normalized:
+            return
         if normalized in seen:
             return
         seen.add(normalized)
@@ -101,8 +104,13 @@ def iter_stock_code_mentions(text: str, *, limit: int | None = None) -> List[Sto
         if limit is not None and len(found) >= limit:
             return found
 
-    # HK — same lookaround approach.
-    for match in re.finditer(r'(?<![a-zA-Z])(hk\d{5})(?!\d)', text, re.IGNORECASE):
+    # HK — support both prefix and suffix forms used by Web/report URLs.
+    for match in re.finditer(r'(?<![a-zA-Z])(hk\d{1,5})(?!\d)', text, re.IGNORECASE):
+        add(match.group(1), match.start(1), match.end(1))
+        if limit is not None and len(found) >= limit:
+            return found
+
+    for match in re.finditer(r'(?<![A-Za-z0-9])(\d{1,5}\.HK)(?![A-Za-z0-9])', text, re.IGNORECASE):
         add(match.group(1), match.start(1), match.end(1))
         if limit is not None and len(found) >= limit:
             return found

@@ -88,8 +88,17 @@ class TestExtractStockCode(unittest.TestCase):
     def test_hk_chinese(self):
         self.assertEqual(_extract_stock_code("分析hk00700"), "HK00700")
 
+    def test_hk_short_prefix_is_canonicalized(self):
+        self.assertEqual(_extract_stock_code("分析hk1810"), "HK01810")
+
+    def test_hk_suffix_is_canonicalized(self):
+        self.assertEqual(_extract_stock_code("比较 1810.HK 和当前股票"), "HK01810")
+
+    def test_hk_suffix_marker_is_not_extracted_as_ticker(self):
+        self.assertEqual(_extract_stock_code("看看 HK 市场"), "")
+
     def test_hk_not_match_alpha_prefix(self):
-        """Letters before 'hk' should not prevent match."""
+        """Letters before 'hk' should prevent a false positive match."""
         # "xhk00700" has alpha before hk, lookbehind should block
         self.assertNotEqual(_extract_stock_code("xhk00700"), "HK00700")
 

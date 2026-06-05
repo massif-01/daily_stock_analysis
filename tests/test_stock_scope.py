@@ -924,6 +924,39 @@ class TestStockScopeGuard(unittest.TestCase):
         self.assertEqual(result.tool_calls_log[0]["stock_scope_action"], "allow")
         self.assertEqual(result.tool_calls_log[1]["stock_scope_action"], "allow")
 
+    def test_explicit_compare_allows_hk_suffix_and_short_prefix_codes_against_current_stock(self):
+        for message in ("比较 1810.HK 和当前股票", "比较 hk1810 和当前股票"):
+            with self.subTest(message=message):
+                calls = []
+                registry = _make_quote_registry(calls)
+                adapter = MagicMock()
+                adapter.call_with_tools.side_effect = [
+                    LLMResponse(
+                        content="Comparing.",
+                        tool_calls=[
+                            ToolCall(id="q1", name="get_realtime_quote", arguments={"stock_code": "HK01810"}),
+                        ],
+                        provider="openai",
+                    ),
+                    LLMResponse(content="done", tool_calls=[], provider="openai"),
+                ]
+
+                result = run_agent_loop(
+                    messages=[{"role": "user", "content": message}],
+                    tool_registry=registry,
+                    llm_adapter=adapter,
+                    max_steps=2,
+                    stock_scope=StockScope.from_context(
+                        {"stock_code": "600519", "stock_name": "示例股票"},
+                        message,
+                    ),
+                )
+
+                self.assertTrue(result.success)
+                self.assertEqual(calls, ["HK01810"])
+                self.assertEqual(result.tool_calls_log[0]["stock_scope_action"], "allow")
+                self.assertEqual(result.tool_calls_log[0]["stock_scope_reason"], "explicit_user_stock")
+
     def test_rewrite_keeps_search_stock_name_in_sync_when_active_name_exists(self):
         calls = []
         registry = ToolRegistry()
