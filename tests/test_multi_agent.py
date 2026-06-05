@@ -29,6 +29,7 @@ except ModuleNotFoundError:
 from src.agent.orchestrator import _extract_stock_code, _COMMON_WORDS
 from src.agent.stock_text import _COMMON_WORDS as _SHARED_COMMON_WORDS
 from src.agent.stock_text import _extract_stock_code as _shared_extract_stock_code
+from src.agent.stock_text import canonicalize_stock_code
 from src.agent.protocols import (
     AgentContext,
     AgentOpinion,
@@ -77,6 +78,11 @@ class TestExtractStockCode(unittest.TestCase):
         """Should not extract from within a longer number."""
         self.assertEqual(_extract_stock_code("86006005190001"), "")
 
+    def test_a_share_not_match_embedded_in_alpha_token(self):
+        self.assertEqual(_extract_stock_code("abc600519def"), "")
+        self.assertEqual(_extract_stock_code("A600519"), "")
+        self.assertEqual(_extract_stock_code("600519A"), "")
+
     # --- HK ---
 
     def test_hk_lowercase(self):
@@ -94,6 +100,17 @@ class TestExtractStockCode(unittest.TestCase):
     def test_hk_suffix_is_canonicalized(self):
         self.assertEqual(_extract_stock_code("比较 1810.HK 和当前股票"), "HK01810")
 
+    def test_hk_bare_five_digit_is_canonicalized(self):
+        self.assertEqual(_extract_stock_code("比较 00700 和当前股票"), "HK00700")
+        self.assertEqual(canonicalize_stock_code("00700"), "HK00700")
+
+    def test_hk_bare_five_digit_not_match_longer_number(self):
+        self.assertEqual(_extract_stock_code("比较 1007000 和当前股票"), "")
+
+    def test_hk_bare_five_digit_not_match_non_zero_leading_numbers(self):
+        self.assertEqual(_extract_stock_code("价格到30000怎么看"), "")
+        self.assertEqual(_extract_stock_code("成交量 30000 手"), "")
+
     def test_hk_suffix_marker_is_not_extracted_as_ticker(self):
         self.assertEqual(_extract_stock_code("看看 HK 市场"), "")
 
@@ -101,6 +118,8 @@ class TestExtractStockCode(unittest.TestCase):
         """Letters before 'hk' should prevent a false positive match."""
         # "xhk00700" has alpha before hk, lookbehind should block
         self.assertNotEqual(_extract_stock_code("xhk00700"), "HK00700")
+        self.assertNotEqual(_extract_stock_code("hk00700abc"), "HK00700")
+        self.assertNotEqual(_extract_stock_code("1hk00700"), "HK00700")
 
     # --- US ---
 

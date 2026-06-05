@@ -1,6 +1,7 @@
 import type { AnalysisReport } from '../types/analysis';
 import { historyApi } from '../api/history';
 import { validateStockCode } from './validation';
+import { normalizeStockCode } from './stockCode';
 
 export interface ChatFollowUpContext {
   stock_code: string;
@@ -112,6 +113,9 @@ export async function resolveChatFollowUpContext({
 
   try {
     const report = await historyApi.getDetail(recordId);
+    if (normalizeStockCode(report.meta?.stockCode ?? '') !== normalizeStockCode(stockCode)) {
+      return buildChatFollowUpContext(stockCode, stockName);
+    }
     return buildChatFollowUpContext(stockCode, stockName, report);
   } catch {
     return buildChatFollowUpContext(stockCode, stockName);

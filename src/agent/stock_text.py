@@ -49,8 +49,9 @@ _LOWERCASE_TICKER_HINTS = re.compile(
     r"分析|看看|查一?下|研究|诊断|走势|趋势|股价|股票|个股",
 )
 _A_SHARE_OR_ETF_CODE = re.compile(
-    r"(?<!\d)((?:[03648]\d{5}|92\d{4}|(?:51|52|56|58|15|16|18)\d{4}))(?!\d)"
+    r"(?<![A-Za-z0-9])((?:[03648]\d{5}|92\d{4}|(?:51|52|56|58|15|16|18)\d{4}))(?![A-Za-z0-9])"
 )
+_HK_BARE_CODE = re.compile(r"(?<![A-Za-z0-9])(0\d{4})(?![A-Za-z0-9])")
 
 
 @dataclass(frozen=True)
@@ -93,6 +94,8 @@ def iter_stock_code_mentions(text: str, *, limit: int | None = None) -> List[Sto
         normalized = canonicalize_stock_code(candidate)
         if not normalized:
             return
+        if _is_denied_ticker_candidate(normalized):
+            return
         if normalized in seen:
             return
         seen.add(normalized)
@@ -105,12 +108,17 @@ def iter_stock_code_mentions(text: str, *, limit: int | None = None) -> List[Sto
             return found
 
     # HK — support both prefix and suffix forms used by Web/report URLs.
-    for match in re.finditer(r'(?<![a-zA-Z])(hk\d{1,5})(?!\d)', text, re.IGNORECASE):
+    for match in re.finditer(r'(?<![A-Za-z0-9])(hk\d{1,5})(?![A-Za-z0-9])', text, re.IGNORECASE):
         add(match.group(1), match.start(1), match.end(1))
         if limit is not None and len(found) >= limit:
             return found
 
     for match in re.finditer(r'(?<![A-Za-z0-9])(\d{1,5}\.HK)(?![A-Za-z0-9])', text, re.IGNORECASE):
+        add(match.group(1), match.start(1), match.end(1))
+        if limit is not None and len(found) >= limit:
+            return found
+
+    for match in _HK_BARE_CODE.finditer(text):
         add(match.group(1), match.start(1), match.end(1))
         if limit is not None and len(found) >= limit:
             return found
@@ -159,6 +167,8 @@ def canonicalize_stock_code(value: object) -> str:
         code = canonical_stock_code(normalize_stock_code(text))
     except Exception:
         code = text.upper()
+    if re.fullmatch(r"\d{5}", code):
+        return f"HK{code}"
     if re.fullmatch(r"[A-Z]{1,5}\.US", code):
         return code.rsplit(".", 1)[0]
     return code

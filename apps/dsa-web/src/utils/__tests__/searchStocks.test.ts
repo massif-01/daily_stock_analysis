@@ -213,6 +213,13 @@ describe('searchStocks', () => {
     expect(results[0].market).toBe('HK');
   });
 
+  test('港股 canonical prefix code matches suffix index entries', () => {
+    const results = searchStocks('HK00700', mockIndex);
+    expect(results).toHaveLength(1);
+    expect(results[0].canonicalCode).toBe('00700.HK');
+    expect(results[0].matchField).toBe('code');
+  });
+
   describe('Edge case tests', () => {
     test('special character query', () => {
       const results = searchStocks('@#$%', mockIndex);

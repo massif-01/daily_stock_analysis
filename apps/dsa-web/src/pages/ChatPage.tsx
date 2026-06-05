@@ -549,9 +549,11 @@ const ChatPage: React.FC = () => {
   }, []);
 
   const handleStartNewChat = useCallback(() => {
+    followUpHydrationTokenRef.current += 1;
     reportFollowUpContextRef.current = null;
     reportFollowUpStockCodeRef.current = null;
     setActiveStockContext(null);
+    setIsFollowUpContextLoading(false);
     requestScrollToBottom('auto');
     useAgentChatStore.getState().startNewChat();
     setSidebarOpen(false);
@@ -559,9 +561,11 @@ const ChatPage: React.FC = () => {
 
   const handleSwitchSession = useCallback((targetSessionId: string) => {
     if (targetSessionId === sessionId) return;
+    followUpHydrationTokenRef.current += 1;
     reportFollowUpContextRef.current = null;
     reportFollowUpStockCodeRef.current = null;
     setActiveStockContext(null);
+    setIsFollowUpContextLoading(false);
     requestScrollToBottom('auto');
     switchSession(targetSessionId);
     setSidebarOpen(false);

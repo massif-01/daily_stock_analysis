@@ -9,6 +9,7 @@
 
 import type { StockIndexItem, StockSuggestion } from '../types/stockIndex';
 import { normalizeQuery } from './normalizeQuery';
+import { normalizeStockCode } from './stockCode';
 import { MATCH_SCORE, SEARCH_CONFIG } from './stockIndexFields';
 
 export interface SearchOptions {
@@ -35,6 +36,7 @@ export function searchStocks(
   if (!normalizedQuery) {
     return [];
   }
+  const queryVariants = buildQueryVariants(query);
   const limit = options.limit || SEARCH_CONFIG.DEFAULT_LIMIT;
   const activeOnly = options.activeOnly !== false;
 
@@ -45,10 +47,14 @@ export function searchStocks(
   });
 
   // Calculate match score for each item
-  const suggestions = filteredIndex.map(item => ({
-    item,
-    score: calculateMatchScore(normalizedQuery, item),
-  }));
+  const suggestions = filteredIndex.map(item => {
+    const best = getBestMatch(queryVariants, item);
+    return {
+      item,
+      score: best.score,
+      matchedQuery: best.query,
+    };
+  });
 
   // Filter out items with score of 0
   const matched = suggestions.filter(s => s.score > 0);
@@ -66,9 +72,42 @@ export function searchStocks(
     nameZh: s.item.nameZh,
     market: s.item.market,
     matchType: determineMatchType(s.score),
-    matchField: determineMatchField(normalizedQuery, s.item),
+    matchField: determineMatchField(s.matchedQuery, s.item),
     score: s.score,
   }));
+}
+
+function buildQueryVariants(query: string): string[] {
+  const variants = new Set<string>();
+  const add = (value: string) => {
+    const normalized = normalizeQuery(value);
+    if (normalized) {
+      variants.add(normalized);
+    }
+  };
+
+  add(query);
+
+  const normalizedCode = normalizeStockCode(query);
+  add(normalizedCode);
+  const hkMatch = normalizedCode.match(/^HK(\d{5})$/);
+  if (hkMatch) {
+    add(hkMatch[1]);
+    add(`${hkMatch[1]}.HK`);
+  }
+
+  return Array.from(variants);
+}
+
+function getBestMatch(queries: string[], item: StockIndexItem): { score: number; query: string } {
+  let best = { score: 0, query: queries[0] || '' };
+  for (const query of queries) {
+    const score = calculateMatchScore(query, item);
+    if (score > best.score) {
+      best = { score, query };
+    }
+  }
+  return best;
 }
 
 /**

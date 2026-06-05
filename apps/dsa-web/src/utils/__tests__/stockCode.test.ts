@@ -34,6 +34,15 @@ describe('normalizeStockCode', () => {
     expect(normalizeStockCode('hk1810')).toBe('HK01810');
   });
 
+  it('normalizes bare 5-digit HK codes to canonical prefix form', () => {
+    expect(normalizeStockCode('00700')).toBe('HK00700');
+    expect(normalizeStockCode('09988')).toBe('HK09988');
+  });
+
+  it('does not normalize non-zero-leading 5-digit numbers as HK stock codes', () => {
+    expect(normalizeStockCode('30000')).toBe('30000');
+  });
+
   it('normalizes HK suffix to canonical prefix form', () => {
     expect(normalizeStockCode('00700.HK')).toBe('HK00700');
     expect(normalizeStockCode('1810.HK')).toBe('HK01810');
@@ -61,7 +70,7 @@ describe('normalizeStockCode', () => {
   });
 
   it('handles HK variants as equivalent', () => {
-    const codes = ['HK00700', '00700.HK', 'hk00700'];
+    const codes = ['HK00700', '00700.HK', 'hk00700', '00700'];
     const normalized = codes.map(normalizeStockCode);
     expect(new Set(normalized).size).toBe(1);
     expect(normalized[0]).toBe('HK00700');

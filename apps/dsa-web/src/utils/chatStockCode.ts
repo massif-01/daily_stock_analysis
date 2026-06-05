@@ -10,9 +10,9 @@ const STOCK_CODE_PATTERNS = [
   /\b(SH\d{6})\b/gi,
   /\b(SZ\d{6})\b/gi,
   /\b(BJ\d{6})\b/gi,
-  /\b(hk\d{4,5})\b/gi,
+  /\b(hk\d{1,5})\b/gi,
   /\b(\d{1,5}\.HK)\b/gi,
-  /\b(\d{5,6})\b/g,
+  /\b(0\d{4}|[03648]\d{5}|92\d{4}|(?:51|52|56|58|15|16|18)\d{4})\b/g,
   /\b([A-Z]{2,5}(?:\.(?:US|[A-Z]))?)\b/g,
 ];
 const EXPLICIT_STOCK_SWITCH_INTENT = /换成|切换到?|改成|改为/i;

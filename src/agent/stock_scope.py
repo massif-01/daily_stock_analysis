@@ -181,6 +181,17 @@ def guard_tool_call(
             effective_stock_code=requested_code,
         )
 
+    if _is_denied_ticker_candidate(original_stock_code) or _is_denied_ticker_candidate(requested_code):
+        effective_args["stock_code"] = active_code
+        if stock_scope.active_stock_name and _tool_has_parameter(tool_def, "stock_name"):
+            effective_args["stock_name"] = stock_scope.active_stock_name
+        return effective_call, StockScopeDecision(
+            action="rewrite",
+            reason="denied_ticker_candidate",
+            original_stock_code=original_stock_code,
+            effective_stock_code=active_code,
+        )
+
     if requested_code in stock_scope.allowed_stock_codes:
         code_rewritten = original_stock_code != requested_code
         effective_args["stock_code"] = requested_code
@@ -220,17 +231,6 @@ def guard_tool_call(
             reason="canonical_stock_code" if code_rewritten else "explicit_user_stock",
             original_stock_code=original_stock_code,
             effective_stock_code=requested_code,
-        )
-
-    if _is_denied_ticker_candidate(original_stock_code):
-        effective_args["stock_code"] = active_code
-        if stock_scope.active_stock_name and _tool_has_parameter(tool_def, "stock_name"):
-            effective_args["stock_name"] = stock_scope.active_stock_name
-        return effective_call, StockScopeDecision(
-            action="rewrite",
-            reason="denied_ticker_candidate",
-            original_stock_code=original_stock_code,
-            effective_stock_code=active_code,
         )
 
     conflict_result = build_stock_scope_conflict(

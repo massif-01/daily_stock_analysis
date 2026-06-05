@@ -64,6 +64,17 @@ const {
         assetType: 'stock',
         active: true,
       },
+      {
+        canonicalCode: '00700.HK',
+        displayCode: '00700',
+        nameZh: '腾讯控股',
+        pinyinFull: 'tengxunkonggu',
+        pinyinAbbr: 'txkg',
+        aliases: ['腾讯'],
+        market: 'HK',
+        assetType: 'stock',
+        active: true,
+      },
     ],
     loading: false,
     error: null,
@@ -219,6 +230,17 @@ beforeEach(() => {
       pinyinAbbr: 'apple',
       aliases: ['苹果'],
       market: 'US',
+      assetType: 'stock',
+      active: true,
+    },
+    {
+      canonicalCode: '00700.HK',
+      displayCode: '00700',
+      nameZh: '腾讯控股',
+      pinyinFull: 'tengxunkonggu',
+      pinyinAbbr: 'txkg',
+      aliases: ['腾讯'],
+      market: 'HK',
       assetType: 'stock',
       active: true,
     },
@@ -946,6 +968,115 @@ describe('ChatPage', () => {
     });
   });
 
+  it('keeps hydrated report context for bare HK URL codes', async () => {
+    vi.mocked(historyApi.getDetail).mockResolvedValue({
+      meta: {
+        id: 4,
+        queryId: 'q-hk-bare',
+        stockCode: 'HK00700',
+        stockName: '腾讯控股',
+        reportType: 'detailed',
+        createdAt: '2026-03-18T08:00:00Z',
+        currentPrice: 392.4,
+        changePct: 0.8,
+      },
+      summary: {
+        analysisSummary: '平台业务企稳',
+        operationAdvice: '分批观察',
+        trendPrediction: '震荡偏强',
+        sentimentScore: 70,
+      },
+      strategy: {
+        stopLoss: '370',
+      },
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/chat?stock=00700&name=%E8%85%BE%E8%AE%AF%E6%8E%A7%E8%82%A1&recordId=4']}>
+        <ChatPage />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByDisplayValue('请深入分析 腾讯控股(00700)')).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.queryByText('正在加载历史分析上下文；现在可直接发送追问。')).not.toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => {
+      expect(mockStartStream).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: '请深入分析 腾讯控股(00700)',
+          context: expect.objectContaining({
+            stock_code: 'HK00700',
+            stock_name: '腾讯控股',
+            previous_price: 392.4,
+            previous_change_pct: 0.8,
+            previous_strategy: expect.objectContaining({
+              stopLoss: '370',
+            }),
+          }),
+        }),
+        expect.objectContaining({
+          skillName: '趋势分析',
+        }),
+      );
+    });
+  });
+
+  it('does not merge report context when record stock does not match the URL stock', async () => {
+    vi.mocked(historyApi.getDetail).mockResolvedValue({
+      meta: {
+        id: 5,
+        queryId: 'q-mismatch',
+        stockCode: 'AAPL',
+        stockName: 'Apple',
+        reportType: 'detailed',
+        createdAt: '2026-03-18T08:00:00Z',
+        currentPrice: 211.5,
+        changePct: 2.4,
+      },
+      summary: {
+        analysisSummary: '不是当前标的',
+        operationAdvice: '不应注入',
+        trendPrediction: '不应注入',
+        sentimentScore: 80,
+      },
+      strategy: {
+        stopLoss: '205',
+      },
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/chat?stock=600519&name=%E8%B4%B5%E5%B7%9E%E8%8C%85%E5%8F%B0&recordId=5']}>
+        <ChatPage />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByDisplayValue('请深入分析 贵州茅台(600519)')).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.queryByText('正在加载历史分析上下文；现在可直接发送追问。')).not.toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => {
+      expect(mockStartStream).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: '请深入分析 贵州茅台(600519)',
+          context: {
+            stock_code: '600519',
+            stock_name: '贵州茅台',
+          },
+        }),
+        expect.anything(),
+      );
+    });
+  });
+
   it('does not merge hydrated report context after switching to another stock before first send', async () => {
     vi.mocked(historyApi.getDetail).mockResolvedValue({
       meta: {
@@ -1570,6 +1701,46 @@ describe('ChatPage', () => {
     });
   });
 
+  it('does not switch active stock context for ambiguous exact stock names', async () => {
+    mockStockIndexState.index = [
+      ...mockStockIndexState.index,
+      {
+        canonicalCode: 'MSFT',
+        displayCode: 'MSFT',
+        nameZh: 'Microsoft',
+        pinyinFull: 'microsoft',
+        pinyinAbbr: 'msft',
+        aliases: ['苹果'],
+        market: 'US',
+        assetType: 'stock',
+        active: true,
+      },
+    ];
+
+    render(
+      <MemoryRouter initialEntries={['/chat']}>
+        <ChatPage />
+      </MemoryRouter>
+    );
+
+    await screen.findByTestId('chat-workspace');
+
+    fireEvent.change(screen.getByPlaceholderText(/分析 600519/), {
+      target: { value: '分析 苹果 走势' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => {
+      expect(mockStartStream).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: '分析 苹果 走势',
+          context: undefined,
+        }),
+        expect.anything(),
+      );
+    });
+  });
+
   it('does not switch by name while the local stock index is unavailable', async () => {
     mockStockIndexState.loaded = false;
     mockStockIndexState.loading = true;
@@ -1696,6 +1867,68 @@ describe('ChatPage', () => {
         expect.anything(),
       );
     });
+  });
+
+  it('does not merge stale report hydration after starting a new chat', async () => {
+    const deferred = createDeferred<Awaited<ReturnType<typeof historyApi.getDetail>>>();
+    vi.mocked(historyApi.getDetail).mockImplementation(() => deferred.promise);
+
+    render(
+      <MemoryRouter initialEntries={['/chat?stock=600519&name=%E8%B4%B5%E5%B7%9E%E8%8C%85%E5%8F%B0&recordId=1']}>
+        <ChatPage />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByDisplayValue('请深入分析 贵州茅台(600519)')).toBeInTheDocument();
+    expect(screen.getByText('正在加载历史分析上下文；现在可直接发送追问。')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '开启新对话' }));
+
+    deferred.resolve({
+      meta: {
+        id: 1,
+        queryId: 'q-1',
+        stockCode: '600519',
+        stockName: '贵州茅台',
+        reportType: 'detailed',
+        createdAt: '2026-03-18T08:00:00Z',
+        currentPrice: 1523.6,
+        changePct: 1.8,
+      },
+      summary: {
+        analysisSummary: '旧报告摘要',
+        operationAdvice: '旧报告策略',
+        trendPrediction: '旧报告趋势',
+        sentimentScore: 78,
+      },
+      strategy: {
+        stopLoss: '1450',
+      },
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText('正在加载历史分析上下文；现在可直接发送追问。')).not.toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByPlaceholderText(/分析 600519/), {
+      target: { value: '分析 600519 趋势' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => {
+      expect(mockStartStream).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: '分析 600519 趋势',
+          context: {
+            stock_code: '600519',
+            stock_name: '贵州茅台',
+          },
+        }),
+        expect.anything(),
+      );
+    });
+    const lastCall = mockStartStream.mock.calls[mockStartStream.mock.calls.length - 1][0];
+    expect(lastCall.context).not.toHaveProperty('previous_analysis_summary');
+    expect(lastCall.context).not.toHaveProperty('previous_strategy');
   });
 
   it('ignores malformed follow-up query params', async () => {
@@ -1859,6 +2092,14 @@ describe('extractStockCodeFromMessage', () => {
     expect(extractStockCodeFromMessage('1810.HK')).toBe('HK01810');
   });
 
+  it('returns bare 5-digit HK code normalized to canonical', () => {
+    expect(extractStockCodeFromMessage('分析 00700')).toBe('HK00700');
+  });
+
+  it('does not treat non-zero-leading 5-digit numbers as HK stock mentions', () => {
+    expect(extractStockCodeFromMessage('价格到30000怎么看')).toBeNull();
+  });
+
   it('returns code with .SH/.SZ suffix (normalized)', () => {
     expect(extractStockCodeFromMessage('看 600519.SH')).toBe('600519');
     expect(extractStockCodeFromMessage('000001.SZ')).toBe('000001');
@@ -1917,9 +2158,13 @@ describe('extractStockCodeForScopeSwitch', () => {
     expect(extractStockCodeForScopeSwitch('换成 aapl 看看')).toBe('AAPL');
     expect(extractStockCodeForScopeSwitch('换成 BRK.B 看看')).toBe('BRK.B');
     expect(extractStockCodeForScopeSwitch('分析 600519 趋势')).toBe('600519');
+    expect(extractStockCodeForScopeSwitch('分析 00700 趋势')).toBe('HK00700');
+    expect(extractStockCodeForScopeSwitch('换成 HK700 看看')).toBe('HK00700');
+    expect(extractStockCodeForScopeSwitch('换成 hk700 看看')).toBe('HK00700');
     expect(extractStockCodeForScopeSwitch('换成 AAPL 比较一下')).toBe('AAPL');
     expect(extractStockCodeForScopeSwitch('AAPL')).toBe('AAPL');
     expect(extractStockCodeForScopeSwitch('换成 apple 看看')).toBeNull();
+    expect(extractStockCodeForScopeSwitch('价格到30000怎么看')).toBeNull();
   });
 
   it('does not treat comparison targets as active-stock switches', () => {
