@@ -2213,4 +2213,48 @@ describe('watchlist button with code variants', () => {
 
     expect(await screen.findByText('从自选删除')).toBeInTheDocument();
   });
+
+  it('removes the stored legacy bare HK code instead of the active canonical code', async () => {
+    mockGetWatchlist.mockResolvedValue(['00700']);
+    mockRemoveFromWatchlist.mockResolvedValue([]);
+
+    render(
+      <MemoryRouter>
+        <ChatPage />
+      </MemoryRouter>,
+    );
+
+    const textarea = await screen.findByPlaceholderText(/例如/);
+    fireEvent.change(textarea, { target: { value: '分析 00700' } });
+    fireEvent.keyDown(textarea, { key: 'Enter' });
+
+    fireEvent.click(await screen.findByText('从自选删除'));
+
+    await waitFor(() => {
+      expect(mockRemoveFromWatchlist).toHaveBeenCalledWith('00700');
+    });
+    expect(mockAddToWatchlist).not.toHaveBeenCalled();
+  });
+
+  it('removes the stored legacy US suffix code instead of the active canonical code', async () => {
+    mockGetWatchlist.mockResolvedValue(['AAPL.US']);
+    mockRemoveFromWatchlist.mockResolvedValue([]);
+
+    render(
+      <MemoryRouter>
+        <ChatPage />
+      </MemoryRouter>,
+    );
+
+    const textarea = await screen.findByPlaceholderText(/例如/);
+    fireEvent.change(textarea, { target: { value: '分析 AAPL' } });
+    fireEvent.keyDown(textarea, { key: 'Enter' });
+
+    fireEvent.click(await screen.findByText('从自选删除'));
+
+    await waitFor(() => {
+      expect(mockRemoveFromWatchlist).toHaveBeenCalledWith('AAPL.US');
+    });
+    expect(mockAddToWatchlist).not.toHaveBeenCalled();
+  });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeStockCode } from '../stockCode';
+import { findEquivalentWatchlistCode, normalizeStockCode } from '../stockCode';
 
 describe('normalizeStockCode', () => {
   it('keeps clean A-share codes as-is', () => {
@@ -74,5 +74,22 @@ describe('normalizeStockCode', () => {
     const normalized = codes.map(normalizeStockCode);
     expect(new Set(normalized).size).toBe(1);
     expect(normalized[0]).toBe('HK00700');
+  });
+});
+
+describe('findEquivalentWatchlistCode', () => {
+  it('returns the stored watchlist code for legacy HK variants', () => {
+    expect(findEquivalentWatchlistCode(['00700'], 'HK00700')).toBe('00700');
+    expect(findEquivalentWatchlistCode(['HK00700'], '00700')).toBe('HK00700');
+    expect(findEquivalentWatchlistCode(['00700.HK'], 'HK00700')).toBe('00700.HK');
+  });
+
+  it('returns the stored watchlist code for legacy US suffix variants', () => {
+    expect(findEquivalentWatchlistCode(['AAPL.US'], 'AAPL')).toBe('AAPL.US');
+    expect(findEquivalentWatchlistCode(['AAPL'], 'AAPL.US')).toBe('AAPL');
+  });
+
+  it('returns null when no equivalent watchlist code exists', () => {
+    expect(findEquivalentWatchlistCode(['600519'], 'AAPL')).toBeNull();
   });
 });

@@ -1,7 +1,10 @@
 /**
- * Normalize stock code by stripping exchange prefixes/suffixes.
+ * Normalize stock code for chat/session-scope comparisons.
  *
- * Mirrors the behavior of data_provider.base.normalize_stock_code in the backend.
+ * This intentionally accepts more user-facing variants than the backend
+ * persisted STOCK_LIST identity. Watchlist actions should use
+ * findEquivalentWatchlistCode to preserve the stored code when editing legacy
+ * configurations.
  *
  *   600519      → 600519     SH600519    → 600519
  *   600519.SH   → 600519     SH.600519   → 600519
@@ -84,4 +87,12 @@ export function normalizeStockCode(stockCode: string): string {
   }
 
   return /^[A-Za-z]{1,5}$/.test(code) ? upper : code;
+}
+
+export function findEquivalentWatchlistCode(
+  watchlistCodes: string[],
+  stockCode: string,
+): string | null {
+  const targetCode = normalizeStockCode(stockCode);
+  return watchlistCodes.find((code) => normalizeStockCode(code) === targetCode) ?? null;
 }

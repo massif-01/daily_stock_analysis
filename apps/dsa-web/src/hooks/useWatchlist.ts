@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { systemConfigApi } from '../api/systemConfig';
-import { normalizeStockCode } from '../utils/stockCode';
+import { findEquivalentWatchlistCode } from '../utils/stockCode';
 
 export interface UseWatchlistReturn {
   watchlistCodes: string[];
@@ -65,12 +65,17 @@ export function useWatchlist(): UseWatchlistReturn {
   }, []);
 
   const isInWatchlist = useCallback(
-    (stockCode: string) => codes.includes(normalizeStockCode(stockCode)),
+    (stockCode: string) => findEquivalentWatchlistCode(codes, stockCode) !== null,
     [codes],
   );
 
   const addToWatchlist = useCallback(async (stockCode: string) => {
     if (!stockCode || isActioning) return;
+    const existingCode = findEquivalentWatchlistCode(codes, stockCode);
+    if (existingCode) {
+      showMessage(`已在自选 ${existingCode}`);
+      return;
+    }
     setIsActioning(true);
     try {
       const result = await systemConfigApi.addToWatchlist(stockCode);
@@ -83,23 +88,24 @@ export function useWatchlist(): UseWatchlistReturn {
     } finally {
       if (mountedRef.current) setIsActioning(false);
     }
-  }, [isActioning, showMessage]);
+  }, [codes, isActioning, showMessage]);
 
   const removeFromWatchlist = useCallback(async (stockCode: string) => {
     if (!stockCode || isActioning) return;
+    const stockCodeToRemove = findEquivalentWatchlistCode(codes, stockCode) ?? stockCode;
     setIsActioning(true);
     try {
-      const result = await systemConfigApi.removeFromWatchlist(stockCode);
+      const result = await systemConfigApi.removeFromWatchlist(stockCodeToRemove);
       if (mountedRef.current) {
         setCodes(result);
-        showMessage(`已从自选移除 ${stockCode}`);
+        showMessage(`已从自选移除 ${stockCodeToRemove}`);
       }
     } catch {
       if (mountedRef.current) showMessage('操作失败');
     } finally {
       if (mountedRef.current) setIsActioning(false);
     }
-  }, [isActioning, showMessage]);
+  }, [codes, isActioning, showMessage]);
 
   const toggleWatchlist = useCallback(async (stockCode: string) => {
     if (isInWatchlist(stockCode)) {

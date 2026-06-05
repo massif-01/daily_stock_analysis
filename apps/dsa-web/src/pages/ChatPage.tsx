@@ -30,7 +30,7 @@ import {
   hasNegatedStockScope,
   isDeniedTickerCandidate,
 } from '../utils/chatStockCode';
-import { normalizeStockCode } from '../utils/stockCode';
+import { findEquivalentWatchlistCode, normalizeStockCode } from '../utils/stockCode';
 import { useStockIndex } from '../hooks/useStockIndex';
 import { searchStocks } from '../utils/searchStocks';
 import type { StockIndexItem } from '../types/stockIndex';
@@ -308,7 +308,7 @@ const ChatPage: React.FC = () => {
   }, [loadWatchlist]);
 
   const stockInWatchlist = useCallback(
-    (stockCode: string) => watchlistCodes.includes(normalizeStockCode(stockCode)),
+    (stockCode: string) => findEquivalentWatchlistCode(watchlistCodes, stockCode) !== null,
     [watchlistCodes],
   );
 
@@ -318,11 +318,12 @@ const ChatPage: React.FC = () => {
       setIsWatchlistActioning(true);
       setWatchlistMessage(null);
       try {
-        if (stockInWatchlist(stockCode)) {
-          const codes = await systemConfigApi.removeFromWatchlist(stockCode);
+        const existingWatchlistCode = findEquivalentWatchlistCode(watchlistCodes, stockCode);
+        if (existingWatchlistCode) {
+          const codes = await systemConfigApi.removeFromWatchlist(existingWatchlistCode);
           if (isMountedRef.current) {
             setWatchlistCodes(codes);
-            setWatchlistMessage(`已从自选中移除 ${stockCode}`);
+            setWatchlistMessage(`已从自选中移除 ${existingWatchlistCode}`);
           }
         } else {
           const codes = await systemConfigApi.addToWatchlist(stockCode);
@@ -349,7 +350,7 @@ const ChatPage: React.FC = () => {
         }
       }
     },
-    [isWatchlistActioning, stockInWatchlist],
+    [isWatchlistActioning, watchlistCodes],
   );
 
   const {
