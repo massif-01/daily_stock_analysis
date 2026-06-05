@@ -9,6 +9,8 @@ export interface ChatFollowUpContext {
   previous_strategy?: unknown;
   previous_price?: number;
   previous_change_pct?: number;
+  allowed_stock_codes?: string[];
+  allowed_stocks?: Array<{ stock_code: string; stock_name: string | null }>;
 }
 
 type ResolveChatFollowUpContextParams = {

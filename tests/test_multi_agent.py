@@ -27,6 +27,8 @@ except ModuleNotFoundError:
     sys.modules["litellm"] = MagicMock()
 
 from src.agent.orchestrator import _extract_stock_code, _COMMON_WORDS
+from src.agent.stock_text import _COMMON_WORDS as _SHARED_COMMON_WORDS
+from src.agent.stock_text import _extract_stock_code as _shared_extract_stock_code
 from src.agent.protocols import (
     AgentContext,
     AgentOpinion,
@@ -162,6 +164,13 @@ class TestExtractStockCode(unittest.TestCase):
         self.assertEqual(_extract_stock_code("PE AAPL 怎么看"), "AAPL")
         self.assertEqual(_extract_stock_code("TTM AAPL 怎么看"), "AAPL")
         self.assertEqual(_extract_stock_code("WHAT IS PE AAPL"), "AAPL")
+
+    def test_orchestrator_reexports_shared_stock_text_helpers(self):
+        self.assertIs(_COMMON_WORDS, _SHARED_COMMON_WORDS)
+        self.assertEqual(
+            _extract_stock_code("市盈率 TTM 怎么看"),
+            _shared_extract_stock_code("市盈率 TTM 怎么看"),
+        )
 
     # --- Priority: A-share > HK > US ---
 
@@ -566,10 +575,18 @@ class TestOrchestratorModes(unittest.TestCase):
         orch = self._make_orchestrator()
         ctx = orch._build_context(
             "Analyze 600519",
-            context={"stock_code": "600519", "stock_name": "贵州茅台", "skills": ["bull_trend"]},
+            context={
+                "stock_code": "600519",
+                "stock_name": "贵州茅台",
+                "skills": ["bull_trend"],
+                "allowed_stock_codes": ["AAPL"],
+                "allowed_stocks": [{"stock_code": "AAPL", "stock_name": "Apple"}],
+            },
         )
         self.assertEqual(ctx.stock_code, "600519")
         self.assertEqual(ctx.stock_name, "贵州茅台")
+        self.assertEqual(ctx.allowed_stock_codes, ["AAPL"])
+        self.assertEqual(ctx.allowed_stocks, [{"stock_code": "AAPL", "stock_name": "Apple"}])
         self.assertEqual(ctx.meta["skills_requested"], ["bull_trend"])
 
     def test_build_context_keeps_market_phase_context_in_meta_not_data(self):
@@ -1750,6 +1767,33 @@ class TestBaseAgentMemoryIntegration(unittest.TestCase):
             skill_id="chan_theory",
         )
 
+    def test_base_agent_passes_allowed_stock_codes_to_stock_scope(self):
+        memory = MagicMock(enabled=False)
+        agent = self._make_agent(memory)
+        ctx = AgentContext(
+            query="比较 Apple 和当前股票",
+            stock_code="600519",
+            stock_name="贵州茅台",
+            allowed_stock_codes=["AAPL"],
+            allowed_stocks=[{"stock_code": "AAPL", "stock_name": "Apple"}],
+        )
+
+        loop_result = SimpleNamespace(
+            success=True,
+            content='{"signal":"buy","confidence":0.8,"reasoning":"ok"}',
+            total_tokens=12,
+            tool_calls_log=[],
+            models_used=["test/model"],
+        )
+        with patch("src.agent.agents.base_agent.run_agent_loop", return_value=loop_result) as run_loop:
+            result = agent.run(ctx)
+
+        self.assertTrue(result.success)
+        stock_scope = run_loop.call_args.kwargs["stock_scope"]
+        self.assertEqual(stock_scope.active_stock_code, "600519")
+        self.assertIn("AAPL", stock_scope.allowed_stock_codes)
+        self.assertEqual(stock_scope.allowed_stock_names["AAPL"], "Apple")
+
 
 class TestRiskOverride(unittest.TestCase):
     """Test orchestrator-level risk override integration."""
@@ -2033,6 +2077,62 @@ class TestResearchAgentFilteredRegistry(unittest.TestCase):
         self.assertIn("insufficient budget", (result["error"] or "").lower())
         self.assertEqual(result["tokens"], 7)
 
+    def test_research_sub_question_uses_original_query_for_stock_scope(self):
+        from src.agent.research import ResearchAgent
+
+        agent = ResearchAgent(tool_registry=MagicMock(), llm_adapter=MagicMock())
+        with patch("src.agent.research.run_agent_loop", return_value=SimpleNamespace(
+            success=True,
+            content="done",
+            total_tokens=7,
+            error=None,
+        )) as run_loop:
+            result = agent._research_sub_question(
+                "Compare valuation multiples",
+                {
+                    "stock_code": "600519",
+                    "stock_name": "贵州茅台",
+                    "allowed_stock_codes": ["AAPL"],
+                    "allowed_stocks": [{"stock_code": "AAPL", "stock_name": "Apple"}],
+                },
+                0,
+                scope_message="比较 Apple 和当前股票哪个更适合买",
+            )
+
+        self.assertTrue(result["success"])
+        stock_scope = run_loop.call_args.kwargs["stock_scope"]
+        self.assertEqual(stock_scope.active_stock_code, "600519")
+        self.assertIn("AAPL", stock_scope.allowed_stock_codes)
+        self.assertEqual(stock_scope.allowed_stock_names["AAPL"], "Apple")
+
+    def test_research_flow_preserves_original_query_for_allowed_stock_scope(self):
+        from src.agent.research import ResearchAgent
+
+        agent = ResearchAgent(tool_registry=MagicMock(), llm_adapter=MagicMock())
+        with patch.object(agent, "_decompose_query", return_value={"questions": ["Compare valuation multiples"], "tokens": 0}), \
+             patch.object(agent, "_synthesise_report", return_value={"content": "final", "tokens": 1}), \
+             patch("src.agent.research.run_agent_loop", return_value=SimpleNamespace(
+                 success=True,
+                 content="finding",
+                 total_tokens=7,
+                 error=None,
+             )) as run_loop:
+            result = agent.research(
+                "比较 Apple 和当前股票哪个更适合买",
+                {
+                    "stock_code": "600519",
+                    "stock_name": "贵州茅台",
+                    "allowed_stock_codes": ["AAPL"],
+                    "allowed_stocks": [{"stock_code": "AAPL", "stock_name": "Apple"}],
+                },
+            )
+
+        self.assertTrue(result.success)
+        stock_scope = run_loop.call_args.kwargs["stock_scope"]
+        self.assertEqual(stock_scope.active_stock_code, "600519")
+        self.assertIn("AAPL", stock_scope.allowed_stock_codes)
+        self.assertEqual(stock_scope.allowed_stock_names["AAPL"], "Apple")
+
     def test_research_returns_timeout_result_when_overall_deadline_is_exceeded(self):
         import time as _time
         from src.agent.research import ResearchAgent
@@ -2084,6 +2184,49 @@ class TestAgentResearchEndpoint(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(response.success)
         self.assertIn("timed out", response.error)
+
+    async def test_agent_research_passes_structured_stock_scope_context(self):
+        from api.v1.endpoints.agent import ResearchRequest, agent_research
+
+        config = SimpleNamespace(
+            litellm_model="gemini/test-model",
+            agent_deep_research_budget=30000,
+            agent_deep_research_timeout=1,
+            is_agent_available=lambda: True,
+        )
+
+        research_result = AsyncMock(return_value=SimpleNamespace(
+            success=True,
+            report="ok",
+            sub_questions=[],
+            findings_count=0,
+            total_tokens=0,
+            duration_s=0.1,
+            error=None,
+            timed_out=False,
+        ))
+
+        with (
+            patch("api.v1.endpoints.agent.get_config", return_value=config),
+            patch("api.v1.endpoints.agent._run_research_in_background", new=research_result),
+            patch("src.agent.factory.get_tool_registry", return_value=MagicMock()),
+            patch("src.agent.llm_adapter.LLMToolAdapter", return_value=MagicMock()),
+        ):
+            response = await agent_research(ResearchRequest(
+                question="比较 Apple 和当前股票",
+                stock_code="600519",
+                stock_name="贵州茅台",
+                allowed_stock_codes=["AAPL"],
+                allowed_stocks=[{"stock_code": "AAPL", "stock_name": "Apple"}],
+            ))
+
+        self.assertTrue(response.success)
+        _, question, context = research_result.call_args.args
+        self.assertEqual(question, "[Stock: 600519] 比较 Apple 和当前股票")
+        self.assertEqual(context["stock_code"], "600519")
+        self.assertEqual(context["stock_name"], "贵州茅台")
+        self.assertEqual(context["allowed_stock_codes"], ["AAPL"])
+        self.assertEqual(context["allowed_stocks"], [{"stock_code": "AAPL", "stock_name": "Apple"}])
 
 
 if __name__ == '__main__':

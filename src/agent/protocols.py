@@ -71,6 +71,8 @@ class AgentContext:
     query: str = ""
     stock_code: str = ""
     stock_name: str = ""
+    allowed_stock_codes: List[str] = field(default_factory=list)
+    allowed_stocks: List[Dict[str, str]] = field(default_factory=list)
     session_id: str = ""
 
     # --- collected data (populated by data-fetching stages) ---

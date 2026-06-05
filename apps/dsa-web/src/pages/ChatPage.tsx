@@ -25,8 +25,15 @@ import {
 } from '../utils/chatFollowUp';
 import { isNearBottom } from '../utils/chatScroll';
 import { getReportText } from '../utils/reportLanguage';
-import { extractStockCodeFromMessage } from '../utils/chatStockCode';
+import {
+  extractStockCodeForScopeSwitch,
+  hasNegatedStockScope,
+  isDeniedTickerCandidate,
+} from '../utils/chatStockCode';
 import { normalizeStockCode } from '../utils/stockCode';
+import { useStockIndex } from '../hooks/useStockIndex';
+import { searchStocks } from '../utils/searchStocks';
+import type { StockIndexItem } from '../types/stockIndex';
 
 // Quick question examples shown on empty state
 const QUICK_QUESTIONS = [
@@ -40,6 +47,172 @@ const QUICK_QUESTIONS = [
 
 const MAX_SELECTED_SKILLS = 3;
 const CONTEXT_COMPRESSION_CONFIG_KEY = 'AGENT_CONTEXT_COMPRESSION_ENABLED';
+
+type ActiveStockSource = 'url' | 'history_report' | 'message' | 'user_switch';
+
+type ActiveStockContext = {
+  stock_code: string;
+  stock_name: string | null;
+  source: ActiveStockSource;
+  last_confirmed_at: string;
+};
+
+type ReportFollowUpContext = Pick<
+  ChatFollowUpContext,
+  'previous_analysis_summary' | 'previous_strategy' | 'previous_price' | 'previous_change_pct'
+>;
+type AllowedStockContext = NonNullable<ChatFollowUpContext['allowed_stocks']>[number];
+
+const EXPLICIT_NAME_SWITCH_PATTERN = /(?:换成|切换到?|改成|改为|分析|看看|看一下|研究)\s*([A-Za-z\u4e00-\u9fa5][A-Za-z0-9\u4e00-\u9fa5 .·-]{0,40})/i;
+const EXPLICIT_NAME_SWITCH_COMMAND_PATTERN = /换成|切换到?|改成|改为/i;
+const NAME_SWITCH_TRAILING_PATTERN = /(?:怎么看|怎么样|如何|走势|趋势|分析|看看|看一下|吗|呢|吧|和|跟|与|vs|VS).*$/;
+const COMPARISON_INTENT_PATTERN = /比较|对比|相比|差异|差别|区别|不同|优劣|哪个更|谁更|\bvs\b/i;
+const CURRENT_STOCK_REFERENCE_PATTERN = /当前股票|当前标的|这只股票|这支股票|该股/i;
+const COMPARISON_CONNECTOR_PATTERN = /和|跟|与|\bvs\b/i;
+const NEGATED_COMPARISON_PATTERN = /(?:不要|别|无需|不用|不必|别再|排除|避免|忽略)\s*.{0,16}(?:比较|对比|相比)/i;
+
+function createActiveStockContext(
+  stockCode: string,
+  stockName: string | null,
+  source: ActiveStockSource,
+): ActiveStockContext {
+  return {
+    stock_code: normalizeStockCode(stockCode),
+    stock_name: stockName,
+    source,
+    last_confirmed_at: new Date().toISOString(),
+  };
+}
+
+function pickReportFollowUpContext(context: ChatFollowUpContext): ReportFollowUpContext | null {
+  const reportContext: ReportFollowUpContext = {};
+  if (context.previous_analysis_summary !== undefined) {
+    reportContext.previous_analysis_summary = context.previous_analysis_summary;
+  }
+  if (context.previous_strategy !== undefined) {
+    reportContext.previous_strategy = context.previous_strategy;
+  }
+  if (context.previous_price !== undefined) {
+    reportContext.previous_price = context.previous_price;
+  }
+  if (context.previous_change_pct !== undefined) {
+    reportContext.previous_change_pct = context.previous_change_pct;
+  }
+  return Object.keys(reportContext).length > 0 ? reportContext : null;
+}
+
+function buildChatContextPayload(
+  activeStockContext: ActiveStockContext | null,
+  reportContext: ReportFollowUpContext | null,
+  allowedStocks: AllowedStockContext[] = [],
+): ChatFollowUpContext | undefined {
+  if (!activeStockContext) return undefined;
+  const allowedStockCodes = allowedStocks.map((stock) => stock.stock_code);
+  return {
+    stock_code: activeStockContext.stock_code,
+    stock_name: activeStockContext.stock_name,
+    ...(allowedStockCodes.length > 0 ? { allowed_stock_codes: allowedStockCodes } : {}),
+    ...(allowedStocks.length > 0 ? { allowed_stocks: allowedStocks } : {}),
+    ...(reportContext ?? {}),
+  };
+}
+
+function findExactStockByCode(stockCode: string, stockIndex: StockIndexItem[]): { code: string; name: string } | null {
+  if (!stockIndex.length) return null;
+  const matches = searchStocks(stockCode, stockIndex, { activeOnly: true, limit: 3 })
+    .filter((suggestion) => suggestion.matchType === 'exact' && suggestion.matchField === 'code');
+  if (matches.length !== 1) return null;
+  return {
+    code: normalizeStockCode(matches[0].canonicalCode),
+    name: matches[0].nameZh,
+  };
+}
+
+function extractNameSwitchQuery(message: string): string | null {
+  const match = message.match(EXPLICIT_NAME_SWITCH_PATTERN);
+  if (!match) return null;
+  const matchStart = match.index ?? 0;
+  if (hasNegatedStockScope(message, matchStart, matchStart + match[0].length)) return null;
+  if (hasComparisonIntent(message) && !EXPLICIT_NAME_SWITCH_COMMAND_PATTERN.test(match[0])) return null;
+  const candidate = match[1].replace(NAME_SWITCH_TRAILING_PATTERN, '').trim();
+  if (!candidate || isDeniedTickerCandidate(candidate)) return null;
+  return candidate;
+}
+
+function resolveNameSwitchContext(
+  message: string,
+  stockIndex: StockIndexItem[],
+  source: ActiveStockSource,
+): ActiveStockContext | null {
+  const query = extractNameSwitchQuery(message);
+  if (!query) return null;
+  const exactMatches = searchStocks(query, stockIndex, { activeOnly: true, limit: 3 })
+    .filter((suggestion) => suggestion.matchType === 'exact');
+  if (exactMatches.length !== 1) return null;
+  return createActiveStockContext(
+    normalizeStockCode(exactMatches[0].canonicalCode),
+    exactMatches[0].nameZh,
+    source,
+  );
+}
+
+function resolveComparisonAllowedStocks(
+  message: string,
+  stockIndex: StockIndexItem[],
+  activeStockCode: string | null | undefined,
+): AllowedStockContext[] {
+  if (!hasComparisonIntent(message) || !stockIndex.length) return [];
+  const activeCode = activeStockCode ? normalizeStockCode(activeStockCode) : null;
+  const matches = extractComparisonNameQueries(message)
+    .flatMap((query) => {
+      const exactMatches = searchStocks(query, stockIndex, { activeOnly: true, limit: 3 })
+        .filter((suggestion) => suggestion.matchType === 'exact');
+      return exactMatches.length === 1 ? exactMatches : [];
+    })
+    .map((suggestion) => ({
+      stock_code: normalizeStockCode(suggestion.canonicalCode),
+      stock_name: suggestion.nameZh,
+    }))
+    .filter((stock) => stock.stock_code && stock.stock_code !== activeCode);
+  const byCode = new Map<string, AllowedStockContext>();
+  for (const stock of matches) {
+    if (!byCode.has(stock.stock_code)) {
+      byCode.set(stock.stock_code, stock);
+    }
+  }
+  return Array.from(byCode.values());
+}
+
+function hasComparisonIntent(message: string): boolean {
+  if (NEGATED_COMPARISON_PATTERN.test(message)) return false;
+  return COMPARISON_INTENT_PATTERN.test(message)
+    || (CURRENT_STOCK_REFERENCE_PATTERN.test(message) && COMPARISON_CONNECTOR_PATTERN.test(message));
+}
+
+function extractComparisonNameQueries(message: string): string[] {
+  const fragments: string[] = [];
+  const currentMatch = message.match(CURRENT_STOCK_REFERENCE_PATTERN);
+  if (currentMatch && currentMatch.index !== undefined) {
+    fragments.push(message.slice(0, currentMatch.index));
+  }
+  for (const fragment of message.split(COMPARISON_CONNECTOR_PATTERN)) {
+    if (!CURRENT_STOCK_REFERENCE_PATTERN.test(fragment)) {
+      fragments.push(fragment);
+    }
+  }
+  const queries = fragments
+    .map(cleanComparisonNameQuery)
+    .filter((query) => query && !isDeniedTickerCandidate(query));
+  return Array.from(new Set(queries));
+}
+
+function cleanComparisonNameQuery(value: string): string {
+  return value
+    .replace(COMPARISON_INTENT_PATTERN, ' ')
+    .replace(/^(?:请|帮我|帮忙|分析|看看|看一下|研究)\s*/i, '')
+    .replace(/(?:哪个更|谁更|更适合买|更适合|差异|差别|区别|不同|优劣|怎么样|如何|走势|趋势).*$/i, '')
+    .trim();
+}
 
 const getMessageSkillNames = (msg: Message): string[] => {
   if (msg.skillNames?.length) return msg.skillNames;
@@ -77,7 +250,9 @@ const ChatPage: React.FC = () => {
   const [watchlistCodes, setWatchlistCodes] = useState<string[]>([]);
   const [isWatchlistActioning, setIsWatchlistActioning] = useState(false);
   const [watchlistMessage, setWatchlistMessage] = useState<string | null>(null);
-  const [activeStockCode, setActiveStockCode] = useState<string | null>(null);
+  const [activeStockContext, setActiveStockContext] = useState<ActiveStockContext | null>(null);
+  const { index: stockIndex, loaded: stockIndexLoaded, fallback: stockIndexFallback } = useStockIndex();
+  const activeStockCode = activeStockContext?.stock_code ?? null;
   const watchlistMessageTimerRef = useRef<number | null>(null);
   const copyResetTimerRef = useRef<Partial<Record<string, number>>>({});
   const messagesViewportRef = useRef<HTMLDivElement>(null);
@@ -85,7 +260,8 @@ const ChatPage: React.FC = () => {
   const isMountedRef = useRef(true);
   const sendToastTimerRef = useRef<number | null>(null);
   const followUpHydrationTokenRef = useRef(0);
-  const followUpContextRef = useRef<ChatFollowUpContext | null>(null);
+  const reportFollowUpContextRef = useRef<ReportFollowUpContext | null>(null);
+  const reportFollowUpStockCodeRef = useRef<string | null>(null);
   const shouldStickToBottomRef = useRef(true);
   const pendingScrollBehaviorRef = useRef<ScrollBehavior>('auto');
 
@@ -373,17 +549,23 @@ const ChatPage: React.FC = () => {
   }, []);
 
   const handleStartNewChat = useCallback(() => {
-    followUpContextRef.current = null;
+    reportFollowUpContextRef.current = null;
+    reportFollowUpStockCodeRef.current = null;
+    setActiveStockContext(null);
     requestScrollToBottom('auto');
     useAgentChatStore.getState().startNewChat();
     setSidebarOpen(false);
   }, [requestScrollToBottom]);
 
   const handleSwitchSession = useCallback((targetSessionId: string) => {
+    if (targetSessionId === sessionId) return;
+    reportFollowUpContextRef.current = null;
+    reportFollowUpStockCodeRef.current = null;
+    setActiveStockContext(null);
     requestScrollToBottom('auto');
     switchSession(targetSessionId);
     setSidebarOpen(false);
-  }, [requestScrollToBottom, switchSession]);
+  }, [requestScrollToBottom, sessionId, switchSession]);
 
   const confirmDelete = useCallback(() => {
     if (!deleteConfirmId) return;
@@ -413,11 +595,9 @@ const ChatPage: React.FC = () => {
 
     const hydrationToken = ++followUpHydrationTokenRef.current;
     setInput(buildFollowUpPrompt(stock, name));
-    setActiveStockCode(stock);
-    followUpContextRef.current = {
-      stock_code: stock,
-      stock_name: name,
-    };
+    setActiveStockContext(createActiveStockContext(stock, name, recordId !== undefined ? 'history_report' : 'url'));
+    reportFollowUpContextRef.current = null;
+    reportFollowUpStockCodeRef.current = null;
     if (recordId !== undefined) {
       setIsFollowUpContextLoading(true);
     }
@@ -429,7 +609,12 @@ const ChatPage: React.FC = () => {
       if (!isMountedRef.current || followUpHydrationTokenRef.current !== hydrationToken) {
         return;
       }
-      followUpContextRef.current = context;
+      const contextStockCode = normalizeStockCode(context.stock_code);
+      if (contextStockCode !== stock) {
+        return;
+      }
+      reportFollowUpContextRef.current = pickReportFollowUpContext(context);
+      reportFollowUpStockCodeRef.current = contextStockCode;
     }).finally(() => {
       if (isMountedRef.current && followUpHydrationTokenRef.current === hydrationToken) {
         setIsFollowUpContextLoading(false);
@@ -445,19 +630,46 @@ const ChatPage: React.FC = () => {
       const usedSkillIds = normalizeSelectedSkillIds(overrideSkillIds ?? selectedSkillIds);
       const usedSkillNames = usedSkillIds.length > 0 ? getSkillNames(usedSkillIds) : ['通用'];
 
-      const stockCode = extractStockCodeFromMessage(msgText);
+      const stockCode = extractStockCodeForScopeSwitch(msgText);
+      const stockIndexReady = stockIndexLoaded && !stockIndexFallback;
+      let nextActiveStockContext = activeStockContext;
       if (stockCode) {
-        setActiveStockCode(stockCode);
+        const matchedStock = stockIndexReady ? findExactStockByCode(stockCode, stockIndex) : null;
+        const normalizedCode = matchedStock?.code ?? normalizeStockCode(stockCode);
+        const stockName = normalizedCode === activeStockContext?.stock_code
+          ? activeStockContext.stock_name
+          : matchedStock?.name ?? null;
+        nextActiveStockContext = createActiveStockContext(
+          normalizedCode,
+          stockName,
+          normalizedCode === activeStockContext?.stock_code ? 'message' : 'user_switch',
+        );
+        setActiveStockContext(nextActiveStockContext);
+      } else if (stockIndexReady) {
+        const nameSwitchContext = resolveNameSwitchContext(msgText, stockIndex, activeStockContext ? 'user_switch' : 'message');
+        if (nameSwitchContext) {
+          nextActiveStockContext = nameSwitchContext;
+          setActiveStockContext(nameSwitchContext);
+        }
       }
+
+      const reportContextForPayload =
+        nextActiveStockContext?.stock_code === reportFollowUpStockCodeRef.current
+          ? reportFollowUpContextRef.current
+          : null;
+      const allowedStocks = stockIndexReady
+        ? resolveComparisonAllowedStocks(msgText, stockIndex, nextActiveStockContext?.stock_code)
+        : [];
 
       const payload = {
         message: msgText,
         session_id: sessionId,
         ...(usedSkillIds.length > 0 ? { skills: usedSkillIds } : {}),
-        context: followUpContextRef.current ?? undefined,
+        context: buildChatContextPayload(nextActiveStockContext, reportContextForPayload, allowedStocks),
       };
       followUpHydrationTokenRef.current += 1;
-      followUpContextRef.current = null;
+      reportFollowUpContextRef.current = null;
+      reportFollowUpStockCodeRef.current = null;
       setIsFollowUpContextLoading(false);
 
       setInput('');
@@ -467,7 +679,20 @@ const ChatPage: React.FC = () => {
         skillName: usedSkillNames.join('、'),
       });
     },
-    [getSkillNames, input, loading, normalizeSelectedSkillIds, requestScrollToBottom, selectedSkillIds, sessionId, startStream],
+    [
+      activeStockContext,
+      getSkillNames,
+      input,
+      loading,
+      normalizeSelectedSkillIds,
+      requestScrollToBottom,
+      selectedSkillIds,
+      sessionId,
+      startStream,
+      stockIndex,
+      stockIndexFallback,
+      stockIndexLoaded,
+    ],
   );
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {

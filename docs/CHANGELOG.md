@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- [修复] 问股报告追问改为持续携带当前标的，并在 Agent 工具调用前拦截或改写错误 `stock_code`。
 - [修复] Web 个股栏和历史卡片在窄布局下不再让市场阶段标签遮挡股票名称。
 - [修复] 问股自由文本追问不再将 TTM、PE、YOY 等金融缩写误识别为新股票代码。
 - [修复] GitHub Actions 每日分析工作流读取 SearXNG 自建实例地址时支持 Variables 优先、Secrets 回退，修复仅配置 Variables 时 URL 不生效的问题。

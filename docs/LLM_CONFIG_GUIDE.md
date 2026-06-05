@@ -198,6 +198,8 @@ LITELLM_MODEL=ollama/qwen3:8b
 - 该兼容逻辑只增强“失败时保留后端真实错误原因”和“未配置 LLM 时给出更具体诊断”，**不会**静默删除、清空、迁移或改写你现有的 `GEMINI_*` / `OPENAI_*` / `ANTHROPIC_*` / `LITELLM_*` 配置。
 - 如果当前环境没有任何有效 Agent 模型链路，问股页面会继续按失败语义返回，并直接展示后端真实配置诊断；补齐任一有效模型来源后即可恢复，无需额外执行配置迁移脚本。
 - 推荐的新配置方式仍然是显式设置 `LITELLM_MODEL` / `AGENT_LITELLM_MODEL` 或使用 `LLM_CHANNELS`；legacy provider keys 目前保留为兼容回退路径，方便旧 `.env`、本地 macOS 开发环境和历史部署平滑继续运行。
+- 从历史报告进入问股后，Web/桌面主链路会把当前 `stock_code` / `stock_name` 作为会话级结构化上下文持续传给后端；`previous_*` 报告摘要字段只在首轮追问复用，不会在每轮重复注入。
+- 当请求上下文已有当前标的时，Agent runner 会在 stock-scoped tool 执行前校验工具参数：`TTM`、`PE`、`MACD` 等指标缩写会沿用当前标的，未显式切换到其他股票的 tool call 会被 `stock_scope_conflict` 阻断并写入 tool call log。Bot 自由聊天在未提供 `context.stock_code` 时仍按原行为运行，sticky context 可后续增强。
 
 ### 问股可见对话上下文压缩
 

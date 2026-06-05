@@ -9,7 +9,7 @@
  *   BJ920748    → 920748     920748.BJ   → 920748
  *   HK00700     → HK00700    00700.HK    → HK00700
  *   hk1810      → HK01810    1810.HK     → HK01810
- *   AAPL        → AAPL       TSLA        → TSLA
+ *   AAPL.US     → AAPL       TSLA        → TSLA
  */
 export function normalizeStockCode(stockCode: string): string {
   const code = stockCode.trim();
@@ -70,7 +70,12 @@ export function normalizeStockCode(stockCode: string): string {
     if ((suffix === 'SH' || suffix === 'SS' || suffix === 'SZ' || suffix === 'BJ') && /^\d+$/.test(base)) {
       return base;
     }
+
+    // AAPL.US → AAPL for session-scope comparisons.
+    if (suffix === 'US' && /^[A-Za-z]{1,5}$/.test(base)) {
+      return base.toUpperCase();
+    }
   }
 
-  return code;
+  return /^[A-Za-z]{1,5}$/.test(code) ? upper : code;
 }

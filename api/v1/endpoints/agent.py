@@ -299,6 +299,9 @@ async def _run_research_in_background(
 class ResearchRequest(BaseModel):
     question: str
     stock_code: Optional[str] = None
+    stock_name: Optional[str] = None
+    allowed_stock_codes: List[str] = Field(default_factory=list)
+    allowed_stocks: List[Dict[str, Any]] = Field(default_factory=list)
 
 class ResearchResponse(BaseModel):
     success: bool
@@ -323,6 +326,12 @@ async def agent_research(request: ResearchRequest):
     if request.stock_code:
         question = f"[Stock: {request.stock_code}] {question}"
         context = {"stock_code": request.stock_code}
+        if request.stock_name:
+            context["stock_name"] = request.stock_name
+        if request.allowed_stock_codes:
+            context["allowed_stock_codes"] = request.allowed_stock_codes
+        if request.allowed_stocks:
+            context["allowed_stocks"] = request.allowed_stocks
 
     try:
         from src.agent.research import ResearchAgent

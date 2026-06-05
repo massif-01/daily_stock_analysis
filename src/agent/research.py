@@ -25,6 +25,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from src.agent.llm_adapter import LLMToolAdapter
 from src.agent.runner import RunLoopResult, run_agent_loop
+from src.agent.stock_scope import StockScope
 from src.agent.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -151,6 +152,7 @@ class ResearchAgent:
                 context,
                 tokens_used,
                 timeout_seconds=self._remaining_timeout_seconds(started_at, timeout_seconds),
+                scope_message=query,
             )
             tokens_used += finding.get("tokens", 0)
             if finding.get("timed_out"):
@@ -343,6 +345,7 @@ Return a JSON object:
         context: Optional[Dict[str, Any]],
         current_tokens: int,
         timeout_seconds: Optional[float] = None,
+        scope_message: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Research a single sub-question using the agent loop."""
         if timeout_seconds is not None and timeout_seconds <= 0:
@@ -380,6 +383,7 @@ Token budget remaining: ~{remaining_budget}
                 max_steps=4,
                 max_wall_clock_seconds=timeout_seconds,
                 tool_call_timeout_seconds=timeout_seconds,
+                stock_scope=StockScope.from_context(context, scope_message or question),
             )
             if not result.success and self._looks_like_timeout_error(result.error):
                 return {
