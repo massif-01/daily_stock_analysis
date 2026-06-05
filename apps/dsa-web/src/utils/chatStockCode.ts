@@ -40,6 +40,10 @@ function isDeniedTickerCandidate(value: string): boolean {
 }
 
 export function extractStockCodeFromMessage(message: string): string | null {
+  return extractStockCodesFromMessage(message)[0] ?? null;
+}
+
+export function extractStockCodesFromMessage(message: string): string[] {
   // More specific patterns first to avoid greedy \d{6} capturing inside .SH/.SZ codes
   const patterns = [
     /\b(30\d{4}\.SZ)\b/gi,
@@ -54,20 +58,40 @@ export function extractStockCodeFromMessage(message: string): string | null {
     /\b(\d{5,6})\b/g,
     /\b([A-Z]{2,5})\b/g,
   ];
-  for (const pattern of patterns) {
-    const matches = message.match(pattern);
-    if (matches) {
-      for (const m of matches) {
-        if (EXCHANGE_PREFIXES.has(m.toUpperCase())) {
-          continue;
-        }
-        if (isDeniedTickerCandidate(m)) {
-          continue;
-        }
-        const { valid, normalized } = validateStockCode(m);
-        if (valid) return normalizeStockCode(normalized);
-      }
+
+  const matches: Array<{ value: string; index: number; priority: number }> = [];
+  patterns.forEach((pattern, priority) => {
+    pattern.lastIndex = 0;
+    for (const match of message.matchAll(pattern)) {
+      const value = match[1] ?? match[0];
+      matches.push({
+        value,
+        index: match.index ?? 0,
+        priority,
+      });
+    }
+  });
+
+  matches.sort((a, b) => a.index - b.index || a.priority - b.priority);
+
+  const stockCodes: string[] = [];
+  const seen = new Set<string>();
+  for (const match of matches) {
+    if (EXCHANGE_PREFIXES.has(match.value.toUpperCase())) {
+      continue;
+    }
+    if (isDeniedTickerCandidate(match.value)) {
+      continue;
+    }
+    const { valid, normalized } = validateStockCode(match.value);
+    if (!valid) {
+      continue;
+    }
+    const stockCode = normalizeStockCode(normalized);
+    if (!seen.has(stockCode)) {
+      seen.add(stockCode);
+      stockCodes.push(stockCode);
     }
   }
-  return null;
+  return stockCodes;
 }

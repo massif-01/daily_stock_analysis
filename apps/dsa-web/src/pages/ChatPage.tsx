@@ -25,7 +25,7 @@ import {
 } from '../utils/chatFollowUp';
 import { isNearBottom } from '../utils/chatScroll';
 import { getReportText } from '../utils/reportLanguage';
-import { extractStockCodeFromMessage } from '../utils/chatStockCode';
+import { extractStockCodesFromMessage } from '../utils/chatStockCode';
 import { normalizeStockCode } from '../utils/stockCode';
 
 // Quick question examples shown on empty state
@@ -40,7 +40,9 @@ const QUICK_QUESTIONS = [
 
 const MAX_SELECTED_SKILLS = 3;
 const CONTEXT_COMPRESSION_CONFIG_KEY = 'AGENT_CONTEXT_COMPRESSION_ENABLED';
-const COMPARE_STOCK_MESSAGE_RE = /比较|对比|\bvs\b|和[^，。,.!?！？]{0,40}比/i;
+const STRONG_COMPARE_STOCK_MESSAGE_RE = /比较|对比|\bvs\b|和[^，。,.!?！？]{0,40}比/i;
+const WEAK_COMPARE_STOCK_MESSAGE_RE = /差异(?!化)|区别|不同|相比|对照|比一比/;
+const LINKED_COMPARE_STOCK_MESSAGE_RE = /(?:和|与|跟|同)[^，。,.!?！？]{0,40}(?:差异(?!化)|区别|不同|相比|对照|比一比)/;
 const SWITCH_STOCK_MESSAGE_RE = /换成|改看|分析|看看|研究|诊断/;
 
 type ActiveStockContext = Pick<ChatFollowUpContext, 'stock_code' | 'stock_name'>;
@@ -54,6 +56,28 @@ const getMessageSkillNames = (msg: Message): string[] => {
 };
 
 const getMessageSkillLabel = (msg: Message): string => getMessageSkillNames(msg).join('、');
+
+const isCompareStockMessage = (
+  message: string,
+  stockCodes: string[],
+  currentStockCode?: string | null,
+): boolean => {
+  if (STRONG_COMPARE_STOCK_MESSAGE_RE.test(message)) {
+    return true;
+  }
+  if (!WEAK_COMPARE_STOCK_MESSAGE_RE.test(message)) {
+    return false;
+  }
+  if (stockCodes.length >= 2) {
+    return true;
+  }
+  if (!currentStockCode) {
+    return false;
+  }
+  const current = normalizeStockCode(currentStockCode);
+  const hasNewStock = stockCodes.some((code) => code !== current);
+  return hasNewStock && LINKED_COMPARE_STOCK_MESSAGE_RE.test(message);
+};
 
 const ChatPage: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -463,11 +487,12 @@ const ChatPage: React.FC = () => {
       const usedSkillIds = normalizeSelectedSkillIds(overrideSkillIds ?? selectedSkillIds);
       const usedSkillNames = usedSkillIds.length > 0 ? getSkillNames(usedSkillIds) : ['通用'];
 
-      const stockCode = extractStockCodeFromMessage(msgText);
+      const stockCodes = extractStockCodesFromMessage(msgText);
+      const stockCode = stockCodes[0] ?? null;
       let nextActiveStockContext = activeStockContext;
       let useActiveContextForThisSend = false;
       if (stockCode) {
-        const isCompare = COMPARE_STOCK_MESSAGE_RE.test(msgText);
+        const isCompare = isCompareStockMessage(msgText, stockCodes, activeStockContext?.stock_code);
         const isSwitch = SWITCH_STOCK_MESSAGE_RE.test(msgText);
         const isDifferentStock = activeStockContext?.stock_code !== stockCode;
         if (!isCompare && (!activeStockContext || isSwitch)) {

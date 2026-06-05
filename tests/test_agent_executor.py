@@ -433,6 +433,46 @@ class TestAgentExecutor(unittest.TestCase):
         self.assertEqual(executed_calls, [("quote", "1810.HK")])
         self.assertFalse(result.tool_calls_log[0].get("guarded", False))
 
+    def test_run_agent_loop_allows_compare_hint_stock_code(self):
+        executed_calls = []
+        registry = _make_stock_registry(executed_calls)
+        adapter = _make_mock_adapter()
+        adapter.call_with_tools.side_effect = [
+            LLMResponse(
+                content="Need quote.",
+                tool_calls=[
+                    ToolCall(id="quote_1", name="get_realtime_quote", arguments={"stock_code": "AAPL"}),
+                ],
+                usage={"total_tokens": 10},
+                provider="openai",
+            ),
+            LLMResponse(
+                content="Compared allowed stock.",
+                tool_calls=[],
+                usage={"total_tokens": 10},
+                provider="openai",
+            ),
+        ]
+        message = "分析 600519 和 AAPL 的差异"
+        scope = resolve_stock_scope(message, {"stock_code": "600519", "stock_name": "贵州茅台"}).stock_scope
+
+        result = run_agent_loop(
+            messages=[
+                {"role": "system", "content": "system"},
+                {"role": "user", "content": message},
+            ],
+            tool_registry=registry,
+            llm_adapter=adapter,
+            max_steps=3,
+            stock_scope=scope,
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual(scope.mode, "compare")
+        self.assertEqual(scope.allowed_stock_codes, {"600519", "AAPL"})
+        self.assertEqual(executed_calls, [("quote", "AAPL")])
+        self.assertFalse(result.tool_calls_log[0].get("guarded", False))
+
     def test_run_agent_loop_blocks_exchange_suffix_tokens_from_compare_scope(self):
         cases = [
             ("比较 1810.HK 和 AAPL", "HK"),

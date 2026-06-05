@@ -24,7 +24,11 @@ SWITCH_CLEANUP_KEYS = {
     "market_phase_context",
 }
 
-_COMPARE_PATTERN = re.compile(r"比较|对比|vs\b|和[^，。,.!?！？]{0,40}比", re.IGNORECASE)
+_STRONG_COMPARE_PATTERN = re.compile(r"比较|对比|vs\b|和[^，。,.!?！？]{0,40}比", re.IGNORECASE)
+_WEAK_COMPARE_HINT_PATTERN = re.compile(r"差异(?!化)|区别|不同|相比|对照|比一比")
+_LINKED_COMPARE_PATTERN = re.compile(
+    r"(?:和|与|跟|同)(?P<body>[^，。,.!?！？]{0,40})(?:差异(?!化)|区别|不同|相比|对照|比一比)"
+)
 _SWITCH_PATTERN = re.compile(r"换成|改看|分析|看看|研究|诊断")
 _LOWERCASE_TICKER_PATTERN = re.compile(r"(?<![a-zA-Z.])([a-z]{2,5}(?:\.[a-z]{1,2})?)(?![a-zA-Z])")
 
@@ -104,11 +108,34 @@ def extract_stock_codes(text: str) -> List[str]:
             raw = match.group(1) if match.lastindex else match.group(0)
             _append_candidate(candidates, raw)
 
-    if _SWITCH_PATTERN.search(text) or _COMPARE_PATTERN.search(text):
+    if (
+        _SWITCH_PATTERN.search(text)
+        or _STRONG_COMPARE_PATTERN.search(text)
+        or _WEAK_COMPARE_HINT_PATTERN.search(text)
+    ):
         for match in _LOWERCASE_TICKER_PATTERN.finditer(text):
             _append_candidate(candidates, match.group(1))
 
     return candidates
+
+
+def _is_compare_message(message: str, candidates: List[str], current_code: str) -> bool:
+    if _STRONG_COMPARE_PATTERN.search(message):
+        return True
+    if not _WEAK_COMPARE_HINT_PATTERN.search(message):
+        return False
+    if len(candidates) >= 2:
+        return True
+
+    new_candidates = {code for code in candidates if code != current_code}
+    if not new_candidates:
+        return False
+
+    for match in _LINKED_COMPARE_PATTERN.finditer(message):
+        body_candidates = set(extract_stock_codes(f"比较 {match.group('body')}"))
+        if body_candidates & new_candidates:
+            return True
+    return False
 
 
 def _with_skills(context: Dict[str, Any], skills: Optional[Iterable[str]]) -> Dict[str, Any]:
@@ -154,7 +181,7 @@ def resolve_stock_scope(
     expected = current_code
     allowed = {current_code}
 
-    if _COMPARE_PATTERN.search(message or ""):
+    if _is_compare_message(message or "", candidates, current_code):
         mode = "compare"
         allowed.update(candidates)
     elif _SWITCH_PATTERN.search(message or "") and len(new_candidates) == 1:

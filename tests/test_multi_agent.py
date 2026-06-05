@@ -269,6 +269,36 @@ class TestStockScopeResolution(unittest.TestCase):
         self.assertEqual(result.effective_context["stock_name"], "匿名标的")
         self.assertEqual(result.stock_scope.allowed_stock_codes, {"600519", "AAPL"})
 
+    def test_compare_hints_allow_multiple_codes_without_switching_context(self):
+        cases = [
+            "分析 600519 和 AAPL 的差异",
+            "AAPL 相比 600519 怎么样",
+            "和 AAPL 的差异怎么看",
+        ]
+
+        for message in cases:
+            with self.subTest(message=message):
+                result = resolve_stock_scope(
+                    message,
+                    {"stock_code": "600519", "stock_name": "匿名标的"},
+                )
+
+                self.assertEqual(result.stock_scope.mode, "compare")
+                self.assertEqual(result.effective_context["stock_code"], "600519")
+                self.assertEqual(result.effective_context["stock_name"], "匿名标的")
+                self.assertEqual(result.stock_scope.allowed_stock_codes, {"600519", "AAPL"})
+
+    def test_single_stock_difference_phrase_still_switches_context(self):
+        result = resolve_stock_scope(
+            "分析 AAPL 的差异化优势",
+            {"stock_code": "600519", "stock_name": "匿名标的"},
+        )
+
+        self.assertEqual(result.stock_scope.mode, "switch")
+        self.assertEqual(result.stock_scope.expected_stock_code, "AAPL")
+        self.assertEqual(result.effective_context["stock_code"], "AAPL")
+        self.assertEqual(result.effective_context["stock_name"], "")
+
     def test_compare_does_not_treat_exchange_suffixes_as_standalone_tickers(self):
         cases = [
             ("比较 1810.HK 和 AAPL", {"600519", "HK01810", "AAPL"}, {"HK"}),
