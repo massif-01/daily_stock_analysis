@@ -27,7 +27,6 @@ from __future__ import annotations
 import json
 import inspect
 import logging
-import re
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
@@ -41,6 +40,7 @@ from src.agent.protocols import (
     normalize_decision_signal,
 )
 from src.agent.runner import parse_dashboard_json
+from src.agent import stock_text as _stock_text
 from src.agent.tools.registry import ToolRegistry
 from src.agent.chat_context import build_visible_chat_history
 from src.config import AGENT_MAX_STEPS_DEFAULT, get_config
@@ -50,6 +50,11 @@ if TYPE_CHECKING:
     from src.agent.executor import AgentResult
 
 logger = logging.getLogger(__name__)
+
+_COMMON_WORDS = _stock_text._COMMON_WORDS
+_LOWERCASE_TICKER_HINTS = _stock_text._LOWERCASE_TICKER_HINTS
+_is_denied_ticker_candidate = _stock_text._is_denied_ticker_candidate
+_extract_stock_code = _stock_text._extract_stock_code
 
 # Valid orchestrator modes (ordered by cost/depth)
 VALID_MODES = ("quick", "standard", "full", "specialist")
@@ -1361,88 +1366,6 @@ class AgentOrchestrator:
         prefix = f"风控接管：最终信号已下调为 {signal}。"
         merged = " ".join(dict.fromkeys([prefix] + warnings))
         return merged[:500]
-
-
-# Common English words (2-5 uppercase letters) that should NOT be treated as
-# US stock tickers.  This set is checked by _extract_stock_code() and should
-# be kept at module level to avoid re-creating it on every call.
-_COMMON_WORDS: set[str] = {
-    # Pronouns / articles / prepositions / conjunctions
-    "AM", "AS", "AT", "BE", "BY", "DO", "GO", "HE", "IF", "IN",
-    "IS", "IT", "ME", "MY", "NO", "OF", "ON", "OR", "SO", "TO",
-    "UP", "US", "WE",
-    "THE", "AND", "FOR", "ARE", "BUT", "NOT", "YOU", "ALL",
-    "CAN", "HAD", "HER", "WAS", "ONE", "OUR", "OUT", "HAS",
-    "HIS", "HOW", "ITS", "LET", "MAY", "NEW", "NOW", "OLD",
-    "SEE", "WAY", "WHO", "DID", "GET", "HIM", "USE", "SAY",
-    "SHE", "TOO", "ANY", "WITH", "FROM", "THAT", "THAN",
-    "THIS", "WHAT", "WHEN", "WILL", "JUST", "ALSO",
-    "BEEN", "EACH", "HAVE", "MUCH", "ONLY", "OVER",
-    "SOME", "SUCH", "THEM", "THEN", "THEY", "VERY",
-    "WERE", "YOUR", "ABOUT", "AFTER", "COULD", "EVERY",
-    "OTHER", "THEIR", "THERE", "THESE", "THOSE", "WHICH",
-    "WOULD", "BEING", "STILL", "WHERE",
-    # Finance/analysis jargon that looks like tickers
-    "BUY", "SELL", "HOLD", "LONG", "PUT", "CALL",
-    "ETF", "IPO", "RSI", "EPS", "PEG", "ROE", "ROA",
-    "USA", "USD", "CNY", "HKD", "EUR", "GBP",
-    "STOCK", "TRADE", "PRICE", "INDEX", "FUND",
-    "HIGH", "LOW", "OPEN", "CLOSE", "STOP", "LOSS",
-    "TREND", "BULL", "BEAR", "RISK", "CASH", "BOND",
-    "MACD", "VWAP", "BOLL",
-    "TTM", "LTM", "NTM", "FWD", "YOY", "QOQ", "YTD",
-    "EBIT", "EBITDA", "DCF", "CAGR", "FCF", "NAV", "AUM",
-    "PE", "PB",
-    # Greetings / filler words that often appear in chat messages
-    "HELLO", "PLEASE", "THANKS", "CHECK", "LOOK", "THINK",
-    "MAYBE", "GUESS", "TELL", "SHOW", "WHAT", "WHATS",
-    "WHY", "WHEN", "HOWDY", "HEY", "HI",
-}
-
-_LOWERCASE_TICKER_HINTS = re.compile(
-    r"分析|看看|查一?下|研究|诊断|走势|趋势|股价|股票|个股",
-)
-
-
-def _is_denied_ticker_candidate(candidate: str) -> bool:
-    """Return whether a text token should not be auto-treated as a ticker."""
-    return (candidate or "").strip().upper() in _COMMON_WORDS
-
-
-def _extract_stock_code(text: str) -> str:
-    """Best-effort stock code extraction from free text."""
-    # A-share 6-digit — use lookarounds instead of \b because Python's \b
-    # does not fire at Chinese-character / digit boundaries.
-    m = re.search(r'(?<!\d)((?:[03648]\d{5}|92\d{4}))(?!\d)', text)
-    if m:
-        return m.group(1)
-    # HK — same lookaround approach
-    m = re.search(r'(?<![a-zA-Z])(hk\d{5})(?!\d)', text, re.IGNORECASE)
-    if m:
-        return m.group(1).upper()
-    # US ticker — require 2+ uppercase letters bounded by non-alpha chars.
-    for match in re.finditer(r'(?<![a-zA-Z])([A-Z]{2,5}(?:\.[A-Z]{1,2})?)(?![a-zA-Z])', text):
-        candidate = match.group(1)
-        if not _is_denied_ticker_candidate(candidate):
-            return candidate
-
-    stripped = (text or "").strip()
-    bare_match = re.fullmatch(r'([A-Za-z]{2,5}(?:\.[A-Za-z]{1,2})?)', stripped)
-    if bare_match:
-        candidate = bare_match.group(1).upper()
-        if not _is_denied_ticker_candidate(candidate):
-            return candidate
-
-    if not _LOWERCASE_TICKER_HINTS.search(stripped):
-        return ""
-
-    for match in re.finditer(r'(?<![a-zA-Z])([A-Za-z]{2,5}(?:\.[A-Za-z]{1,2})?)(?![a-zA-Z])', text):
-        raw_candidate = match.group(1)
-        candidate = raw_candidate.upper()
-        if _is_denied_ticker_candidate(candidate):
-            continue
-        return candidate
-    return ""
 
 
 def _downgrade_signal(signal: str, steps: int = 1) -> str:

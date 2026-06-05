@@ -154,8 +154,9 @@ class TestAgentExecutor(unittest.TestCase):
         executor = AgentExecutor(registry, adapter, max_steps=2)
         captured = {}
 
-        def fake_run_loop(messages, tool_decls, parse_dashboard, progress_callback=None):
+        def fake_run_loop(messages, tool_decls, parse_dashboard, progress_callback=None, stock_scope=None):
             captured["messages"] = messages
+            captured["stock_scope"] = stock_scope
             return AgentResult(success=True, content="assistant reply")
 
         compressed_history = [
@@ -187,6 +188,42 @@ class TestAgentExecutor(unittest.TestCase):
         assert messages[3]["content"].startswith("[系统提供的历史分析上下文，可供参考对比]")
         assert messages[4]["role"] == "assistant"
         assert messages[-1] == {"role": "user", "content": "当前问题"}
+        assert captured["stock_scope"].active_stock_code == "600519"
+
+    def test_chat_with_only_active_stock_context_does_not_inject_report_ack(self):
+        registry = _make_registry_with_echo()
+        adapter = _make_mock_adapter()
+        adapter._config = MagicMock()
+        executor = AgentExecutor(registry, adapter, max_steps=2)
+        captured = {}
+
+        def fake_run_loop(messages, tool_decls, parse_dashboard, progress_callback=None, stock_scope=None):
+            captured["messages"] = messages
+            captured["stock_scope"] = stock_scope
+            return AgentResult(success=True, content="assistant reply")
+
+        with patch.object(executor, "_run_loop", side_effect=fake_run_loop):
+            with patch(
+                "src.agent.executor.build_agent_chat_context_bundle",
+                return_value=SimpleNamespace(context_messages=[], diagnostics={}),
+            ):
+                with patch("src.agent.conversation.conversation_manager.get_or_create"):
+                    with patch("src.agent.conversation.conversation_manager.add_message"):
+                        executor.chat(
+                            "如果不考虑 TTM 呢",
+                            "session-1",
+                            context={
+                                "stock_code": "600519",
+                                "stock_name": "示例股票",
+                            },
+                        )
+
+        messages = captured["messages"]
+        assert messages == [
+            {"role": "system", "content": messages[0]["content"]},
+            {"role": "user", "content": "如果不考虑 TTM 呢"},
+        ]
+        assert captured["stock_scope"].active_stock_code == "600519"
 
     def test_prompt_omits_hardcoded_trend_baseline_when_default_policy_is_empty(self):
         """Explicit skill runs should not silently keep the legacy trend baseline."""

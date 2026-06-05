@@ -19,6 +19,7 @@ from src.agent.llm_adapter import LLMToolAdapter
 from src.agent.memory import AgentMemory
 from src.agent.protocols import AgentContext, AgentOpinion, StageResult, StageStatus
 from src.agent.runner import RunLoopResult, run_agent_loop
+from src.agent.stock_scope import StockScope
 from src.agent.skills.defaults import extract_skill_id
 from src.agent.tools.registry import ToolRegistry
 from src.market_phase_prompt import format_market_phase_prompt_section
@@ -119,6 +120,10 @@ class BaseAgent(ABC):
                 max_steps=self.max_steps,
                 progress_callback=progress_callback,
                 max_wall_clock_seconds=timeout_seconds,
+                stock_scope=StockScope.from_context(
+                    {"stock_code": ctx.stock_code, "stock_name": ctx.stock_name},
+                    ctx.query,
+                ),
             )
 
             result.tokens_used = loop_result.total_tokens

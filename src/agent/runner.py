@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
 from src.agent.llm_adapter import LLMToolAdapter
+from src.agent.stock_scope import StockScope, StockScopeDecision, guard_tool_calls
 from src.agent.tools.registry import ToolRegistry
 from src.storage import persist_llm_usage as _persist_usage
 
@@ -368,6 +369,7 @@ def run_agent_loop(
     thinking_labels: Optional[Dict[str, str]] = None,
     max_wall_clock_seconds: Optional[float] = None,
     tool_call_timeout_seconds: Optional[float] = None,
+    stock_scope: Optional[StockScope] = None,
 ) -> RunLoopResult:
     """Execute the ReAct LLM ↔ tool loop.
 
@@ -385,6 +387,7 @@ def run_agent_loop(
         thinking_labels: Override map of tool_name → friendly label.
         max_wall_clock_seconds: Optional overall timeout budget for the loop.
         tool_call_timeout_seconds: Optional timeout for one parallel tool batch.
+        stock_scope: Optional structured current-stock contract for stock tools.
 
     Returns:
         A :class:`RunLoopResult` with the final content, stats, and the
@@ -492,10 +495,15 @@ def run_agent_loop(
 
         if response.tool_calls:
             # ---- tool execution branch ----
+            guarded_tool_calls, stock_scope_decisions = guard_tool_calls(
+                response.tool_calls,
+                stock_scope=stock_scope,
+                tool_registry=tool_registry,
+            )
             logger.info(
                 "Agent requesting %d tool call(s): %s",
-                len(response.tool_calls),
-                [tc.name for tc in response.tool_calls],
+                len(guarded_tool_calls),
+                [tc.name for tc in guarded_tool_calls],
             )
 
             # Append assistant message (with tool_calls) to history
@@ -512,7 +520,7 @@ def run_agent_loop(
                         **({"provider_specific_fields": tc.provider_specific_fields} if tc.provider_specific_fields else {}),
                         **({"thought_signature": tc.thought_signature} if tc.thought_signature is not None else {}),
                     }
-                    for tc in response.tool_calls
+                    for tc in guarded_tool_calls
                 ],
             }
             if response.reasoning_content is not None:
@@ -529,17 +537,18 @@ def run_agent_loop(
                     tool_call_timeout_seconds if tool_call_timeout_seconds and tool_call_timeout_seconds > 0 else remaining_timeout,
                 )
             tool_results = _execute_tools(
-                response.tool_calls,
+                guarded_tool_calls,
                 tool_registry,
                 step + 1,
                 progress_callback,
                 tool_calls_log,
                 non_retriable_tool_results,
                 tool_wait_timeout_seconds=effective_tool_timeout,
+                stock_scope_decisions=stock_scope_decisions,
             )
 
             # Append tool results preserving original call order
-            tc_order = {tc.id: i for i, tc in enumerate(response.tool_calls)}
+            tc_order = {tc.id: i for i, tc in enumerate(guarded_tool_calls)}
             tool_results.sort(key=lambda x: tc_order.get(x["tc"].id, 0))
             for tr in tool_results:
                 messages.append(
@@ -618,6 +627,7 @@ def _execute_tools(
     tool_calls_log: List[Dict[str, Any]],
     non_retriable_tool_results: Optional[Dict[str, str]] = None,
     tool_wait_timeout_seconds: Optional[float] = None,
+    stock_scope_decisions: Optional[Dict[str, StockScopeDecision]] = None,
 ) -> List[Dict[str, Any]]:
     """Execute one or more tool calls, returning ordered result dicts.
 
@@ -626,6 +636,13 @@ def _execute_tools(
 
     def _exec_single(tc_item):
         t0 = time.time()
+        decision = (stock_scope_decisions or {}).get(tc_item.id)
+        if decision and decision.action == "block":
+            res_str = serialize_tool_result(decision.conflict_result or {})
+            dur = round(time.time() - t0, 2)
+            logger.info("Tool '%s' blocked by stock scope: %s", tc_item.name, decision.reason)
+            return tc_item, res_str, False, dur, False
+
         cache_key = _build_tool_cache_key(tc_item.name, tc_item.arguments)
 
         if cache_key and non_retriable_tool_results is not None and cache_key in non_retriable_tool_results:
@@ -687,6 +704,9 @@ def _execute_tools(
             "success": success, "duration": dur, "result_length": len(result_str),
             "cached": cached,
         }
+        decision = (stock_scope_decisions or {}).get(tc.id)
+        if decision:
+            log_entry.update(decision.log_fields())
         if tool_wait_timeout_seconds and tool_wait_timeout_seconds > 0 and not success:
             try:
                 if json.loads(result_str).get("timeout") is True:
@@ -713,11 +733,15 @@ def _execute_tools(
                 tc_item, result_str, success, dur, cached = future.result()
                 if progress_callback:
                     progress_callback({"type": "tool_done", "step": step, "tool": tc_item.name, "success": success, "duration": dur})
-                tool_calls_log.append({
+                log_entry = {
                     "step": step, "tool": tc_item.name, "arguments": tc_item.arguments,
                     "success": success, "duration": dur, "result_length": len(result_str),
                     "cached": cached,
-                })
+                }
+                decision = (stock_scope_decisions or {}).get(tc_item.id)
+                if decision:
+                    log_entry.update(decision.log_fields())
+                tool_calls_log.append(log_entry)
                 results.append({"tc": tc_item, "result_str": result_str})
         except FuturesTimeoutError:
             timeout_triggered = True
@@ -742,7 +766,7 @@ def _execute_tools(
                             "success": False,
                             "duration": round(tool_wait_timeout_seconds or 0.0, 2),
                         })
-                    tool_calls_log.append({
+                    log_entry = {
                         "step": step,
                         "tool": tc_item.name,
                         "arguments": tc_item.arguments,
@@ -751,7 +775,11 @@ def _execute_tools(
                         "result_length": len(result_str),
                         "cached": False,
                         "timeout": True,
-                    })
+                    }
+                    decision = (stock_scope_decisions or {}).get(tc_item.id)
+                    if decision:
+                        log_entry.update(decision.log_fields())
+                    tool_calls_log.append(log_entry)
                     results.append({"tc": tc_item, "result_str": result_str})
         finally:
             pool.shutdown(wait=not timeout_triggered, cancel_futures=timeout_triggered)

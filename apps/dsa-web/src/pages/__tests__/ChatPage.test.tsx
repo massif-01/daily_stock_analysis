@@ -28,6 +28,7 @@ const {
   mockRemoveFromWatchlist,
   mockDownloadSession,
   mockFormatSessionAsMarkdown,
+  mockStockIndexState,
 } = vi.hoisted(() => ({
   mockGetSkills: vi.fn(),
   mockDeleteChatSession: vi.fn(),
@@ -39,6 +40,36 @@ const {
   mockRemoveFromWatchlist: vi.fn(),
   mockDownloadSession: vi.fn(),
   mockFormatSessionAsMarkdown: vi.fn(),
+  mockStockIndexState: {
+    index: [
+      {
+        canonicalCode: '600519.SH',
+        displayCode: '600519',
+        nameZh: '贵州茅台',
+        pinyinFull: 'guizhoumaotai',
+        pinyinAbbr: 'gzmt',
+        aliases: ['茅台'],
+        market: 'CN',
+        assetType: 'stock',
+        active: true,
+      },
+      {
+        canonicalCode: 'AAPL',
+        displayCode: 'AAPL',
+        nameZh: 'Apple',
+        pinyinFull: 'apple',
+        pinyinAbbr: 'apple',
+        aliases: ['苹果'],
+        market: 'US',
+        assetType: 'stock',
+        active: true,
+      },
+    ],
+    loading: false,
+    error: null,
+    fallback: false,
+    loaded: true,
+  },
 }));
 
 const mockLoadSessions = vi.fn();
@@ -98,6 +129,10 @@ vi.mock('../../api/history', () => ({
   historyApi: {
     getDetail: vi.fn().mockResolvedValue({}),
   },
+}));
+
+vi.mock('../../hooks/useStockIndex', () => ({
+  useStockIndex: () => mockStockIndexState,
 }));
 
 vi.mock('../../stores/agentChatStore', () => {
@@ -160,6 +195,10 @@ beforeEach(() => {
       last_active: '2026-03-15T09:05:00Z',
     },
   ];
+  mockStockIndexState.loading = false;
+  mockStockIndexState.error = null;
+  mockStockIndexState.fallback = false;
+  mockStockIndexState.loaded = true;
   mockGetSkills.mockResolvedValue({
     skills: [
       { id: 'bull_trend', name: '趋势分析', description: '测试技能' },
@@ -294,7 +333,9 @@ describe('ChatPage', () => {
     expect(screen.getByText('配置服务不可用')).toBeInTheDocument();
   });
 
-  it('switches session when clicking anywhere on the session card', async () => {
+  it('switches session when clicking anywhere on a different session card', async () => {
+    mockStoreState.sessionId = 'session-2';
+
     render(
       <MemoryRouter initialEntries={['/chat']}>
         <ChatPage />
@@ -307,7 +348,7 @@ describe('ChatPage', () => {
 
     fireEvent.click(sessionCard);
     expect(mockSwitchSession).toHaveBeenCalledWith('session-1');
-    expect(sessionCard).toHaveAttribute('aria-current', 'page');
+    expect(sessionCard).not.toHaveAttribute('aria-current');
   });
 
   it('renders a separate delete button for each session and opens confirmation without switching', async () => {
@@ -695,7 +736,10 @@ describe('ChatPage', () => {
       expect(mockStartStream).toHaveBeenLastCalledWith(
         expect.objectContaining({
           message: '继续分析成交量',
-          context: undefined,
+          context: {
+            stock_code: '600519',
+            stock_name: '贵州茅台',
+          },
         }),
         expect.objectContaining({
           skillName: '趋势分析',
@@ -762,6 +806,63 @@ describe('ChatPage', () => {
     });
   });
 
+  it('does not merge hydrated report context after switching to another stock before first send', async () => {
+    vi.mocked(historyApi.getDetail).mockResolvedValue({
+      meta: {
+        id: 1,
+        queryId: 'q-1',
+        stockCode: '600519',
+        stockName: '贵州茅台',
+        reportType: 'detailed',
+        createdAt: '2026-03-18T08:00:00Z',
+        currentPrice: 1523.6,
+        changePct: 1.8,
+      },
+      summary: {
+        analysisSummary: '趋势延续',
+        operationAdvice: '继续观察',
+        trendPrediction: '高位震荡',
+        sentimentScore: 78,
+      },
+      strategy: {
+        stopLoss: '1450',
+      },
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/chat?stock=600519&name=%E8%B4%B5%E5%B7%9E%E8%8C%85%E5%8F%B0&recordId=1']}>
+        <ChatPage />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByDisplayValue('请深入分析 贵州茅台(600519)')).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.queryByText('正在加载历史分析上下文；现在可直接发送追问。')).not.toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByPlaceholderText(/分析 600519/), {
+      target: { value: '换成 AAPL 看看' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => {
+      expect(mockStartStream).toHaveBeenCalled();
+    });
+    const lastCall = mockStartStream.mock.calls[mockStartStream.mock.calls.length - 1];
+    expect(lastCall[0]).toEqual(expect.objectContaining({
+      message: '换成 AAPL 看看',
+      context: {
+        stock_code: 'AAPL',
+        stock_name: 'Apple',
+      },
+    }));
+    expect(lastCall[0].context).not.toHaveProperty('previous_analysis_summary');
+    expect(lastCall[0].context).not.toHaveProperty('previous_change_pct');
+    expect(lastCall[0].context).not.toHaveProperty('previous_price');
+    expect(lastCall[0].context).not.toHaveProperty('previous_strategy');
+  });
+
   it('falls back to base stock context when recordId is missing', async () => {
     render(
       <MemoryRouter initialEntries={['/chat?stock=AAPL']}>
@@ -788,6 +889,218 @@ describe('ChatPage', () => {
       );
     });
     expect(historyApi.getDetail).not.toHaveBeenCalled();
+  });
+
+  it('keeps active stock context for TTM follow-up questions', async () => {
+    render(
+      <MemoryRouter initialEntries={['/chat?stock=600519&name=%E8%B4%B5%E5%B7%9E%E8%8C%85%E5%8F%B0']}>
+        <ChatPage />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByDisplayValue('请深入分析 贵州茅台(600519)')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText(/分析 600519/), {
+      target: { value: '如果不考虑 TTM 呢' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => {
+      expect(mockStartStream).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: '如果不考虑 TTM 呢',
+          context: {
+            stock_code: '600519',
+            stock_name: '贵州茅台',
+          },
+        }),
+        expect.anything(),
+      );
+    });
+  });
+
+  it('switches active stock context for explicit stock codes', async () => {
+    render(
+      <MemoryRouter initialEntries={['/chat?stock=600519&name=%E8%B4%B5%E5%B7%9E%E8%8C%85%E5%8F%B0']}>
+        <ChatPage />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByDisplayValue('请深入分析 贵州茅台(600519)')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText(/分析 600519/), {
+      target: { value: '换成 AAPL 看看' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => {
+      expect(mockStartStream).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: '换成 AAPL 看看',
+          context: {
+            stock_code: 'AAPL',
+            stock_name: 'Apple',
+          },
+        }),
+        expect.anything(),
+      );
+    });
+  });
+
+  it('switches active stock context for exact unique stock names from the local index', async () => {
+    render(
+      <MemoryRouter initialEntries={['/chat']}>
+        <ChatPage />
+      </MemoryRouter>
+    );
+
+    await screen.findByTestId('chat-workspace');
+
+    fireEvent.change(screen.getByPlaceholderText(/分析 600519/), {
+      target: { value: '分析 贵州茅台 走势' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => {
+      expect(mockStartStream).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: '分析 贵州茅台 走势',
+          context: {
+            stock_code: '600519',
+            stock_name: '贵州茅台',
+          },
+        }),
+        expect.anything(),
+      );
+    });
+  });
+
+  it('does not switch by name while the local stock index is unavailable', async () => {
+    mockStockIndexState.loaded = false;
+    mockStockIndexState.loading = true;
+
+    render(
+      <MemoryRouter initialEntries={['/chat']}>
+        <ChatPage />
+      </MemoryRouter>
+    );
+
+    await screen.findByTestId('chat-workspace');
+
+    fireEvent.change(screen.getByPlaceholderText(/分析 600519/), {
+      target: { value: '分析 贵州茅台 走势' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => {
+      expect(mockStartStream).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: '分析 贵州茅台 走势',
+          context: undefined,
+        }),
+        expect.anything(),
+      );
+    });
+  });
+
+  it('keeps active stock context when clicking the current session', async () => {
+    render(
+      <MemoryRouter initialEntries={['/chat?stock=600519&name=%E8%B4%B5%E5%B7%9E%E8%8C%85%E5%8F%B0']}>
+        <ChatPage />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByDisplayValue('请深入分析 贵州茅台(600519)')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '切换到对话 请简要分析 600519' }));
+
+    fireEvent.change(screen.getByPlaceholderText(/分析 600519/), {
+      target: { value: '继续分析成交量' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => {
+      expect(mockSwitchSession).not.toHaveBeenCalled();
+      expect(mockStartStream).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: '继续分析成交量',
+          context: {
+            stock_code: '600519',
+            stock_name: '贵州茅台',
+          },
+        }),
+        expect.anything(),
+      );
+    });
+  });
+
+  it('clears active stock context when switching to another session', async () => {
+    mockStoreState.sessions = [
+      {
+        session_id: 'session-1',
+        title: '请简要分析 600519',
+        message_count: 2,
+        created_at: '2026-03-15T09:00:00Z',
+        last_active: '2026-03-15T09:05:00Z',
+      },
+      {
+        session_id: 'session-2',
+        title: '新的空会话',
+        message_count: 1,
+        created_at: '2026-03-16T09:00:00Z',
+        last_active: '2026-03-16T09:05:00Z',
+      },
+    ];
+
+    render(
+      <MemoryRouter initialEntries={['/chat?stock=600519&name=%E8%B4%B5%E5%B7%9E%E8%8C%85%E5%8F%B0']}>
+        <ChatPage />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByDisplayValue('请深入分析 贵州茅台(600519)')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '切换到对话 新的空会话' }));
+    expect(mockSwitchSession).toHaveBeenCalledWith('session-2');
+
+    fireEvent.change(screen.getByPlaceholderText(/分析 600519/), {
+      target: { value: '继续分析成交量' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => {
+      expect(mockStartStream).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: '继续分析成交量',
+          context: undefined,
+        }),
+        expect.anything(),
+      );
+    });
+  });
+
+  it('clears active stock context when starting a new chat', async () => {
+    render(
+      <MemoryRouter initialEntries={['/chat?stock=600519&name=%E8%B4%B5%E5%B7%9E%E8%8C%85%E5%8F%B0']}>
+        <ChatPage />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByDisplayValue('请深入分析 贵州茅台(600519)')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '开启新对话' }));
+
+    fireEvent.change(screen.getByPlaceholderText(/分析 600519/), {
+      target: { value: '继续分析成交量' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => {
+      expect(mockStartStream).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: '继续分析成交量',
+          context: undefined,
+        }),
+        expect.anything(),
+      );
+    });
   });
 
   it('ignores malformed follow-up query params', async () => {

@@ -27,6 +27,8 @@ except ModuleNotFoundError:
     sys.modules["litellm"] = MagicMock()
 
 from src.agent.orchestrator import _extract_stock_code, _COMMON_WORDS
+from src.agent.stock_text import _COMMON_WORDS as _SHARED_COMMON_WORDS
+from src.agent.stock_text import _extract_stock_code as _shared_extract_stock_code
 from src.agent.protocols import (
     AgentContext,
     AgentOpinion,
@@ -162,6 +164,13 @@ class TestExtractStockCode(unittest.TestCase):
         self.assertEqual(_extract_stock_code("PE AAPL 怎么看"), "AAPL")
         self.assertEqual(_extract_stock_code("TTM AAPL 怎么看"), "AAPL")
         self.assertEqual(_extract_stock_code("WHAT IS PE AAPL"), "AAPL")
+
+    def test_orchestrator_reexports_shared_stock_text_helpers(self):
+        self.assertIs(_COMMON_WORDS, _SHARED_COMMON_WORDS)
+        self.assertEqual(
+            _extract_stock_code("市盈率 TTM 怎么看"),
+            _shared_extract_stock_code("市盈率 TTM 怎么看"),
+        )
 
     # --- Priority: A-share > HK > US ---
 

@@ -25,8 +25,11 @@ import {
 } from '../utils/chatFollowUp';
 import { isNearBottom } from '../utils/chatScroll';
 import { getReportText } from '../utils/reportLanguage';
-import { extractStockCodeFromMessage } from '../utils/chatStockCode';
+import { extractStockCodeFromMessage, isDeniedTickerCandidate } from '../utils/chatStockCode';
 import { normalizeStockCode } from '../utils/stockCode';
+import { useStockIndex } from '../hooks/useStockIndex';
+import { searchStocks } from '../utils/searchStocks';
+import type { StockIndexItem } from '../types/stockIndex';
 
 // Quick question examples shown on empty state
 const QUICK_QUESTIONS = [
@@ -40,6 +43,101 @@ const QUICK_QUESTIONS = [
 
 const MAX_SELECTED_SKILLS = 3;
 const CONTEXT_COMPRESSION_CONFIG_KEY = 'AGENT_CONTEXT_COMPRESSION_ENABLED';
+
+type ActiveStockSource = 'url' | 'history_report' | 'message' | 'user_switch';
+
+type ActiveStockContext = {
+  stock_code: string;
+  stock_name: string | null;
+  source: ActiveStockSource;
+  last_confirmed_at: string;
+};
+
+type ReportFollowUpContext = Pick<
+  ChatFollowUpContext,
+  'previous_analysis_summary' | 'previous_strategy' | 'previous_price' | 'previous_change_pct'
+>;
+
+const EXPLICIT_NAME_SWITCH_PATTERN = /(?:换成|分析|看看|看一下|研究|比较|对比)\s*([A-Za-z\u4e00-\u9fa5][A-Za-z0-9\u4e00-\u9fa5 .·-]{0,40})/i;
+const NAME_SWITCH_TRAILING_PATTERN = /(?:怎么看|怎么样|如何|走势|趋势|分析|看看|看一下|吗|呢|吧|和|跟|与|vs|VS).*$/;
+
+function createActiveStockContext(
+  stockCode: string,
+  stockName: string | null,
+  source: ActiveStockSource,
+): ActiveStockContext {
+  return {
+    stock_code: normalizeStockCode(stockCode),
+    stock_name: stockName,
+    source,
+    last_confirmed_at: new Date().toISOString(),
+  };
+}
+
+function pickReportFollowUpContext(context: ChatFollowUpContext): ReportFollowUpContext | null {
+  const reportContext: ReportFollowUpContext = {};
+  if (context.previous_analysis_summary !== undefined) {
+    reportContext.previous_analysis_summary = context.previous_analysis_summary;
+  }
+  if (context.previous_strategy !== undefined) {
+    reportContext.previous_strategy = context.previous_strategy;
+  }
+  if (context.previous_price !== undefined) {
+    reportContext.previous_price = context.previous_price;
+  }
+  if (context.previous_change_pct !== undefined) {
+    reportContext.previous_change_pct = context.previous_change_pct;
+  }
+  return Object.keys(reportContext).length > 0 ? reportContext : null;
+}
+
+function buildChatContextPayload(
+  activeStockContext: ActiveStockContext | null,
+  reportContext: ReportFollowUpContext | null,
+): ChatFollowUpContext | undefined {
+  if (!activeStockContext) return undefined;
+  return {
+    stock_code: activeStockContext.stock_code,
+    stock_name: activeStockContext.stock_name,
+    ...(reportContext ?? {}),
+  };
+}
+
+function findExactStockByCode(stockCode: string, stockIndex: StockIndexItem[]): { code: string; name: string } | null {
+  if (!stockIndex.length) return null;
+  const matches = searchStocks(stockCode, stockIndex, { activeOnly: true, limit: 3 })
+    .filter((suggestion) => suggestion.matchType === 'exact' && suggestion.matchField === 'code');
+  if (matches.length !== 1) return null;
+  return {
+    code: normalizeStockCode(matches[0].canonicalCode),
+    name: matches[0].nameZh,
+  };
+}
+
+function extractNameSwitchQuery(message: string): string | null {
+  const match = message.match(EXPLICIT_NAME_SWITCH_PATTERN);
+  if (!match) return null;
+  const candidate = match[1].replace(NAME_SWITCH_TRAILING_PATTERN, '').trim();
+  if (!candidate || isDeniedTickerCandidate(candidate)) return null;
+  return candidate;
+}
+
+function resolveNameSwitchContext(
+  message: string,
+  stockIndex: StockIndexItem[],
+  source: ActiveStockSource,
+): ActiveStockContext | null {
+  const query = extractNameSwitchQuery(message);
+  if (!query) return null;
+  const exactMatches = searchStocks(query, stockIndex, { activeOnly: true, limit: 3 })
+    .filter((suggestion) => suggestion.matchType === 'exact');
+  if (exactMatches.length !== 1) return null;
+  return createActiveStockContext(
+    normalizeStockCode(exactMatches[0].canonicalCode),
+    exactMatches[0].nameZh,
+    source,
+  );
+}
 
 const getMessageSkillNames = (msg: Message): string[] => {
   if (msg.skillNames?.length) return msg.skillNames;
@@ -77,7 +175,9 @@ const ChatPage: React.FC = () => {
   const [watchlistCodes, setWatchlistCodes] = useState<string[]>([]);
   const [isWatchlistActioning, setIsWatchlistActioning] = useState(false);
   const [watchlistMessage, setWatchlistMessage] = useState<string | null>(null);
-  const [activeStockCode, setActiveStockCode] = useState<string | null>(null);
+  const [activeStockContext, setActiveStockContext] = useState<ActiveStockContext | null>(null);
+  const { index: stockIndex, loaded: stockIndexLoaded, fallback: stockIndexFallback } = useStockIndex();
+  const activeStockCode = activeStockContext?.stock_code ?? null;
   const watchlistMessageTimerRef = useRef<number | null>(null);
   const copyResetTimerRef = useRef<Partial<Record<string, number>>>({});
   const messagesViewportRef = useRef<HTMLDivElement>(null);
@@ -85,7 +185,8 @@ const ChatPage: React.FC = () => {
   const isMountedRef = useRef(true);
   const sendToastTimerRef = useRef<number | null>(null);
   const followUpHydrationTokenRef = useRef(0);
-  const followUpContextRef = useRef<ChatFollowUpContext | null>(null);
+  const reportFollowUpContextRef = useRef<ReportFollowUpContext | null>(null);
+  const reportFollowUpStockCodeRef = useRef<string | null>(null);
   const shouldStickToBottomRef = useRef(true);
   const pendingScrollBehaviorRef = useRef<ScrollBehavior>('auto');
 
@@ -373,17 +474,23 @@ const ChatPage: React.FC = () => {
   }, []);
 
   const handleStartNewChat = useCallback(() => {
-    followUpContextRef.current = null;
+    reportFollowUpContextRef.current = null;
+    reportFollowUpStockCodeRef.current = null;
+    setActiveStockContext(null);
     requestScrollToBottom('auto');
     useAgentChatStore.getState().startNewChat();
     setSidebarOpen(false);
   }, [requestScrollToBottom]);
 
   const handleSwitchSession = useCallback((targetSessionId: string) => {
+    if (targetSessionId === sessionId) return;
+    reportFollowUpContextRef.current = null;
+    reportFollowUpStockCodeRef.current = null;
+    setActiveStockContext(null);
     requestScrollToBottom('auto');
     switchSession(targetSessionId);
     setSidebarOpen(false);
-  }, [requestScrollToBottom, switchSession]);
+  }, [requestScrollToBottom, sessionId, switchSession]);
 
   const confirmDelete = useCallback(() => {
     if (!deleteConfirmId) return;
@@ -413,11 +520,9 @@ const ChatPage: React.FC = () => {
 
     const hydrationToken = ++followUpHydrationTokenRef.current;
     setInput(buildFollowUpPrompt(stock, name));
-    setActiveStockCode(stock);
-    followUpContextRef.current = {
-      stock_code: stock,
-      stock_name: name,
-    };
+    setActiveStockContext(createActiveStockContext(stock, name, recordId !== undefined ? 'history_report' : 'url'));
+    reportFollowUpContextRef.current = null;
+    reportFollowUpStockCodeRef.current = null;
     if (recordId !== undefined) {
       setIsFollowUpContextLoading(true);
     }
@@ -429,7 +534,12 @@ const ChatPage: React.FC = () => {
       if (!isMountedRef.current || followUpHydrationTokenRef.current !== hydrationToken) {
         return;
       }
-      followUpContextRef.current = context;
+      const contextStockCode = normalizeStockCode(context.stock_code);
+      if (contextStockCode !== stock) {
+        return;
+      }
+      reportFollowUpContextRef.current = pickReportFollowUpContext(context);
+      reportFollowUpStockCodeRef.current = contextStockCode;
     }).finally(() => {
       if (isMountedRef.current && followUpHydrationTokenRef.current === hydrationToken) {
         setIsFollowUpContextLoading(false);
@@ -446,18 +556,42 @@ const ChatPage: React.FC = () => {
       const usedSkillNames = usedSkillIds.length > 0 ? getSkillNames(usedSkillIds) : ['通用'];
 
       const stockCode = extractStockCodeFromMessage(msgText);
+      const stockIndexReady = stockIndexLoaded && !stockIndexFallback;
+      let nextActiveStockContext = activeStockContext;
       if (stockCode) {
-        setActiveStockCode(stockCode);
+        const matchedStock = stockIndexReady ? findExactStockByCode(stockCode, stockIndex) : null;
+        const normalizedCode = matchedStock?.code ?? normalizeStockCode(stockCode);
+        const stockName = normalizedCode === activeStockContext?.stock_code
+          ? activeStockContext.stock_name
+          : matchedStock?.name ?? null;
+        nextActiveStockContext = createActiveStockContext(
+          normalizedCode,
+          stockName,
+          normalizedCode === activeStockContext?.stock_code ? 'message' : 'user_switch',
+        );
+        setActiveStockContext(nextActiveStockContext);
+      } else if (stockIndexReady) {
+        const nameSwitchContext = resolveNameSwitchContext(msgText, stockIndex, activeStockContext ? 'user_switch' : 'message');
+        if (nameSwitchContext) {
+          nextActiveStockContext = nameSwitchContext;
+          setActiveStockContext(nameSwitchContext);
+        }
       }
+
+      const reportContextForPayload =
+        nextActiveStockContext?.stock_code === reportFollowUpStockCodeRef.current
+          ? reportFollowUpContextRef.current
+          : null;
 
       const payload = {
         message: msgText,
         session_id: sessionId,
         ...(usedSkillIds.length > 0 ? { skills: usedSkillIds } : {}),
-        context: followUpContextRef.current ?? undefined,
+        context: buildChatContextPayload(nextActiveStockContext, reportContextForPayload),
       };
       followUpHydrationTokenRef.current += 1;
-      followUpContextRef.current = null;
+      reportFollowUpContextRef.current = null;
+      reportFollowUpStockCodeRef.current = null;
       setIsFollowUpContextLoading(false);
 
       setInput('');
@@ -467,7 +601,20 @@ const ChatPage: React.FC = () => {
         skillName: usedSkillNames.join('、'),
       });
     },
-    [getSkillNames, input, loading, normalizeSelectedSkillIds, requestScrollToBottom, selectedSkillIds, sessionId, startStream],
+    [
+      activeStockContext,
+      getSkillNames,
+      input,
+      loading,
+      normalizeSelectedSkillIds,
+      requestScrollToBottom,
+      selectedSkillIds,
+      sessionId,
+      startStream,
+      stockIndex,
+      stockIndexFallback,
+      stockIndexLoaded,
+    ],
   );
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {

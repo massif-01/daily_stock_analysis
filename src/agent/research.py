@@ -25,6 +25,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from src.agent.llm_adapter import LLMToolAdapter
 from src.agent.runner import RunLoopResult, run_agent_loop
+from src.agent.stock_scope import StockScope
 from src.agent.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -380,6 +381,7 @@ Token budget remaining: ~{remaining_budget}
                 max_steps=4,
                 max_wall_clock_seconds=timeout_seconds,
                 tool_call_timeout_seconds=timeout_seconds,
+                stock_scope=StockScope.from_context(context, question),
             )
             if not result.success and self._looks_like_timeout_error(result.error):
                 return {

@@ -35,7 +35,7 @@ const FREE_TEXT_TICKER_DENYLIST = new Set([
   'WHY', 'HOWDY', 'HEY', 'HI',
 ]);
 
-function isDeniedTickerCandidate(value: string): boolean {
+export function isDeniedTickerCandidate(value: string): boolean {
   return FREE_TEXT_TICKER_DENYLIST.has(value.trim().toUpperCase());
 }
 
