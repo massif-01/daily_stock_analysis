@@ -854,12 +854,12 @@ describe('ChatPage', () => {
     });
 
     render(
-      <MemoryRouter initialEntries={['/chat?stock=AAPL&name=Apple&recordId=2']}>
+      <MemoryRouter initialEntries={['/chat?stock=AAPL.US&name=Apple&recordId=2']}>
         <ChatPage />
       </MemoryRouter>
     );
 
-    expect(await screen.findByDisplayValue('请深入分析 Apple(AAPL)')).toBeInTheDocument();
+    expect(await screen.findByDisplayValue('请深入分析 Apple(AAPL.US)')).toBeInTheDocument();
 
     await waitFor(() => {
       expect(screen.queryByText('正在加载历史分析上下文；现在可直接发送追问。')).not.toBeInTheDocument();
@@ -870,7 +870,7 @@ describe('ChatPage', () => {
     await waitFor(() => {
       expect(mockStartStream).toHaveBeenCalledWith(
         expect.objectContaining({
-          message: '请深入分析 Apple(AAPL)',
+          message: '请深入分析 Apple(AAPL.US)',
           context: expect.objectContaining({
             stock_code: 'AAPL',
             stock_name: 'Apple',
@@ -878,6 +878,64 @@ describe('ChatPage', () => {
             previous_change_pct: 0.8,
             previous_strategy: expect.objectContaining({
               stopLoss: '198',
+            }),
+          }),
+        }),
+        expect.objectContaining({
+          skillName: '趋势分析',
+        }),
+      );
+    });
+  });
+
+  it('keeps hydrated report context for HK suffix URL codes', async () => {
+    vi.mocked(historyApi.getDetail).mockResolvedValue({
+      meta: {
+        id: 3,
+        queryId: 'q-hk',
+        stockCode: 'HK01810',
+        stockName: '小米集团',
+        reportType: 'detailed',
+        createdAt: '2026-03-18T08:00:00Z',
+        currentPrice: 48.35,
+        changePct: -1.2,
+      },
+      summary: {
+        analysisSummary: '短线回踩',
+        operationAdvice: '等待企稳',
+        trendPrediction: '震荡',
+        sentimentScore: 64,
+      },
+      strategy: {
+        stopLoss: '45',
+      },
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/chat?stock=1810.HK&name=%E5%B0%8F%E7%B1%B3%E9%9B%86%E5%9B%A2&recordId=3']}>
+        <ChatPage />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByDisplayValue('请深入分析 小米集团(1810.HK)')).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.queryByText('正在加载历史分析上下文；现在可直接发送追问。')).not.toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => {
+      expect(mockStartStream).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: '请深入分析 小米集团(1810.HK)',
+          context: expect.objectContaining({
+            stock_code: 'HK01810',
+            stock_name: '小米集团',
+            previous_price: 48.35,
+            previous_change_pct: -1.2,
+            previous_strategy: expect.objectContaining({
+              stopLoss: '45',
             }),
           }),
         }),

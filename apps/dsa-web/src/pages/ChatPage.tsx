@@ -593,6 +593,7 @@ const ChatPage: React.FC = () => {
       return;
     }
 
+    const normalizedFollowUpStockCode = normalizeStockCode(stock);
     const hydrationToken = ++followUpHydrationTokenRef.current;
     setInput(buildFollowUpPrompt(stock, name));
     setActiveStockContext(createActiveStockContext(stock, name, recordId !== undefined ? 'history_report' : 'url'));
@@ -610,11 +611,11 @@ const ChatPage: React.FC = () => {
         return;
       }
       const contextStockCode = normalizeStockCode(context.stock_code);
-      if (contextStockCode !== stock) {
+      if (contextStockCode !== normalizedFollowUpStockCode) {
         return;
       }
       reportFollowUpContextRef.current = pickReportFollowUpContext(context);
-      reportFollowUpStockCodeRef.current = contextStockCode;
+      reportFollowUpStockCodeRef.current = normalizedFollowUpStockCode;
     }).finally(() => {
       if (isMountedRef.current && followUpHydrationTokenRef.current === hydrationToken) {
         setIsFollowUpContextLoading(false);
