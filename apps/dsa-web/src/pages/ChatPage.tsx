@@ -26,7 +26,7 @@ import {
 import { isNearBottom } from '../utils/chatScroll';
 import { getReportText } from '../utils/reportLanguage';
 import { extractStockCodesFromMessage } from '../utils/chatStockCode';
-import { normalizeStockCode } from '../utils/stockCode';
+import { findMatchingStockCode, includesStockCode, normalizeStockCode } from '../utils/stockCode';
 
 // Quick question examples shown on empty state
 const QUICK_QUESTIONS = [
@@ -111,11 +111,13 @@ const resolveActiveStockContextFromMessage = (
   const newStockCodes = currentStockCode
     ? stockCodes.filter((code) => code !== currentStockCode)
     : stockCodes;
+  // Explicit switches can mention the old stock; use the single new code when present.
   const targetStockCode = isSwitch && newStockCodes.length === 1
     ? newStockCodes[0]
     : stockCode;
   const isDifferentStock = currentStockCode !== targetStockCode;
 
+  // Compare messages and implicit follow-ups must not rewrite the active stock context.
   if (isCompare || (currentContext && !isSwitch)) {
     return null;
   }
@@ -127,6 +129,7 @@ const resolveActiveStockContextFromMessage = (
         ? currentContext.stock_name
         : null,
     },
+    // Only explicit switches should affect the context sent with the current request.
     useForCurrentSend: isSwitch && isDifferentStock,
   };
 };
@@ -227,7 +230,7 @@ const ChatPage: React.FC = () => {
   }, [loadWatchlist]);
 
   const stockInWatchlist = useCallback(
-    (stockCode: string) => watchlistCodes.includes(normalizeStockCode(stockCode)),
+    (stockCode: string) => includesStockCode(watchlistCodes, stockCode),
     [watchlistCodes],
   );
 
@@ -237,8 +240,9 @@ const ChatPage: React.FC = () => {
       setIsWatchlistActioning(true);
       setWatchlistMessage(null);
       try {
-        if (stockInWatchlist(stockCode)) {
-          const codes = await systemConfigApi.removeFromWatchlist(stockCode);
+        const existingStockCode = findMatchingStockCode(watchlistCodes, stockCode);
+        if (existingStockCode) {
+          const codes = await systemConfigApi.removeFromWatchlist(existingStockCode);
           if (isMountedRef.current) {
             setWatchlistCodes(codes);
             setWatchlistMessage(`已从自选中移除 ${stockCode}`);
@@ -268,7 +272,7 @@ const ChatPage: React.FC = () => {
         }
       }
     },
-    [isWatchlistActioning, stockInWatchlist],
+    [isWatchlistActioning, watchlistCodes],
   );
 
   const {

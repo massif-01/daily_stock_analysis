@@ -1539,4 +1539,41 @@ describe('watchlist button with code variants', () => {
 
     expect(await screen.findByText('从自选删除')).toBeInTheDocument();
   });
+
+  it('matches raw HK watchlist entries before rendering the watchlist action', async () => {
+    mockGetWatchlist.mockResolvedValue(['01810']);
+
+    render(
+      <MemoryRouter>
+        <ChatPage />
+      </MemoryRouter>,
+    );
+
+    const textarea = await screen.findByPlaceholderText(/例如/);
+    fireEvent.change(textarea, { target: { value: '分析 1810.HK' } });
+    fireEvent.keyDown(textarea, { key: 'Enter' });
+
+    expect(await screen.findByText('从自选删除')).toBeInTheDocument();
+  });
+
+  it('removes the matched raw HK watchlist entry instead of adding a duplicate variant', async () => {
+    mockGetWatchlist.mockResolvedValue(['00700']);
+    mockRemoveFromWatchlist.mockResolvedValue([]);
+
+    render(
+      <MemoryRouter>
+        <ChatPage />
+      </MemoryRouter>,
+    );
+
+    const textarea = await screen.findByPlaceholderText(/例如/);
+    fireEvent.change(textarea, { target: { value: '分析 00700.HK' } });
+    fireEvent.keyDown(textarea, { key: 'Enter' });
+    fireEvent.click(await screen.findByText('从自选删除'));
+
+    await waitFor(() => {
+      expect(mockRemoveFromWatchlist).toHaveBeenCalledWith('00700');
+    });
+    expect(mockAddToWatchlist).not.toHaveBeenCalled();
+  });
 });

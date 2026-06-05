@@ -80,3 +80,22 @@ export function normalizeStockCode(stockCode: string): string {
 
   return code;
 }
+
+function stockCodeMatchKey(stockCode: string): string {
+  return normalizeStockCode(stockCode).toUpperCase();
+}
+
+export function areStockCodesEquivalent(left: string, right: string): boolean {
+  if (!left.trim() || !right.trim()) return false;
+  return stockCodeMatchKey(left) === stockCodeMatchKey(right);
+}
+
+export function findMatchingStockCode(codes: string[], stockCode: string): string | undefined {
+  if (!stockCode.trim()) return undefined;
+  const targetKey = stockCodeMatchKey(stockCode);
+  return codes.find((code) => code.trim() && stockCodeMatchKey(code) === targetKey);
+}
+
+export function includesStockCode(codes: string[], stockCode: string): boolean {
+  return findMatchingStockCode(codes, stockCode) !== undefined;
+}
