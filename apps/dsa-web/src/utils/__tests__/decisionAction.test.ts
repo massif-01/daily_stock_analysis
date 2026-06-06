@@ -19,12 +19,31 @@ describe('decisionAction helpers', () => {
     expect(getDecisionActionLabel(null, null, '避免买入', '建议')).toBe('回避');
     expect(getLegacyDecisionActionLabel('暂不买入，等待确认')).toBe('回避');
     expect(getLegacyDecisionActionLabel('先不建仓，等待放量')).toBe('回避');
+    expect(getLegacyDecisionActionLabel('无需买入，等待确认')).toBe('回避');
+    expect(getLegacyDecisionActionLabel('无须建仓，继续观察')).toBe('回避');
+    expect(getLegacyDecisionActionLabel('无需布局，等待突破')).toBe('回避');
+    expect(getLegacyDecisionActionLabel('no buy until breakout')).toBe('回避');
+    expect(getLegacyDecisionActionLabel('no need to buy before confirmation')).toBe('回避');
+    expect(getLegacyDecisionActionLabel('cannot buy before confirmation')).toBe('回避');
+    expect(getLegacyDecisionActionLabel("can't buy before confirmation")).toBe('回避');
   });
 
   it('keeps legacy fallback compatible with negated sell and add advice', () => {
     expect(getLegacyDecisionActionLabel('不建议卖出，继续观察')).toBe('持有');
     expect(getLegacyDecisionActionLabel('无需减仓，维持仓位')).toBe('持有');
+    expect(getLegacyDecisionActionLabel('无须减仓，维持仓位')).toBe('持有');
     expect(getLegacyDecisionActionLabel('不建议加仓，等待回踩')).toBe('持有');
+    expect(getLegacyDecisionActionLabel('无须加仓，等待回踩')).toBe('持有');
+    expect(getLegacyDecisionActionLabel('no add before confirmation')).toBe('持有');
+    expect(getLegacyDecisionActionLabel('cannot add before confirmation')).toBe('持有');
+    expect(getLegacyDecisionActionLabel('no need to accumulate here')).toBe('持有');
+    expect(getLegacyDecisionActionLabel("can't accumulate here")).toBe('持有');
+    expect(getLegacyDecisionActionLabel('no sell before earnings')).toBe('持有');
+    expect(getLegacyDecisionActionLabel('cannot sell before earnings')).toBe('持有');
+    expect(getLegacyDecisionActionLabel('no need to reduce exposure')).toBe('持有');
+    expect(getLegacyDecisionActionLabel("can't reduce exposure")).toBe('持有');
+    expect(getLegacyDecisionActionLabel('no trim while trend holds')).toBe('持有');
+    expect(getLegacyDecisionActionLabel('cannot trim while trend holds')).toBe('持有');
     expect(getDecisionActionTone(null, null, '不建议卖出，继续观察')).toBe('success');
   });
 

@@ -33,17 +33,30 @@ export const getLegacyDecisionActionLabel = (advice?: string | null): string | n
       '不要买入',
       '不宜买入',
       '先不买入',
+      '无需买入',
+      '无须买入',
+      '不建议建仓',
       '暂不建仓',
       '不要建仓',
       '不宜建仓',
       '先不建仓',
+      '无需建仓',
+      '无须建仓',
+      '不建议布局',
       '暂不布局',
       '不要布局',
       '不宜布局',
       '先不布局',
+      '无需布局',
+      '无须布局',
     ]) ||
     lower.includes('do not buy') ||
-    lower.includes('no buy')
+    lower.includes('no buy') ||
+    lower.includes('no need to buy') ||
+    lower.includes('need not buy') ||
+    lower.includes('cannot buy') ||
+    lower.includes("can't buy") ||
+    lower.includes('cant buy')
   ) {
     return '回避';
   }
@@ -51,32 +64,85 @@ export const getLegacyDecisionActionLabel = (advice?: string | null): string | n
     includesAny(normalized, [
       '不建议加仓',
       '无需加仓',
+      '无须加仓',
       '不要加仓',
       '不宜加仓',
       '暂不加仓',
       '不建议增持',
       '无需增持',
+      '无须增持',
       '不要增持',
       '不宜增持',
       '暂不增持',
       '不建议卖出',
       '无需卖出',
+      '无须卖出',
       '不要卖出',
       '不宜卖出',
       '暂不卖出',
       '不建议减仓',
       '无需减仓',
+      '无须减仓',
       '不要减仓',
       '不宜减仓',
       '暂不减仓',
       '不建议清仓',
       '无需清仓',
+      '无须清仓',
       '不要清仓',
       '不宜清仓',
       '暂不清仓',
     ]) ||
+    lower.includes('not add') ||
+    lower.includes('do not add') ||
+    lower.includes("don't add") ||
+    lower.includes('dont add') ||
+    lower.includes('no add') ||
+    lower.includes('no need to add') ||
+    lower.includes('need not add') ||
+    lower.includes('cannot add') ||
+    lower.includes("can't add") ||
+    lower.includes('cant add') ||
+    lower.includes('not accumulate') ||
+    lower.includes('do not accumulate') ||
+    lower.includes("don't accumulate") ||
+    lower.includes('dont accumulate') ||
+    lower.includes('no accumulate') ||
+    lower.includes('no need to accumulate') ||
+    lower.includes('need not accumulate') ||
+    lower.includes('cannot accumulate') ||
+    lower.includes("can't accumulate") ||
+    lower.includes('cant accumulate') ||
+    lower.includes('not reduce') ||
+    lower.includes('do not reduce') ||
+    lower.includes("don't reduce") ||
+    lower.includes('dont reduce') ||
+    lower.includes('no reduce') ||
+    lower.includes('no need to reduce') ||
+    lower.includes('need not reduce') ||
+    lower.includes('cannot reduce') ||
+    lower.includes("can't reduce") ||
+    lower.includes('cant reduce') ||
+    lower.includes('not trim') ||
+    lower.includes('do not trim') ||
+    lower.includes("don't trim") ||
+    lower.includes('dont trim') ||
+    lower.includes('no trim') ||
+    lower.includes('no need to trim') ||
+    lower.includes('need not trim') ||
+    lower.includes('cannot trim') ||
+    lower.includes("can't trim") ||
+    lower.includes('cant trim') ||
+    lower.includes('not sell') ||
     lower.includes('do not sell') ||
-    lower.includes('no sell')
+    lower.includes("don't sell") ||
+    lower.includes('dont sell') ||
+    lower.includes('no sell') ||
+    lower.includes('no need to sell') ||
+    lower.includes('need not sell') ||
+    lower.includes('cannot sell') ||
+    lower.includes("can't sell") ||
+    lower.includes('cant sell')
   ) {
     return '持有';
   }

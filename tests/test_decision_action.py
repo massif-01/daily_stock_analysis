@@ -68,19 +68,94 @@ def test_normalize_decision_action_unknown_or_ambiguous_returns_none(value: str 
         ("不要买入", "avoid"),
         ("不宜买入", "avoid"),
         ("先不买入", "avoid"),
+        ("无需买入", "avoid"),
+        ("无须买入", "avoid"),
+        ("不建议建仓", "avoid"),
         ("暂不建仓", "avoid"),
+        ("无需建仓", "avoid"),
+        ("无须建仓", "avoid"),
+        ("不建议布局", "avoid"),
         ("先不布局", "avoid"),
+        ("无需布局", "avoid"),
+        ("无须布局", "avoid"),
+        ("no buy", "avoid"),
+        ("no need to buy", "avoid"),
+        ("need not buy", "avoid"),
+        ("cannot buy", "avoid"),
+        ("can't buy", "avoid"),
         ("不建议加仓", "hold"),
+        ("无须加仓", "hold"),
+        ("no add", "hold"),
+        ("no need to add", "hold"),
+        ("need not add", "hold"),
+        ("cannot add", "hold"),
+        ("no accumulate", "hold"),
+        ("can't accumulate", "hold"),
         ("不建议卖出", "hold"),
         ("无需卖出", "hold"),
+        ("无须卖出", "hold"),
         ("不要卖出", "hold"),
         ("暂不卖出", "hold"),
+        ("no sell", "hold"),
+        ("no need to sell", "hold"),
+        ("cannot sell", "hold"),
+        ("can't sell", "hold"),
         ("无需减仓", "hold"),
+        ("无须减仓", "hold"),
+        ("no reduce", "hold"),
+        ("no need to reduce", "hold"),
+        ("cannot reduce", "hold"),
+        ("no trim", "hold"),
+        ("can't trim", "hold"),
         ("不建议清仓", "hold"),
     ],
 )
 def test_normalize_decision_action_handles_negated_trade_actions(value: str, expected: str) -> None:
     assert normalize_decision_action(value) == expected
+
+
+@pytest.mark.parametrize(
+    "advice",
+    [
+        "无需买入，等待确认",
+        "无须建仓，继续观察",
+        "无需布局，等待突破",
+        "no buy until breakout",
+        "no need to buy before confirmation",
+        "cannot buy before confirmation",
+        "can't buy before confirmation",
+    ],
+)
+def test_build_action_fields_prioritizes_negated_buy_advice_over_embedded_buy_phrase(advice: str) -> None:
+    assert build_action_fields(operation_advice=advice) == {
+        "action": "avoid",
+        "action_label": "回避",
+    }
+
+
+@pytest.mark.parametrize(
+    "advice",
+    [
+        "无须加仓，维持仓位",
+        "无需卖出，继续持有",
+        "无须减仓，等待确认",
+        "no add before confirmation",
+        "cannot add before confirmation",
+        "no need to accumulate here",
+        "can't accumulate here",
+        "no sell before earnings",
+        "cannot sell before earnings",
+        "no need to reduce exposure",
+        "can't reduce exposure",
+        "no trim while trend holds",
+        "cannot trim while trend holds",
+    ],
+)
+def test_build_action_fields_prioritizes_negated_hold_advice_over_embedded_trade_phrase(advice: str) -> None:
+    assert build_action_fields(operation_advice=advice) == {
+        "action": "hold",
+        "action_label": "持有",
+    }
 
 
 @pytest.mark.parametrize(
