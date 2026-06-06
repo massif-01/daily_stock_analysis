@@ -77,6 +77,26 @@ describe('HistoryList', () => {
     expect(onToggleItemSelection).toHaveBeenCalledWith(1);
   });
 
+  it('uses structured action label before legacy operation advice', () => {
+    render(
+      <HistoryList
+        {...baseProps}
+        items={[
+          {
+            ...items[0],
+            action: 'avoid',
+            actionLabel: '回避',
+            operationAdvice: '买入',
+            sentimentScore: 35,
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText('回避 35')).toBeInTheDocument();
+    expect(screen.queryByText('买入 35')).not.toBeInTheDocument();
+  });
+
   it('toggles select-all when clicking the label text', () => {
     const onToggleSelectAll = vi.fn();
 

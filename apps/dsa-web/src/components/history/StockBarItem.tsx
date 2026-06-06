@@ -2,6 +2,7 @@ import type React from 'react';
 import { Badge, Button } from '../common';
 import type { StockBarItem as StockBarItemType } from '../../types/analysis';
 import { getSentimentColor } from '../../types/analysis';
+import { getDecisionActionLabel } from '../../utils/decisionAction';
 import { formatDateTime } from '../../utils/format';
 import { getMarketPhaseSummaryLabel } from '../../utils/marketPhase';
 import { truncateStockName } from '../../utils/stockName';
@@ -38,7 +39,9 @@ export const StockBarItemComponent: React.FC<StockBarItemProps> = ({
   const { language, t } = useUiLanguage();
   const sentimentColor = item.sentimentScore !== undefined ? getSentimentColor(item.sentimentScore) : null;
   const stockName = item.stockName || item.stockCode;
-  const operationLabel = getOperationBadgeLabel(item.operationAdvice, t);
+  const operationLabel = item.action || item.actionLabel
+    ? getDecisionActionLabel(item.action, item.actionLabel, null, null)
+    : getOperationBadgeLabel(item.operationAdvice, t);
   const phaseLabel = getMarketPhaseSummaryLabel(item.marketPhaseSummary, language)
     ?.replace('市场阶段: ', '')
     .replace('市场阶段：', '')

@@ -2,6 +2,7 @@ import type React from 'react';
 import { Badge } from '../common';
 import type { HistoryItem } from '../../types/analysis';
 import { getSentimentColor } from '../../types/analysis';
+import { getDecisionActionLabel } from '../../utils/decisionAction';
 import { formatDateTime } from '../../utils/format';
 import { getMarketPhaseSummaryLabel } from '../../utils/marketPhase';
 import { truncateStockName } from '../../utils/stockName';
@@ -48,6 +49,9 @@ export const HistoryListItem: React.FC<HistoryListItemProps> = ({
   const { language, t } = useUiLanguage();
   const sentimentColor = item.sentimentScore !== undefined ? getSentimentColor(item.sentimentScore) : null;
   const stockName = item.stockName || item.stockCode;
+  const operationLabel = item.action || item.actionLabel
+    ? getDecisionActionLabel(item.action, item.actionLabel, null, t('history.sentiment'))
+    : getOperationBadgeLabel(item.operationAdvice, t);
   const phaseLabel = getMarketPhaseSummaryLabel(item.marketPhaseSummary, language)
     ?.replace('市场阶段: ', '')
     .replace('市场阶段：', '')
@@ -101,7 +105,7 @@ export const HistoryListItem: React.FC<HistoryListItemProps> = ({
                       backgroundColor: `${sentimentColor}10`,
                     }}
                   >
-                    {getOperationBadgeLabel(item.operationAdvice, t)} {item.sentimentScore}
+                    {operationLabel} {item.sentimentScore}
                   </Badge>
                 )}
               </div>

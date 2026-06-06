@@ -2,6 +2,7 @@ import type React from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import type { AnalysisReport, HistoryItem, StockHistoryFilters, StockHistoryRange } from '../../types/analysis';
 import { getSentimentColor } from '../../types/analysis';
+import { getDecisionActionLabel, getDecisionActionTone } from '../../utils/decisionAction';
 import { formatDateTime } from '../../utils/format';
 import { Badge, Button, Card } from '../common';
 import { DashboardStateBlock } from '../dashboard';
@@ -65,27 +66,21 @@ const formatModelName = (value: string | undefined, t: (key: UiTextKey, params?:
   return parts[parts.length - 1] || model;
 };
 
-const formatAdviceParts = (item: Pick<HistoryItem, 'operationAdvice' | 'trendPrediction'>): string[] => {
-  const parts = [item.operationAdvice?.trim(), item.trendPrediction?.trim()]
+type AdviceSource = Pick<HistoryItem, 'operationAdvice' | 'trendPrediction' | 'action' | 'actionLabel'>;
+
+const formatAdviceParts = (item: AdviceSource): string[] => {
+  const actionLabel = getDecisionActionLabel(item.action, item.actionLabel, null, null);
+  const adviceText = actionLabel || item.operationAdvice?.trim();
+  const parts = [actionLabel?.trim(), item.trendPrediction?.trim()]
     .filter((part): part is string => Boolean(part));
+  if (!actionLabel && adviceText) {
+    return [adviceText, ...(item.trendPrediction?.trim() ? [item.trendPrediction.trim()] : [])];
+  }
   return parts.length ? parts : ['--'];
 };
 
-const formatAdvice = (item: Pick<HistoryItem, 'operationAdvice' | 'trendPrediction'>): string =>
+const formatAdvice = (item: AdviceSource): string =>
   formatAdviceParts(item)[0];
-
-const getAdviceVariant = (value: string): 'success' | 'warning' | 'danger' | 'default' => {
-  if (value.includes('买') || value.includes('多') || value.includes('持有')) {
-    return 'success';
-  }
-  if (value.includes('卖') || value.includes('减') || value.includes('空')) {
-    return 'danger';
-  }
-  if (value.includes('观望') || value.includes('震荡')) {
-    return 'warning';
-  }
-  return 'default';
-};
 
 const summarizeView = (
   items: HistoryItem[],
@@ -115,6 +110,8 @@ const summarizeView = (
       ? formatAdvice(current)
       : formatAdvice({
           operationAdvice: report.summary.operationAdvice,
+          action: report.summary.action,
+          actionLabel: report.summary.actionLabel,
           trendPrediction: report.summary.trendPrediction,
         }),
     averageScore,
@@ -333,7 +330,7 @@ export const StockHistoryTrendDrawer: React.FC<StockHistoryTrendDrawerProps> = (
                         </td>
                         <td className="whitespace-nowrap px-3 py-3">
                           <Badge
-                            variant={getAdviceVariant(formatAdvice(item))}
+                            variant={getDecisionActionTone(item.action, item.actionLabel, item.operationAdvice)}
                             size="sm"
                             className="shadow-none"
                           >

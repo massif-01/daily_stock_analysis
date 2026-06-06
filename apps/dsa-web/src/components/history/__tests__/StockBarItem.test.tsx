@@ -44,4 +44,24 @@ describe('StockBarItemComponent', () => {
       }),
     ).toBeInTheDocument();
   });
+
+  it('uses structured action label before legacy operation advice', () => {
+    render(
+      <StockBarItemComponent
+        item={{
+          ...issue1600Item,
+          action: 'avoid',
+          actionLabel: '回避',
+          operationAdvice: '买入',
+          sentimentScore: 35,
+        }}
+        isViewing={false}
+        onClick={vi.fn()}
+      />,
+    );
+
+    const actions = screen.getByTestId('history-card-actions');
+    expect(within(actions).getByText('回避 35')).toBeInTheDocument();
+    expect(within(actions).queryByText('买入 35')).not.toBeInTheDocument();
+  });
 });
