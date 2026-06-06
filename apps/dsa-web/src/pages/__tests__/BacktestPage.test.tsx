@@ -66,6 +66,8 @@ beforeEach(() => {
         engineVersion: 'test-engine',
         evalStatus: 'completed',
         operationAdvice: '继续持有',
+        action: 'watch',
+        actionLabel: '观望',
         trendPrediction: '震荡偏多',
         actualMovement: 'up',
         actualReturnPct: 3.8,
@@ -102,6 +104,8 @@ describe('BacktestPage', () => {
     expect(screen.getByText('600519')).toBeInTheDocument();
     expect(screen.getByText('贵州茅台')).toBeInTheDocument();
     expect(screen.getByText('震荡偏多')).toBeInTheDocument();
+    expect(screen.getByText('继续持有')).toBeInTheDocument();
+    expect(screen.queryByText('观望')).not.toBeInTheDocument();
     expect(screen.getByText('上涨')).toBeInTheDocument();
     expect(screen.getByText('窗口收益')).toBeInTheDocument();
     expect(screen.getByText('方向匹配')).toBeInTheDocument();

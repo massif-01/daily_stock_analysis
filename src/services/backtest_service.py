@@ -15,6 +15,7 @@ from src.core.backtest_engine import OVERALL_SENTINEL_CODE, BacktestEngine, Eval
 from src.market_phase_summary import extract_market_phase_summary, normalize_analysis_phase_bucket
 from src.repositories.backtest_repo import BacktestRepository
 from src.repositories.stock_repo import StockRepository
+from src.schemas.decision_action import build_action_fields
 from src.storage import BacktestResult, BacktestSummary, DatabaseManager
 
 logger = logging.getLogger(__name__)
@@ -611,6 +612,10 @@ class BacktestService:
         market_phase_summary: Optional[Dict[str, Any]] = None,
         market_phase: Optional[str] = None,
     ) -> Dict[str, Any]:
+        action_fields = build_action_fields(
+            operation_advice=row.operation_advice,
+            report_type="market_review" if row.code == "market_review" else None,
+        )
         return {
             "analysis_history_id": row.analysis_history_id,
             "code": row.code,
@@ -621,6 +626,8 @@ class BacktestService:
             "eval_status": row.eval_status,
             "evaluated_at": row.evaluated_at.isoformat() if row.evaluated_at else None,
             "operation_advice": row.operation_advice,
+            "action": action_fields["action"],
+            "action_label": action_fields["action_label"],
             "trend_prediction": trend_prediction,
             "market_phase": market_phase,
             "market_phase_summary": market_phase_summary,

@@ -436,6 +436,10 @@ class BacktestServiceTestCase(unittest.TestCase):
         self.assertEqual(evaluations["total"], 1)
         self.assertEqual(len(evaluations["items"]), 1)
         self.assertEqual(evaluations["items"][0]["engine_version"], "v1")
+        self.assertEqual(evaluations["items"][0]["operation_advice"], "买入")
+        self.assertEqual(evaluations["items"][0]["action"], "buy")
+        self.assertEqual(evaluations["items"][0]["action_label"], "买入")
+        self.assertEqual(evaluations["items"][0]["position_recommendation"], "long")
 
         # Without explicit eval_window_days, summary infers the smallest
         # window from matched rows (window=1 in this dataset) instead of
