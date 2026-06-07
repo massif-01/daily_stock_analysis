@@ -1128,7 +1128,7 @@ The `decision_type` bridge in the table only documents compatibility between the
 
 Unknown or ambiguous advice is not coerced into `watch` or `hold`; it returns empty `action/action_label`. Web history cards, StockBar, same-stock history drawers, and backtest result rows use `operation_advice` as a display-only fallback when old records do not have `action/action_label`; that fallback affects only the UI label and is not a stable API action or future signal asset. Market review and other non-stock reports do not emit trading `action` values and keep only the `operation_advice` text. `dashboard.phase_decision.immediate_action` belongs to the market-phase guardrail report block and is not used by the #1390 P0 eight-state action derivation. The final market phase still comes from `report.meta.market_phase_summary.phase`.
 
-#1390 P0 only reserves future signal-asset boundaries: `horizon=intraday|1d|3d|5d|10d|swing|long`, `plan_quality=complete|partial|minimal`, and `status=active|expired|invalidated|closed|archived`. These fields are not flattened into current report summaries, history lists, StockBar rows, or backtest responses; this phase adds no DB migration, no historical backfill, and no new configuration.
+#1390 P0 does not define or emit future signal-asset fields. More granular plan fields such as `horizon`, `plan_quality`, and `status` are left for a separate follow-up design. This phase does not flatten them into current report summaries, history lists, StockBar rows, or backtest responses; it adds no DB migration, no historical backfill, and no new configuration.
 
 ## Backtesting
 

@@ -158,14 +158,56 @@ describe('HistoryList', () => {
             operationAdvice: 'no selloff risk',
             sentimentScore: 31,
           },
+          {
+            ...items[0],
+            id: 3,
+            queryId: 'q-3',
+            action: null,
+            actionLabel: null,
+            operationAdvice: 'sell-off risk remains low',
+            sentimentScore: 33,
+          },
         ]}
       />,
     );
 
     expect(screen.getByText('情绪 28')).toBeInTheDocument();
     expect(screen.getByText('情绪 31')).toBeInTheDocument();
+    expect(screen.getByText('情绪 33')).toBeInTheDocument();
     expect(screen.queryByText('回避 28')).not.toBeInTheDocument();
     expect(screen.queryByText('持有 31')).not.toBeInTheDocument();
+    expect(screen.queryByText('卖出 33')).not.toBeInTheDocument();
+  });
+
+  it('does not render Chinese financial context legacy advice as an action badge', () => {
+    render(
+      <HistoryList
+        {...baseProps}
+        items={[
+          {
+            ...items[0],
+            action: null,
+            actionLabel: null,
+            operationAdvice: '买盘增强，继续观察',
+            sentimentScore: 32,
+          },
+          {
+            ...items[0],
+            id: 2,
+            queryId: 'q-2',
+            action: null,
+            actionLabel: null,
+            operationAdvice: '卖压缓解，继续观察',
+            sentimentScore: 34,
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText('情绪 32')).toBeInTheDocument();
+    expect(screen.getByText('情绪 34')).toBeInTheDocument();
+    expect(screen.queryByText('买入 32')).not.toBeInTheDocument();
+    expect(screen.queryByText('卖出 34')).not.toBeInTheDocument();
   });
 
   it('does not render multi-guard legacy advice as an avoid or alert action', () => {

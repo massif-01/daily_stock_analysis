@@ -14,9 +14,6 @@ from typing import Any, Dict, Literal, Optional, TypedDict, get_args
 from src.report_language import normalize_report_language
 
 DecisionAction = Literal["buy", "add", "hold", "reduce", "sell", "watch", "avoid", "alert"]
-DecisionHorizon = Literal["intraday", "1d", "3d", "5d", "10d", "swing", "long"]
-DecisionPlanQuality = Literal["complete", "partial", "minimal"]
-DecisionSignalStatus = Literal["active", "expired", "invalidated", "closed", "archived"]
 
 
 class DecisionActionFields(TypedDict):
@@ -239,10 +236,24 @@ _ENGLISH_NEGATED_ACTION_TERMS: Dict[DecisionAction, tuple[str, ...]] = {
     "hold": ("add", "accumulate", "sell", "reduce", "trim"),
 }
 _ENGLISH_DEFERRED_ACTION_TERMS = ("buy", "add", "accumulate", "sell", "reduce", "trim")
+_FINANCIAL_COMPOUND_SENTINEL = "financialcompound"
 
 
 def _normalize_key(value: Any) -> str:
     return str(value or "").strip().lower().replace("_", " ").replace("-", " ")
+
+
+def _mask_english_financial_compounds(text: str) -> str:
+    text = re.sub(
+        r"(?<![a-z0-9_])buy\s*back(?![a-z0-9_])",
+        _FINANCIAL_COMPOUND_SENTINEL,
+        text,
+    )
+    return re.sub(
+        r"(?<![a-z0-9_])sell\s*off(?![a-z0-9_])",
+        _FINANCIAL_COMPOUND_SENTINEL,
+        text,
+    )
 
 
 def _word_or_substring_match(text: str, phrase: str) -> bool:
@@ -302,7 +313,7 @@ def normalize_decision_action(value: Any) -> Optional[DecisionAction]:
     if explicit:
         return explicit
 
-    text = _normalize_key(value)
+    text = _mask_english_financial_compounds(_normalize_key(value))
     if not text:
         return None
 
@@ -337,19 +348,6 @@ def normalize_decision_action(value: Any) -> Optional[DecisionAction]:
 
     if len(matches) == 1:
         return next(iter(matches))
-    return None
-
-
-def decision_type_from_action(action: Any) -> Optional[str]:
-    """Bridge the eight-state action to the legacy buy/hold/sell contract."""
-
-    normalized = _explicit_action(action)
-    if normalized in {"buy", "add"}:
-        return "buy"
-    if normalized in {"sell", "reduce"}:
-        return "sell"
-    if normalized in {"hold", "watch", "avoid", "alert"}:
-        return "hold"
     return None
 
 

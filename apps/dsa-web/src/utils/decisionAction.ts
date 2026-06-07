@@ -54,6 +54,11 @@ const includesAny = (value: string, phrases: readonly string[]): boolean =>
 const normalizeEnglishAdvice = (value: string): string =>
   value.toLowerCase().replace(/[_-]/g, ' ');
 
+const maskEnglishFinancialCompounds = (value: string): string =>
+  value
+    .replace(/(^|[^a-z0-9_])buy\s*back(?=$|[^a-z0-9_])/g, '$1financialcompound')
+    .replace(/(^|[^a-z0-9_])sell\s*off(?=$|[^a-z0-9_])/g, '$1financialcompound');
+
 const matchesEnglishTerm = (value: string, terms: readonly string[]): boolean =>
   terms.some((term) => new RegExp(`(^|[^a-z0-9_])${term}(?=$|[^a-z0-9_])`).test(value));
 
@@ -84,7 +89,7 @@ export const getLegacyDecisionActionLabel = (
 export const getLegacyDecisionAction = (advice?: string | null): DecisionAction | null => {
   const normalized = advice?.trim();
   if (!normalized) return null;
-  const lower = normalizeEnglishAdvice(normalized);
+  const lower = maskEnglishFinancialCompounds(normalizeEnglishAdvice(normalized));
 
   if (hasEnglishDeferredAction(lower)) {
     return null;
@@ -187,7 +192,7 @@ export const getLegacyDecisionAction = (advice?: string | null): DecisionAction 
   if (normalized.includes('减仓') || matchesEnglishTerm(lower, ['reduce', 'trim'])) {
     matches.add('reduce');
   }
-  if (normalized.includes('卖') || normalized.includes('清仓') || matchesEnglishTerm(lower, ['sell'])) {
+  if (normalized.includes('强烈卖出') || normalized.includes('卖出') || normalized.includes('清仓') || matchesEnglishTerm(lower, ['sell'])) {
     matches.add('sell');
   }
   if (normalized.includes('持有') || matchesEnglishTerm(lower, ['hold'])) {
@@ -196,7 +201,7 @@ export const getLegacyDecisionAction = (advice?: string | null): DecisionAction 
   if (normalized.includes('观望') || normalized.includes('等待') || matchesEnglishTerm(lower, ['watch', 'wait'])) {
     matches.add('watch');
   }
-  if (normalized.includes('买') || normalized.includes('布局') || normalized.includes('建仓') || matchesEnglishTerm(lower, ['buy'])) {
+  if (normalized.includes('强烈买入') || normalized.includes('买入') || normalized.includes('布局') || normalized.includes('建仓') || matchesEnglishTerm(lower, ['buy'])) {
     matches.add('buy');
   }
 

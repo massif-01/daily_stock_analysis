@@ -1297,7 +1297,7 @@ python main.py --debug
 
 未知或歧义建议不会兜底成 `watch` 或 `hold`，而是返回空 `action/action_label`。Web 历史卡片、StockBar、同股历史抽屉和回测结果行会在旧记录缺少 `action/action_label` 时从 `operation_advice` 做展示级 fallback；该 fallback 只影响前端标签，不等价于稳定 API action 或后续信号资产。大盘复盘和其他非个股报告不会产生交易 `action`，只保留 `operation_advice` 文本。`dashboard.phase_decision.immediate_action` 属于市场阶段护栏报告字段，不参与 #1390 P0 的八态 action 派生；最终市场阶段仍来自 `report.meta.market_phase_summary.phase`。
 
-#1390 P0 只定义后续信号资产边界：`horizon=intraday|1d|3d|5d|10d|swing|long`、`plan_quality=complete|partial|minimal`、`status=active|expired|invalidated|closed|archived`。这些字段本阶段不平铺到现有 summary、历史列表、StockBar 或回测响应，不做 DB migration、不回填历史、不新增配置项。
+#1390 P0 不定义或输出后续信号资产字段；`horizon`、`plan_quality`、`status` 等更细粒度计划字段留待后续独立设计。本阶段不平铺到现有 summary、历史列表、StockBar 或回测响应，不做 DB migration、不回填历史、不新增配置项。
 
 ## 回测功能
 

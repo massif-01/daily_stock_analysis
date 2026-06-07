@@ -106,7 +106,7 @@ describe('StockBarItemComponent', () => {
   });
 
   it('does not render financial compound English advice as an action badge', () => {
-    render(
+    const { rerender } = render(
       <StockBarItemComponent
         item={{
           ...issue1600Item,
@@ -120,9 +120,65 @@ describe('StockBarItemComponent', () => {
       />,
     );
 
-    const actions = screen.getByTestId('history-card-actions');
+    let actions = screen.getByTestId('history-card-actions');
     expect(within(actions).queryByText('持有 28')).not.toBeInTheDocument();
     expect(within(actions).queryByText(/28/)).not.toBeInTheDocument();
+
+    rerender(
+      <StockBarItemComponent
+        item={{
+          ...issue1600Item,
+          action: null,
+          actionLabel: null,
+          operationAdvice: 'sell-off risk remains low',
+          sentimentScore: 31,
+        }}
+        isViewing={false}
+        onClick={vi.fn()}
+      />,
+    );
+
+    actions = screen.getByTestId('history-card-actions');
+    expect(within(actions).queryByText('卖出 31')).not.toBeInTheDocument();
+    expect(within(actions).queryByText(/31/)).not.toBeInTheDocument();
+  });
+
+  it('does not render Chinese financial context legacy advice as an action badge', () => {
+    const { rerender } = render(
+      <StockBarItemComponent
+        item={{
+          ...issue1600Item,
+          action: null,
+          actionLabel: null,
+          operationAdvice: '买盘增强，继续观察',
+          sentimentScore: 32,
+        }}
+        isViewing={false}
+        onClick={vi.fn()}
+      />,
+    );
+
+    let actions = screen.getByTestId('history-card-actions');
+    expect(within(actions).queryByText('买入 32')).not.toBeInTheDocument();
+    expect(within(actions).queryByText(/32/)).not.toBeInTheDocument();
+
+    rerender(
+      <StockBarItemComponent
+        item={{
+          ...issue1600Item,
+          action: null,
+          actionLabel: null,
+          operationAdvice: '卖压缓解，继续观察',
+          sentimentScore: 34,
+        }}
+        isViewing={false}
+        onClick={vi.fn()}
+      />,
+    );
+
+    actions = screen.getByTestId('history-card-actions');
+    expect(within(actions).queryByText('卖出 34')).not.toBeInTheDocument();
+    expect(within(actions).queryByText(/34/)).not.toBeInTheDocument();
   });
 
   it('does not render multi-guard legacy advice as an action badge', () => {

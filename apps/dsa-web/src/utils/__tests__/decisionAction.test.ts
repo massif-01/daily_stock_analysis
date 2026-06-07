@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   type DecisionActionLabelMap,
   getDecisionActionLabel,
+  getLegacyDecisionAction,
   getDecisionActionTone,
   getLegacyDecisionActionLabel,
 } from '../decisionAction';
@@ -78,13 +79,33 @@ describe('decisionAction helpers', () => {
   it('does not match financial compound words as legacy actions', () => {
     expect(getLegacyDecisionActionLabel('no buyback announced', englishLabels)).toBeNull();
     expect(getLegacyDecisionActionLabel('cannot buyback shares now', englishLabels)).toBeNull();
+    expect(getLegacyDecisionActionLabel('share buy-back announced', englishLabels)).toBeNull();
+    expect(getLegacyDecisionActionLabel('share buy back announced', englishLabels)).toBeNull();
     expect(getLegacyDecisionActionLabel('no selloff risk', englishLabels)).toBeNull();
     expect(getLegacyDecisionActionLabel('not selloff yet', englishLabels)).toBeNull();
+    expect(getLegacyDecisionActionLabel('sell-off risk remains low', englishLabels)).toBeNull();
+    expect(getLegacyDecisionActionLabel('sell off risk remains low', englishLabels)).toBeNull();
+    expect(getLegacyDecisionActionLabel('no sell-off pressure', englishLabels)).toBeNull();
     expect(getDecisionActionLabel(null, null, 'no buyback announced', 'Advice', englishLabels)).toBe('Advice');
     expect(getDecisionActionLabel(null, null, 'no selloff risk', 'Advice', englishLabels)).toBe('Advice');
     expect(getLegacyDecisionActionLabel('no buy until breakout', englishLabels)).toBe('Avoid');
     expect(getLegacyDecisionActionLabel('cannot buy before confirmation', englishLabels)).toBe('Avoid');
     expect(getLegacyDecisionActionLabel('no sell before earnings', englishLabels)).toBe('Hold');
+  });
+
+  it('keeps separate action terms next to financial compounds', () => {
+    expect(getLegacyDecisionAction('buy after sell-off')).toBe('buy');
+    expect(getLegacyDecisionActionLabel('buy after sell-off', englishLabels)).toBe('Buy');
+    expect(getLegacyDecisionAction('sell after buy-back rumor')).toBe('sell');
+    expect(getLegacyDecisionActionLabel('sell after buy-back rumor', englishLabels)).toBe('Sell');
+  });
+
+  it('does not match Chinese financial context words as legacy actions', () => {
+    expect(getLegacyDecisionActionLabel('买盘增强，继续观察')).toBeNull();
+    expect(getLegacyDecisionActionLabel('卖压缓解，继续观察')).toBeNull();
+    expect(getLegacyDecisionActionLabel('卖方评级分歧')).toBeNull();
+    expect(getDecisionActionLabel(null, null, '买盘增强，继续观察', '建议')).toBe('建议');
+    expect(getDecisionActionLabel(null, null, '卖压缓解，继续观察', '建议')).toBe('建议');
   });
 
   it('keeps multi-guard legacy advice empty instead of prioritizing avoid or alert', () => {

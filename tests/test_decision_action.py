@@ -5,7 +5,6 @@ import pytest
 
 from src.schemas.decision_action import (
     build_action_fields,
-    decision_type_from_action,
     localize_action_label,
     normalize_decision_action,
 )
@@ -66,10 +65,18 @@ def test_normalize_decision_action_matrix(value: str, expected: str) -> None:
         "waiting to buy",
         "买入或卖出",
         "buy or sell",
+        "买盘增强，继续观察",
+        "卖压缓解，继续观察",
+        "卖方评级分歧",
         "no buyback announced",
         "cannot buyback shares now",
+        "share buy-back announced",
+        "share buy back announced",
         "no selloff risk",
         "not selloff yet",
+        "sell-off risk remains low",
+        "sell off risk remains low",
+        "no sell-off pressure",
         "risk alert, avoid buying",
         "风险预警，避免买入",
         "普通复盘说明",
@@ -208,6 +215,21 @@ def test_build_action_fields_keeps_multi_guard_advice_empty(advice: str) -> None
 @pytest.mark.parametrize(
     "advice",
     [
+        "买盘增强，继续观察",
+        "卖压缓解，继续观察",
+        "卖方评级分歧",
+    ],
+)
+def test_build_action_fields_keeps_chinese_financial_context_empty(advice: str) -> None:
+    assert build_action_fields(operation_advice=advice) == {
+        "action": None,
+        "action_label": None,
+    }
+
+
+@pytest.mark.parametrize(
+    "advice",
+    [
         "no buyback announced",
         "cannot buyback shares now",
         "no selloff risk",
@@ -222,21 +244,39 @@ def test_build_action_fields_keeps_financial_compound_terms_empty(advice: str) -
 
 
 @pytest.mark.parametrize(
-    ("action", "decision_type"),
+    "advice",
     [
-        ("buy", "buy"),
-        ("add", "buy"),
-        ("sell", "sell"),
-        ("reduce", "sell"),
-        ("hold", "hold"),
-        ("watch", "hold"),
-        ("avoid", "hold"),
-        ("alert", "hold"),
-        (None, None),
+        "share buy-back announced",
+        "share buy back announced",
+        "sell-off risk remains low",
+        "sell off risk remains low",
+        "no sell-off pressure",
     ],
 )
-def test_decision_type_from_action_bridge(action: str | None, decision_type: str | None) -> None:
-    assert decision_type_from_action(action) == decision_type
+def test_build_action_fields_keeps_hyphenated_financial_compound_terms_empty(advice: str) -> None:
+    assert build_action_fields(operation_advice=advice) == {
+        "action": None,
+        "action_label": None,
+    }
+
+
+@pytest.mark.parametrize(
+    ("advice", "expected_action", "expected_label"),
+    [
+        ("buy after sell-off", "buy", "买入"),
+        ("sell after buy-back rumor", "sell", "卖出"),
+    ],
+)
+def test_financial_compound_mask_preserves_separate_action_terms(
+    advice: str,
+    expected_action: str,
+    expected_label: str,
+) -> None:
+    assert normalize_decision_action(advice) == expected_action
+    assert build_action_fields(operation_advice=advice) == {
+        "action": expected_action,
+        "action_label": expected_label,
+    }
 
 
 def test_localize_action_label_uses_report_language() -> None:
