@@ -17,6 +17,7 @@ from src.repositories.backtest_repo import BacktestRepository
 from src.repositories.stock_repo import StockRepository
 from src.schemas.decision_action import build_action_fields
 from src.storage import BacktestResult, BacktestSummary, DatabaseManager
+from src.utils.data_processing import parse_json_field
 
 logger = logging.getLogger(__name__)
 
@@ -642,7 +643,8 @@ class BacktestService:
         raw_result: Optional[Any] = None,
         report_type: Optional[str] = None,
     ) -> Dict[str, Any]:
-        raw = BacktestService._parse_raw_result(raw_result)
+        parsed_raw_result = parse_json_field(raw_result)
+        raw = parsed_raw_result if isinstance(parsed_raw_result, dict) else {}
         action_fields = build_action_fields(
             operation_advice=raw.get("operation_advice") or row.operation_advice,
             explicit_action=raw.get("action"),
@@ -687,18 +689,6 @@ class BacktestService:
             "simulated_exit_reason": row.simulated_exit_reason,
             "simulated_return_pct": row.simulated_return_pct,
         }
-
-    @staticmethod
-    def _parse_raw_result(raw_result: Optional[Any]) -> Dict[str, Any]:
-        if isinstance(raw_result, dict):
-            return raw_result
-        if not raw_result:
-            return {}
-        try:
-            payload = json.loads(raw_result)
-        except (TypeError, ValueError):
-            return {}
-        return payload if isinstance(payload, dict) else {}
 
     @staticmethod
     def _summary_to_dict(row: BacktestSummary) -> Dict[str, Any]:

@@ -763,9 +763,7 @@ def _build_task_analysis_result(task: Any) -> AnalysisResultResponse:
     report_data = payload.get("report")
     stock_code = payload.get("stock_code")
     query_id = payload.get("query_id")
-    if isinstance(report_data, dict):
-        report_data = _ensure_report_action_fields(report_data)
-        payload["report"] = report_data
+    report_enriched = False
 
     if isinstance(report_data, dict) and stock_code and query_id:
         context_snapshot, fundamental_snapshot = _load_sync_fundamental_sources(
@@ -786,12 +784,16 @@ def _build_task_analysis_result(task: Any) -> AnalysisResultResponse:
                     fallback_fundamental_payload=fundamental_snapshot,
                 )
                 payload["report"] = report.model_dump()
+                report_enriched = True
             except Exception as e:
                 logger.debug(
                     "enrich in-memory task report failed (fail-open): task_id=%s err=%s",
                     getattr(task, "task_id", None),
                     e,
                 )
+
+    if not report_enriched and isinstance(report_data, dict):
+        payload["report"] = _ensure_report_action_fields(report_data)
 
     return AnalysisResultResponse.model_validate(payload)
 

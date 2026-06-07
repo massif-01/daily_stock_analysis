@@ -423,22 +423,14 @@ def get_history_detail(
             market_phase_summary=market_phase_summary,
         )
         
-        raw_result = result.get("raw_result") if isinstance(result.get("raw_result"), dict) else {}
-        action_fields = build_action_fields(
-            operation_advice=raw_result.get("operation_advice") or result.get("operation_advice"),
-            explicit_action=raw_result.get("action") or result.get("action"),
-            report_type=result.get("report_type"),
-            report_language=report_language,
-        )
-
         summary = ReportSummary(
             analysis_summary=result.get("analysis_summary"),
             operation_advice=localize_operation_advice(
                 result.get("operation_advice"),
                 report_language,
             ),
-            action=action_fields["action"],
-            action_label=action_fields["action_label"],
+            action=result.get("action"),
+            action_label=result.get("action_label"),
             trend_prediction=localize_trend_prediction(
                 result.get("trend_prediction"),
                 report_language,

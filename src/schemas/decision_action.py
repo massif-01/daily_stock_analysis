@@ -36,21 +36,11 @@ _ACTION_LABELS: Dict[str, Dict[str, str]] = {
 }
 
 _EXPLICIT_ALIASES: Dict[str, DecisionAction] = {
-    "strong_buy": "buy",
     "strong buy": "buy",
-    "buy": "buy",
-    "add": "add",
     "accumulate": "add",
-    "hold": "hold",
-    "reduce": "reduce",
     "trim": "reduce",
-    "sell": "sell",
-    "strong_sell": "sell",
     "strong sell": "sell",
-    "watch": "watch",
     "wait": "watch",
-    "avoid": "avoid",
-    "alert": "alert",
 }
 
 _ACTION_PHRASES: Dict[DecisionAction, tuple[str, ...]] = {

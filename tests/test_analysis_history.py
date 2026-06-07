@@ -479,7 +479,7 @@ class AnalysisHistoryTestCase(unittest.TestCase):
         self.assertEqual(response.items[0].action, "avoid")
         self.assertEqual(response.items[0].action_label, "回避")
 
-    def test_history_detail_prefers_raw_result_action_over_outer_action(self) -> None:
+    def test_history_detail_uses_service_resolved_action_fields(self) -> None:
         if get_history_detail is None:
             self.skipTest("fastapi is not installed in this test environment")
 
@@ -494,7 +494,8 @@ class AnalysisHistoryTestCase(unittest.TestCase):
             "created_at": "2026-05-21T17:40:00",
             "sentiment_score": 45,
             "operation_advice": "持有观察",
-            "action": "buy",
+            "action": "watch",
+            "action_label": "观望",
             "trend_prediction": "震荡",
             "analysis_summary": "等待确认",
             "raw_result": {
