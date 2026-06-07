@@ -113,14 +113,7 @@ export const getLegacyDecisionAction = (advice?: string | null): DecisionAction 
       '无需布局',
       '无须布局',
     ]) ||
-    matchesEnglishNegatedAction(lower, ['buy']) ||
-    lower.includes('do not buy') ||
-    lower.includes('no buy') ||
-    lower.includes('no need to buy') ||
-    lower.includes('need not buy') ||
-    lower.includes('cannot buy') ||
-    lower.includes("can't buy") ||
-    lower.includes('cant buy')
+    matchesEnglishNegatedAction(lower, ['buy'])
   ) {
     return 'avoid';
   }
@@ -157,57 +150,7 @@ export const getLegacyDecisionAction = (advice?: string | null): DecisionAction 
       '不宜清仓',
       '暂不清仓',
     ]) ||
-    matchesEnglishNegatedAction(lower, ['add', 'accumulate', 'sell', 'reduce', 'trim']) ||
-    lower.includes('not add') ||
-    lower.includes('do not add') ||
-    lower.includes("don't add") ||
-    lower.includes('dont add') ||
-    lower.includes('no add') ||
-    lower.includes('no need to add') ||
-    lower.includes('need not add') ||
-    lower.includes('cannot add') ||
-    lower.includes("can't add") ||
-    lower.includes('cant add') ||
-    lower.includes('not accumulate') ||
-    lower.includes('do not accumulate') ||
-    lower.includes("don't accumulate") ||
-    lower.includes('dont accumulate') ||
-    lower.includes('no accumulate') ||
-    lower.includes('no need to accumulate') ||
-    lower.includes('need not accumulate') ||
-    lower.includes('cannot accumulate') ||
-    lower.includes("can't accumulate") ||
-    lower.includes('cant accumulate') ||
-    lower.includes('not reduce') ||
-    lower.includes('do not reduce') ||
-    lower.includes("don't reduce") ||
-    lower.includes('dont reduce') ||
-    lower.includes('no reduce') ||
-    lower.includes('no need to reduce') ||
-    lower.includes('need not reduce') ||
-    lower.includes('cannot reduce') ||
-    lower.includes("can't reduce") ||
-    lower.includes('cant reduce') ||
-    lower.includes('not trim') ||
-    lower.includes('do not trim') ||
-    lower.includes("don't trim") ||
-    lower.includes('dont trim') ||
-    lower.includes('no trim') ||
-    lower.includes('no need to trim') ||
-    lower.includes('need not trim') ||
-    lower.includes('cannot trim') ||
-    lower.includes("can't trim") ||
-    lower.includes('cant trim') ||
-    lower.includes('not sell') ||
-    lower.includes('do not sell') ||
-    lower.includes("don't sell") ||
-    lower.includes('dont sell') ||
-    lower.includes('no sell') ||
-    lower.includes('no need to sell') ||
-    lower.includes('need not sell') ||
-    lower.includes('cannot sell') ||
-    lower.includes("can't sell") ||
-    lower.includes('cant sell')
+    matchesEnglishNegatedAction(lower, ['add', 'accumulate', 'sell', 'reduce', 'trim'])
   ) {
     return 'hold';
   }
@@ -217,7 +160,6 @@ export const getLegacyDecisionAction = (advice?: string | null): DecisionAction 
     normalized.includes('避免买入') ||
     normalized.includes('回避') ||
     normalized.includes('规避') ||
-    lower.includes('do not buy') ||
     matchesEnglishTerm(lower, ['avoid'])
   ) {
     guardMatches.add('avoid');
@@ -285,18 +227,22 @@ export const getDecisionActionTone = (
 ): DecisionActionTone => {
   if (action) return toneForAction(action);
 
+  const label = actionLabel?.trim() || '';
+  if (label) {
+    const lowerLabel = normalizeEnglishAdvice(label);
+    if (label.includes('买') || label.includes('加仓') || label.includes('持有')) return 'success';
+    if (label.includes('卖') || label.includes('减仓') || label.includes('清仓')) return 'danger';
+    if (label.includes('观望') || label.includes('等待') || label.includes('回避') || label.includes('预警')) {
+      return 'warning';
+    }
+    if (matchesEnglishTerm(lowerLabel, ['buy', 'add', 'hold'])) return 'success';
+    if (matchesEnglishTerm(lowerLabel, ['sell', 'reduce', 'trim'])) return 'danger';
+    if (matchesEnglishTerm(lowerLabel, ['watch', 'wait', 'avoid', 'alert'])) return 'warning';
+    return 'default';
+  }
+
   const legacyAction = getLegacyDecisionAction(legacyAdvice);
   if (legacyAction) return toneForAction(legacyAction);
 
-  const label = actionLabel?.trim() || '';
-  const lowerLabel = normalizeEnglishAdvice(label);
-  if (label.includes('买') || label.includes('加仓') || label.includes('持有')) return 'success';
-  if (label.includes('卖') || label.includes('减仓') || label.includes('清仓')) return 'danger';
-  if (label.includes('观望') || label.includes('等待') || label.includes('回避') || label.includes('预警')) {
-    return 'warning';
-  }
-  if (matchesEnglishTerm(lowerLabel, ['buy', 'add', 'hold'])) return 'success';
-  if (matchesEnglishTerm(lowerLabel, ['sell', 'reduce', 'trim'])) return 'danger';
-  if (matchesEnglishTerm(lowerLabel, ['watch', 'wait', 'avoid', 'alert'])) return 'warning';
   return 'default';
 };

@@ -137,6 +137,37 @@ describe('HistoryList', () => {
     expect(screen.queryByText('buy 28')).not.toBeInTheDocument();
   });
 
+  it('does not render financial compound English advice as an action badge', () => {
+    render(
+      <HistoryList
+        {...baseProps}
+        items={[
+          {
+            ...items[0],
+            action: null,
+            actionLabel: null,
+            operationAdvice: 'no buyback announced',
+            sentimentScore: 28,
+          },
+          {
+            ...items[0],
+            id: 2,
+            queryId: 'q-2',
+            action: null,
+            actionLabel: null,
+            operationAdvice: 'no selloff risk',
+            sentimentScore: 31,
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText('情绪 28')).toBeInTheDocument();
+    expect(screen.getByText('情绪 31')).toBeInTheDocument();
+    expect(screen.queryByText('回避 28')).not.toBeInTheDocument();
+    expect(screen.queryByText('持有 31')).not.toBeInTheDocument();
+  });
+
   it('does not render multi-guard legacy advice as an avoid or alert action', () => {
     render(
       <HistoryList

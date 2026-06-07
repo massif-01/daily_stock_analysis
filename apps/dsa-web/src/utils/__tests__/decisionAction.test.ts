@@ -75,6 +75,18 @@ describe('decisionAction helpers', () => {
     expect(getDecisionActionLabel(null, null, 'buy or sell', 'Advice', englishLabels)).toBe('Advice');
   });
 
+  it('does not match financial compound words as legacy actions', () => {
+    expect(getLegacyDecisionActionLabel('no buyback announced', englishLabels)).toBeNull();
+    expect(getLegacyDecisionActionLabel('cannot buyback shares now', englishLabels)).toBeNull();
+    expect(getLegacyDecisionActionLabel('no selloff risk', englishLabels)).toBeNull();
+    expect(getLegacyDecisionActionLabel('not selloff yet', englishLabels)).toBeNull();
+    expect(getDecisionActionLabel(null, null, 'no buyback announced', 'Advice', englishLabels)).toBe('Advice');
+    expect(getDecisionActionLabel(null, null, 'no selloff risk', 'Advice', englishLabels)).toBe('Advice');
+    expect(getLegacyDecisionActionLabel('no buy until breakout', englishLabels)).toBe('Avoid');
+    expect(getLegacyDecisionActionLabel('cannot buy before confirmation', englishLabels)).toBe('Avoid');
+    expect(getLegacyDecisionActionLabel('no sell before earnings', englishLabels)).toBe('Hold');
+  });
+
   it('keeps multi-guard legacy advice empty instead of prioritizing avoid or alert', () => {
     expect(getLegacyDecisionActionLabel('risk alert, avoid buying')).toBeNull();
     expect(getLegacyDecisionActionLabel('风险预警，避免买入')).toBeNull();
@@ -87,6 +99,8 @@ describe('decisionAction helpers', () => {
     expect(getDecisionActionTone('buy', null, '卖出')).toBe('success');
     expect(getDecisionActionTone('reduce', null, '买入')).toBe('danger');
     expect(getDecisionActionTone('alert', null, '买入')).toBe('warning');
+    expect(getDecisionActionTone(null, '观望', '买入')).toBe('warning');
+    expect(getDecisionActionTone(null, 'Sell', '买入')).toBe('danger');
     expect(getDecisionActionTone(null, null, 'avoid buying')).toBe('warning');
   });
 });

@@ -105,6 +105,26 @@ describe('StockBarItemComponent', () => {
     expect(within(actions).queryByText(/28/)).not.toBeInTheDocument();
   });
 
+  it('does not render financial compound English advice as an action badge', () => {
+    render(
+      <StockBarItemComponent
+        item={{
+          ...issue1600Item,
+          action: null,
+          actionLabel: null,
+          operationAdvice: 'no selloff risk',
+          sentimentScore: 28,
+        }}
+        isViewing={false}
+        onClick={vi.fn()}
+      />,
+    );
+
+    const actions = screen.getByTestId('history-card-actions');
+    expect(within(actions).queryByText('持有 28')).not.toBeInTheDocument();
+    expect(within(actions).queryByText(/28/)).not.toBeInTheDocument();
+  });
+
   it('does not render multi-guard legacy advice as an action badge', () => {
     render(
       <StockBarItemComponent

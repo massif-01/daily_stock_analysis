@@ -66,6 +66,10 @@ def test_normalize_decision_action_matrix(value: str, expected: str) -> None:
         "waiting to buy",
         "买入或卖出",
         "buy or sell",
+        "no buyback announced",
+        "cannot buyback shares now",
+        "no selloff risk",
+        "not selloff yet",
         "risk alert, avoid buying",
         "风险预警，避免买入",
         "普通复盘说明",
@@ -195,6 +199,22 @@ def test_build_action_fields_prioritizes_negated_hold_advice_over_embedded_trade
     ],
 )
 def test_build_action_fields_keeps_multi_guard_advice_empty(advice: str) -> None:
+    assert build_action_fields(operation_advice=advice) == {
+        "action": None,
+        "action_label": None,
+    }
+
+
+@pytest.mark.parametrize(
+    "advice",
+    [
+        "no buyback announced",
+        "cannot buyback shares now",
+        "no selloff risk",
+        "not selloff yet",
+    ],
+)
+def test_build_action_fields_keeps_financial_compound_terms_empty(advice: str) -> None:
     assert build_action_fields(operation_advice=advice) == {
         "action": None,
         "action_label": None,
