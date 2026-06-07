@@ -181,6 +181,33 @@ describe('BacktestPage', () => {
     expect(rowScope.queryByText('观望')).not.toBeInTheDocument();
   });
 
+  it('keeps operation advice visible when backtest action fields are absent for multi-guard advice', async () => {
+    mockGetResults.mockResolvedValueOnce({
+      total: 1,
+      page: 1,
+      limit: 20,
+      items: [
+        {
+          ...baseResultItem,
+          operationAdvice: 'risk alert, avoid buying',
+          action: null,
+          actionLabel: null,
+        },
+      ],
+    });
+
+    render(<BacktestPage />);
+
+    const codeCell = await screen.findByText('600519');
+    const resultRow = codeCell.closest('tr');
+    expect(resultRow).not.toBeNull();
+    const rowScope = within(resultRow as HTMLElement);
+    expect(rowScope.getByText('震荡偏多')).toBeInTheDocument();
+    expect(rowScope.getByText('risk alert, avoid buying')).toBeInTheDocument();
+    expect(rowScope.queryByText('回避')).not.toBeInTheDocument();
+    expect(rowScope.queryByText('预警')).not.toBeInTheDocument();
+  });
+
   it('renders backtest controls and result headings in English UI mode', async () => {
     renderEnglishPage();
 

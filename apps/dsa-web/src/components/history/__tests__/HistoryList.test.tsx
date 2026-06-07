@@ -137,6 +137,27 @@ describe('HistoryList', () => {
     expect(screen.queryByText('buy 28')).not.toBeInTheDocument();
   });
 
+  it('does not render multi-guard legacy advice as an avoid or alert action', () => {
+    render(
+      <HistoryList
+        {...baseProps}
+        items={[
+          {
+            ...items[0],
+            action: null,
+            actionLabel: null,
+            operationAdvice: 'risk alert, avoid buying',
+            sentimentScore: 28,
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText('情绪 28')).toBeInTheDocument();
+    expect(screen.queryByText('回避 28')).not.toBeInTheDocument();
+    expect(screen.queryByText('预警 28')).not.toBeInTheDocument();
+  });
+
   it('toggles select-all when clicking the label text', () => {
     const onToggleSelectAll = vi.fn();
 

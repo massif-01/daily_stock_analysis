@@ -58,7 +58,18 @@ def test_normalize_decision_action_matrix(value: str, expected: str) -> None:
 
 @pytest.mark.parametrize(
     "value",
-    ["", None, "观察", "等待突破后买入", "waiting to buy", "买入或卖出", "buy or sell", "普通复盘说明"],
+    [
+        "",
+        None,
+        "观察",
+        "等待突破后买入",
+        "waiting to buy",
+        "买入或卖出",
+        "buy or sell",
+        "risk alert, avoid buying",
+        "风险预警，避免买入",
+        "普通复盘说明",
+    ],
 )
 def test_normalize_decision_action_unknown_or_ambiguous_returns_none(value: str | None) -> None:
     assert normalize_decision_action(value) is None
@@ -173,6 +184,20 @@ def test_build_action_fields_prioritizes_negated_hold_advice_over_embedded_trade
     assert build_action_fields(operation_advice=advice) == {
         "action": "hold",
         "action_label": "持有",
+    }
+
+
+@pytest.mark.parametrize(
+    "advice",
+    [
+        "risk alert, avoid buying",
+        "风险预警，避免买入",
+    ],
+)
+def test_build_action_fields_keeps_multi_guard_advice_empty(advice: str) -> None:
+    assert build_action_fields(operation_advice=advice) == {
+        "action": None,
+        "action_label": None,
     }
 
 

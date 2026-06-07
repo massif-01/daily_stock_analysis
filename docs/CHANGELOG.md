@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - [改进] #1390 P0 为个股分析与历史/回测展示新增可选八态 `action` / `action_label` 建议动作字段，保留 `operation_advice` 自由文本和 `decision_type=buy|hold|sell` 统计口径，不新增迁移或配置项。
-- [修复] #1390 收紧建议动作 legacy fallback：英文 `not to ...` 否定不再误判为买卖动作，Web 旧记录不再把 `buy or sell` 渲染成买入，并在回测/历史趋势等入口按界面语言显示结构化 action 标签。
+- [修复] #1390 收紧建议动作 legacy fallback：英文 `not to ...` 否定不再误判为买卖动作，Web 旧记录不再把 `buy or sell` 或多 guard 歧义文本渲染成 action badge，并在回测/历史趋势等入口按界面语言显示结构化 action 标签。
 - [修复] Web 英文界面补齐回测、组合风险与告警规则相关文案本地化，避免英文模式下残留中文筛选器、按钮和枚举标签。
 - [chore] 移除随 issue / PR 验收流程误入库的截图资产，并明确一次性截图证据应保留在 PR 描述、评论、附件或 artifact 中，不作为仓库文件合入。
 - [修复] 综合情报搜索中的机构分析与业绩预期维度改用 180 天 provider 请求窗口，避免默认短新闻窗口漏掉财报、研报等周期性财经材料。

@@ -103,6 +103,44 @@ describe('StockHistoryTrendDrawer', () => {
     expect(screen.queryByText('持有')).not.toBeInTheDocument();
   });
 
+  it('keeps multi-guard legacy advice as full text when structured action is absent', () => {
+    render(
+      <StockHistoryTrendDrawer
+        report={{
+          ...report,
+          summary: {
+            ...report.summary,
+            operationAdvice: 'risk alert, avoid buying',
+            action: null,
+            actionLabel: null,
+          },
+        }}
+        items={[
+          {
+            ...items[0],
+            operationAdvice: 'risk alert, avoid buying',
+            action: null,
+            actionLabel: null,
+          },
+        ]}
+        total={1}
+        hasMore={false}
+        isLoading={false}
+        isLoadingMore={false}
+        filters={{ range: 'all', model: 'all', sort: 'desc' }}
+        onClose={vi.fn()}
+        onRangeChange={vi.fn()}
+        onLoadMore={vi.fn()}
+        onSelectRecord={vi.fn()}
+        onRetry={vi.fn()}
+      />,
+    );
+
+    expect(screen.getAllByText('risk alert, avoid buying').length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText('回避')).not.toBeInTheDocument();
+    expect(screen.queryByText('预警')).not.toBeInTheDocument();
+  });
+
   it('uses localized taxonomy labels when actionLabel is missing in English UI mode', () => {
     window.localStorage.setItem(UI_LANGUAGE_STORAGE_KEY, 'en');
 

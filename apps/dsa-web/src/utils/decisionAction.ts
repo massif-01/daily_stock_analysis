@@ -211,6 +211,7 @@ export const getLegacyDecisionAction = (advice?: string | null): DecisionAction 
   ) {
     return 'hold';
   }
+  const guardMatches = new Set<DecisionAction>();
   if (
     normalized.includes('不建议买入') ||
     normalized.includes('避免买入') ||
@@ -219,7 +220,7 @@ export const getLegacyDecisionAction = (advice?: string | null): DecisionAction 
     lower.includes('do not buy') ||
     matchesEnglishTerm(lower, ['avoid'])
   ) {
-    return 'avoid';
+    guardMatches.add('avoid');
   }
   if (
     normalized.includes('风险预警') ||
@@ -228,7 +229,13 @@ export const getLegacyDecisionAction = (advice?: string | null): DecisionAction 
     lower.includes('risk alert') ||
     matchesEnglishTerm(lower, ['alert'])
   ) {
-    return 'alert';
+    guardMatches.add('alert');
+  }
+  if (guardMatches.size === 1) {
+    return Array.from(guardMatches)[0];
+  }
+  if (guardMatches.size > 1) {
+    return null;
   }
 
   const matches = new Set<DecisionAction>();

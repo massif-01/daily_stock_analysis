@@ -75,6 +75,14 @@ describe('decisionAction helpers', () => {
     expect(getDecisionActionLabel(null, null, 'buy or sell', 'Advice', englishLabels)).toBe('Advice');
   });
 
+  it('keeps multi-guard legacy advice empty instead of prioritizing avoid or alert', () => {
+    expect(getLegacyDecisionActionLabel('risk alert, avoid buying')).toBeNull();
+    expect(getLegacyDecisionActionLabel('风险预警，避免买入')).toBeNull();
+    expect(getDecisionActionLabel(null, null, 'risk alert, avoid buying', 'Advice', englishLabels)).toBe('Advice');
+    expect(getLegacyDecisionActionLabel('avoid buying', englishLabels)).toBe('Avoid');
+    expect(getLegacyDecisionActionLabel('risk alert', englishLabels)).toBe('Alert');
+  });
+
   it('maps action tone without reading legacy text when action is present', () => {
     expect(getDecisionActionTone('buy', null, '卖出')).toBe('success');
     expect(getDecisionActionTone('reduce', null, '买入')).toBe('danger');
