@@ -69,6 +69,11 @@ const matchesEnglishNegatedAction = (value: string, terms: readonly string[]): b
   );
 };
 
+const hasEnglishAvoidedHoldAction = (value: string): boolean => {
+  const terms = String.raw`(?:adding|accumulating|selling|reducing|trimming)`;
+  return new RegExp(`(^|[^a-z0-9_])avoid\\s+${terms}(?=$|[^a-z0-9_])`).test(value);
+};
+
 const hasEnglishDeferredAction = (value: string): boolean => {
   const terms = String.raw`(?:buy|add|accumulate|sell|reduce|trim)`;
   return (
@@ -155,6 +160,7 @@ export const getLegacyDecisionAction = (advice?: string | null): DecisionAction 
       '不宜清仓',
       '暂不清仓',
     ]) ||
+    hasEnglishAvoidedHoldAction(lower) ||
     matchesEnglishNegatedAction(lower, ['add', 'accumulate', 'sell', 'reduce', 'trim'])
   ) {
     return 'hold';

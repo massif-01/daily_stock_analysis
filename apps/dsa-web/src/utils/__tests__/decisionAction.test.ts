@@ -47,6 +47,7 @@ describe('decisionAction helpers', () => {
     expect(getLegacyDecisionActionLabel('not a buy yet', englishLabels)).toBe('Avoid');
     expect(getLegacyDecisionActionLabel('not to buy', englishLabels)).toBe('Avoid');
     expect(getLegacyDecisionActionLabel('avoid buying', englishLabels)).toBe('Avoid');
+    expect(getLegacyDecisionActionLabel('avoid buying into weakness', englishLabels)).toBe('Avoid');
     expect(getLegacyDecisionActionLabel('waiting to buy')).toBeNull();
   });
 
@@ -73,6 +74,9 @@ describe('decisionAction helpers', () => {
     expect(getLegacyDecisionActionLabel('not to sell')).toBe('持有');
     expect(getLegacyDecisionActionLabel('not to trim')).toBe('持有');
     expect(getLegacyDecisionActionLabel('not a trim yet', englishLabels)).toBe('Hold');
+    expect(getLegacyDecisionActionLabel('avoid selling into weakness', englishLabels)).toBe('Hold');
+    expect(getLegacyDecisionActionLabel('avoid trimming before earnings', englishLabels)).toBe('Hold');
+    expect(getLegacyDecisionActionLabel('avoid reducing exposure before earnings', englishLabels)).toBe('Hold');
     expect(getDecisionActionTone(null, null, '不建议卖出，继续观察')).toBe('success');
   });
 

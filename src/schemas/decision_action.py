@@ -225,6 +225,7 @@ _ENGLISH_NEGATED_ACTION_TERMS: Dict[DecisionAction, tuple[str, ...]] = {
     "avoid": ("buy",),
     "hold": ("add", "accumulate", "sell", "reduce", "trim"),
 }
+_ENGLISH_AVOIDED_HOLD_ACTION_TERMS = ("adding", "accumulating", "selling", "reducing", "trimming")
 _ENGLISH_DEFERRED_ACTION_TERMS = ("buy", "add", "accumulate", "sell", "reduce", "trim")
 _FINANCIAL_COMPOUND_SENTINEL = "financialcompound"
 
@@ -271,6 +272,11 @@ def _english_negated_action_matches(text: str) -> set[DecisionAction]:
     return matches
 
 
+def _has_english_avoided_hold_action(text: str) -> bool:
+    terms = "|".join(re.escape(term) for term in _ENGLISH_AVOIDED_HOLD_ACTION_TERMS)
+    return bool(re.search(rf"(?<![a-z0-9_])avoid\s+(?:{terms})(?![a-z0-9_])", text))
+
+
 def _has_english_deferred_action(text: str) -> bool:
     terms = "|".join(re.escape(term) for term in _ENGLISH_DEFERRED_ACTION_TERMS)
     if re.search(rf"(?<![a-z0-9_])wait(?:ing)?\s+to\s+(?:{terms})(?![a-z0-9_])", text):
@@ -311,6 +317,8 @@ def normalize_decision_action(value: Any) -> Optional[DecisionAction]:
         return None
 
     negated_matches: set[DecisionAction] = set()
+    if _has_english_avoided_hold_action(text):
+        negated_matches.add("hold")
     negated_matches.update(_english_negated_action_matches(text))
     for action, phrases in _NEGATED_ACTION_PHRASES.items():
         if any(_word_or_substring_match(text, phrase) for phrase in phrases):

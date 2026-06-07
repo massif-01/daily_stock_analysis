@@ -110,6 +110,8 @@ def test_normalize_decision_action_unknown_or_ambiguous_returns_none(value: str 
         ("can't buy", "avoid"),
         ("not a buy yet", "avoid"),
         ("not to buy", "avoid"),
+        ("avoid buying", "avoid"),
+        ("avoid buying into weakness", "avoid"),
         ("不建议加仓", "hold"),
         ("无须加仓", "hold"),
         ("no add", "hold"),
@@ -141,6 +143,9 @@ def test_normalize_decision_action_unknown_or_ambiguous_returns_none(value: str 
         ("can't trim", "hold"),
         ("not a trim yet", "hold"),
         ("not to trim", "hold"),
+        ("avoid selling into weakness", "hold"),
+        ("avoid trimming before earnings", "hold"),
+        ("avoid reducing exposure before earnings", "hold"),
         ("不建议清仓", "hold"),
     ],
 )
@@ -189,6 +194,9 @@ def test_build_action_fields_prioritizes_negated_buy_advice_over_embedded_buy_ph
         "not a trim yet",
         "not to sell",
         "not to trim",
+        "avoid selling into weakness",
+        "avoid trimming before earnings",
+        "avoid reducing exposure before earnings",
     ],
 )
 def test_build_action_fields_prioritizes_negated_hold_advice_over_embedded_trade_phrase(advice: str) -> None:
