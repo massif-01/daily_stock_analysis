@@ -815,8 +815,22 @@ class DecisionSignalRecord(Base):
     __table_args__ = (
         Index('ix_decision_signal_stock_status_time', 'stock_code', 'status', 'created_at'),
         Index('ix_decision_signal_market_status_time', 'market', 'status', 'created_at'),
-        Index('ix_decision_signal_report_stock_action', 'source_report_id', 'stock_code', 'action'),
-        Index('ix_decision_signal_trace_stock_action', 'trace_id', 'stock_code', 'action'),
+        Index(
+            'ix_decision_signal_report_stock_action_horizon_phase',
+            'source_report_id',
+            'stock_code',
+            'action',
+            'horizon',
+            'market_phase',
+        ),
+        Index(
+            'ix_decision_signal_trace_stock_action_horizon_phase',
+            'trace_id',
+            'stock_code',
+            'action',
+            'horizon',
+            'market_phase',
+        ),
     )
 
 

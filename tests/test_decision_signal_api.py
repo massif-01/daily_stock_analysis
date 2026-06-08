@@ -305,3 +305,74 @@ def test_query_validation_error_envelope(client_and_db) -> None:
     page_size_resp = client.get("/api/v1/decision-signals", params={"page_size": 0})
     assert page_size_resp.status_code == 422
     assert page_size_resp.json()["error"] == "validation_error"
+
+
+def test_create_schema_and_service_validation_errors(client_and_db) -> None:
+    client, _db = client_and_db
+
+    schema_invalid_cases = [
+        {"entry_low": -1},
+        {"entry_high": 0},
+        {"stop_loss": "nan"},
+        {"target_price": "inf"},
+        {"trace_id": "x" * 65},
+    ]
+    for overrides in schema_invalid_cases:
+        resp = client.post("/api/v1/decision-signals", json=_payload(**overrides))
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["error"] == "validation_error"
+
+    range_resp = client.post(
+        "/api/v1/decision-signals",
+        json=_payload(source_report_id=3301, trace_id="trace-range", entry_low=1700, entry_high=1600),
+    )
+    assert range_resp.status_code == 400, range_resp.text
+    assert range_resp.json()["error"] == "validation_error"
+
+
+def test_dedup_distinguishes_horizon_and_market_phase(client_and_db) -> None:
+    client, _db = client_and_db
+
+    first_resp = client.post(
+        "/api/v1/decision-signals",
+        json=_payload(source_report_id=3401, trace_id="trace-3401", horizon="1d", market_phase="intraday"),
+    )
+    assert first_resp.status_code == 200, first_resp.text
+    first = first_resp.json()
+    assert first["created"] is True
+
+    duplicate_resp = client.post(
+        "/api/v1/decision-signals",
+        json=_payload(source_report_id=3401, trace_id="trace-3401", horizon="1d", market_phase="intraday"),
+    )
+    assert duplicate_resp.status_code == 200, duplicate_resp.text
+    duplicate = duplicate_resp.json()
+    assert duplicate["created"] is False
+    assert duplicate["item"]["id"] == first["item"]["id"]
+
+    horizon_resp = client.post(
+        "/api/v1/decision-signals",
+        json=_payload(source_report_id=3401, trace_id="trace-3401", horizon="10d", market_phase="intraday"),
+    )
+    assert horizon_resp.status_code == 200, horizon_resp.text
+    assert horizon_resp.json()["created"] is True
+    assert horizon_resp.json()["item"]["id"] != first["item"]["id"]
+
+    phase_resp = client.post(
+        "/api/v1/decision-signals",
+        json=_payload(source_report_id=3401, trace_id="trace-3401", horizon="1d", market_phase="premarket"),
+    )
+    assert phase_resp.status_code == 200, phase_resp.text
+    assert phase_resp.json()["created"] is True
+    assert phase_resp.json()["item"]["id"] != first["item"]["id"]
+
+    list_resp = client.get(
+        "/api/v1/decision-signals",
+        params={"stock_code": "600519", "source_type": "analysis", "trigger_source": "api"},
+    )
+    assert list_resp.status_code == 200, list_resp.text
+    assert list_resp.json()["total"] == 3
+
+    latest_resp = client.get("/api/v1/decision-signals/latest/600519", params={"limit": 3})
+    assert latest_resp.status_code == 200, latest_resp.text
+    assert latest_resp.json()["total"] == 3

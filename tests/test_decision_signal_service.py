@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from math import inf, nan
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,7 @@ import pytest
 from src.config import Config
 from src.services.decision_signal_service import DecisionSignalService
 from src.storage import DatabaseManager, DecisionSignalRecord
+from src.utils.sanitize import sanitize_decision_signal_text
 
 
 def test_service_imports_without_api_bootstrap() -> None:
@@ -142,6 +144,61 @@ def test_service_rejects_invalid_enums_and_ranges(isolated_db) -> None:
         service.create_signal(_payload(score=101))
     with pytest.raises(ValueError, match="trigger_source"):
         service.create_signal(_payload(trigger_source="x" * 65))
+    with pytest.raises(ValueError, match="trace_id"):
+        service.create_signal(_payload(trace_id="x" * 65))
+    with pytest.raises(ValueError, match="source_agent"):
+        service.create_signal(_payload(source_agent="x" * 65))
+    with pytest.raises(ValueError, match="stock_name"):
+        service.create_signal(_payload(stock_name="x" * 65))
+    with pytest.raises(ValueError, match="action_label"):
+        service.create_signal(_payload(action_label="x" * 33))
+
+
+def test_service_rejects_invalid_price_plan_values(isolated_db) -> None:
+    service = DecisionSignalService(db_manager=isolated_db)
+
+    invalid_cases = [
+        {"entry_low": -1},
+        {"entry_high": 0},
+        {"stop_loss": nan},
+        {"target_price": inf},
+        {"entry_low": "not-a-number"},
+    ]
+    for index, overrides in enumerate(invalid_cases, start=1):
+        with pytest.raises(ValueError):
+            service.create_signal(_payload(source_report_id=300 + index, trace_id=f"trace-price-{index}", **overrides))
+
+    with pytest.raises(ValueError, match="entry_low"):
+        service.create_signal(_payload(source_report_id=306, trace_id="trace-price-range", entry_low=1700, entry_high=1600))
+
+
+def test_decision_signal_sanitizer_redacts_sensitive_url_queries_without_url_tail_leaks() -> None:
+    sanitized = sanitize_decision_signal_text(
+        "plain https://news.example.com/article?id=1 "
+        "signed https://news.example.com/article?token=abc&id=1 "
+        "auth https://news.example.com/article?auth_token=abc&id=2 "
+        "api https://news.example.com/article?api-token=abc&id=3"
+    )
+
+    assert "https://news.example.com/article?id=1" in sanitized
+    assert sanitized.count("[REDACTED_URL]") == 3
+    assert "token=abc" not in sanitized
+    assert "auth_token=abc" not in sanitized
+    assert "api-token=abc" not in sanitized
+    assert "]&id=" not in sanitized
+
+
+def test_trace_id_identity_is_not_silently_truncated(isolated_db) -> None:
+    service = DecisionSignalService(db_manager=isolated_db)
+    trace_a = f"{'x' * 63}a"
+    trace_b = f"{'x' * 63}b"
+
+    first = service.create_signal(_payload(source_report_id=None, trace_id=trace_a))
+    second = service.create_signal(_payload(source_report_id=None, trace_id=trace_b))
+
+    assert first["created"] is True
+    assert second["created"] is True
+    assert first["item"]["id"] != second["item"]["id"]
 
 
 def test_service_sanitizes_text_and_json_before_persisting(isolated_db) -> None:
@@ -156,6 +213,10 @@ def test_service_sanitizes_text_and_json_before_persisting(isolated_db) -> None:
             watch_conditions=["watch https://example.com/path"],
             evidence={
                 "webhook_url": "https://secret.example.com/hook",
+                "source_url": "https://news.example.com/article?id=1",
+                "signed_url": "https://news.example.com/article?token=abc&id=1",
+                "auth_url": "https://news.example.com/article?auth_token=abc&id=2",
+                "hyphen_signed_url": "https://news.example.com/article?api-key=abc",
                 "note": "Bearer abcdef0123456789",
             },
             metadata={"access_token": "abc", "callback": "https://example.com/cb"},
@@ -165,9 +226,14 @@ def test_service_sanitizes_text_and_json_before_persisting(isolated_db) -> None:
     item = result["item"]
     assert len(item["reason"]) > 300
     response_blob = str(item)
-    assert "hooks.example.com" not in response_blob
+    assert "hooks.example.com" in response_blob
+    assert "news.example.com/article?id=1" in response_blob
+    assert "example.com/cb" in response_blob
     assert "secret.example.com" not in response_blob
-    assert "example.com/cb" not in response_blob
+    assert "token=abc" not in response_blob
+    assert "auth_token=abc" not in response_blob
+    assert "api-key=abc" not in response_blob
+    assert "]&id=" not in response_blob
     assert "plain-secret" not in response_blob
     assert "abcdef0123456789" not in response_blob
     assert "sk-1234567890abcdef123456" not in response_blob
@@ -186,6 +252,11 @@ def test_service_sanitizes_text_and_json_before_persisting(isolated_db) -> None:
                 row.metadata_json,
             )
         )
-    assert "hooks.example.com" not in stored_blob
+    assert "hooks.example.com" in stored_blob
+    assert "news.example.com/article?id=1" in stored_blob
+    assert "token=abc" not in stored_blob
+    assert "auth_token=abc" not in stored_blob
+    assert "api-key=abc" not in stored_blob
+    assert "]&id=" not in stored_blob
     assert "plain-secret" not in stored_blob
     assert "sk-1234567890abcdef123456" not in stored_blob

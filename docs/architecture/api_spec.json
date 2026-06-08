@@ -1,5 +1,5 @@
 {
-  "openapi": "3.0.0",
+  "openapi": "3.1.0",
   "info": {
     "title": "Daily Stock Analysis API",
     "description": "A股/港股/美股自选股智能分析系统 API\n\n## 功能模块\n- 股票分析：触发 AI 智能分析\n- 历史记录：查询历史分析报告\n- 股票数据：获取行情数据\n\n## 认证方式\n当前版本暂无认证要求",
@@ -2762,7 +2762,8 @@
           "entry_low": {
             "anyOf": [
               {
-                "type": "number"
+                "type": "number",
+                "exclusiveMinimum": 0.0
               },
               {
                 "type": "null"
@@ -2773,7 +2774,8 @@
           "entry_high": {
             "anyOf": [
               {
-                "type": "number"
+                "type": "number",
+                "exclusiveMinimum": 0.0
               },
               {
                 "type": "null"
@@ -2784,7 +2786,8 @@
           "stop_loss": {
             "anyOf": [
               {
-                "type": "number"
+                "type": "number",
+                "exclusiveMinimum": 0.0
               },
               {
                 "type": "null"
@@ -2795,7 +2798,8 @@
           "target_price": {
             "anyOf": [
               {
-                "type": "number"
+                "type": "number",
+                "exclusiveMinimum": 0.0
               },
               {
                 "type": "null"
@@ -3332,25 +3336,41 @@
         "title": "DecisionSignalListResponse"
       },
       "ErrorResponse": {
-        "type": "object",
         "properties": {
           "error": {
             "type": "string",
-            "description": "错误类型"
+            "title": "Error",
+            "description": "错误类型",
+            "example": "validation_error"
           },
           "message": {
             "type": "string",
-            "description": "错误详情"
+            "title": "Message",
+            "description": "错误详情",
+            "example": "请求参数错误"
           },
           "detail": {
-            "type": "object",
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail",
             "description": "附加错误信息"
           }
         },
+        "type": "object",
         "required": [
           "error",
           "message"
-        ]
+        ],
+        "title": "ErrorResponse",
+        "description": "错误响应",
+        "example": {
+          "error": "not_found",
+          "message": "资源不存在"
+        }
       }
     }
   }

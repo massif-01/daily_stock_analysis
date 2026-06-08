@@ -92,6 +92,7 @@ def test_decision_signal_static_api_spec_matches_runtime_paths() -> None:
     static_spec = json.loads(static_spec_path.read_text(encoding="utf-8"))
     runtime_spec = create_app().openapi()
 
+    assert static_spec["openapi"] == runtime_spec["openapi"]
     for path in DECISION_SIGNAL_PATHS:
         assert static_spec["paths"][path] == runtime_spec["paths"][path]
     for schema_name in DECISION_SIGNAL_SCHEMAS:

@@ -162,17 +162,23 @@ class DecisionSignalRepository:
         trace_id = fields.get("trace_id")
         stock_code = fields.get("stock_code")
         action = fields.get("action")
+        horizon = fields.get("horizon")
+        market_phase = fields.get("market_phase")
         if source_report_id is not None:
             conditions = [
                 DecisionSignalRecord.source_report_id == source_report_id,
                 DecisionSignalRecord.stock_code == stock_code,
                 DecisionSignalRecord.action == action,
+                DecisionSignalRecord.horizon == horizon,
+                DecisionSignalRecord.market_phase == market_phase,
             ]
         elif trace_id:
             conditions = [
                 DecisionSignalRecord.trace_id == trace_id,
                 DecisionSignalRecord.stock_code == stock_code,
                 DecisionSignalRecord.action == action,
+                DecisionSignalRecord.horizon == horizon,
+                DecisionSignalRecord.market_phase == market_phase,
             ]
         else:
             return None

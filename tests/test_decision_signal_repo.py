@@ -78,6 +78,14 @@ def test_create_if_absent_deduplicates_report_and_trace_keys(isolated_db) -> Non
     assert row2.id == row1.id
     assert row2.reason == "趋势增强"
 
+    different_horizon, horizon_created = repo.create_if_absent(_fields(horizon="10d", target_price=1900))
+    assert horizon_created is True
+    assert different_horizon.id != row1.id
+
+    different_phase, phase_created = repo.create_if_absent(_fields(market_phase="premarket", target_price=1800))
+    assert phase_created is True
+    assert different_phase.id != row1.id
+
     trace_row1, trace_created1 = repo.create_if_absent(
         _fields(source_report_id=None, trace_id="trace-only", stock_code="000001")
     )
@@ -87,6 +95,27 @@ def test_create_if_absent_deduplicates_report_and_trace_keys(isolated_db) -> Non
     assert trace_created1 is True
     assert trace_created2 is False
     assert trace_row2.id == trace_row1.id
+
+    trace_horizon_row, trace_horizon_created = repo.create_if_absent(
+        _fields(
+            source_report_id=None,
+            trace_id="trace-only",
+            stock_code="000001",
+            horizon="10d",
+        )
+    )
+    assert trace_horizon_created is True
+    assert trace_horizon_row.id != trace_row1.id
+
+    none_dim_row1, none_dim_created1 = repo.create_if_absent(
+        _fields(source_report_id=1002, trace_id="trace-none-dim", horizon=None, market_phase=None)
+    )
+    none_dim_row2, none_dim_created2 = repo.create_if_absent(
+        _fields(source_report_id=1002, trace_id="trace-none-dim", horizon=None, market_phase=None)
+    )
+    assert none_dim_created1 is True
+    assert none_dim_created2 is False
+    assert none_dim_row2.id == none_dim_row1.id
 
     no_key_row1, no_key_created1 = repo.create_if_absent(
         _fields(source_report_id=None, trace_id=None, stock_code="000002")
@@ -150,5 +179,5 @@ def test_create_all_is_idempotent_and_indexes_exist(isolated_db) -> None:
     }
     assert "ix_decision_signal_stock_status_time" in index_names
     assert "ix_decision_signal_market_status_time" in index_names
-    assert "ix_decision_signal_report_stock_action" in index_names
-    assert "ix_decision_signal_trace_stock_action" in index_names
+    assert "ix_decision_signal_report_stock_action_horizon_phase" in index_names
+    assert "ix_decision_signal_trace_stock_action_horizon_phase" in index_names

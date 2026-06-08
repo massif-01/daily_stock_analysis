@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import math
 from datetime import datetime
 from typing import Any, Dict, List, Optional, get_args
 
@@ -157,7 +158,7 @@ class DecisionSignalService:
         market = self._normalize_market(payload.get("market"))
         action = self._normalize_action(payload.get("action"))
         report_language = normalize_report_language(payload.get("report_language"))
-        action_label = self._optional_text(payload.get("action_label"), max_length=32)
+        action_label = self._optional_text(payload.get("action_label"), "action_label", max_length=32)
         if not action_label:
             action_label = localize_action_label(action, report_language)
 
@@ -170,12 +171,12 @@ class DecisionSignalService:
 
         fields: Dict[str, Any] = {
             "stock_code": stock_code,
-            "stock_name": self._optional_text(payload.get("stock_name"), max_length=64),
+            "stock_name": self._optional_text(payload.get("stock_name"), "stock_name", max_length=64),
             "market": market,
             "source_type": self._normalize_enum(payload.get("source_type"), SOURCE_TYPES, "source_type"),
-            "source_agent": self._optional_text(payload.get("source_agent"), max_length=64),
+            "source_agent": self._optional_text(payload.get("source_agent"), "source_agent", max_length=64),
             "source_report_id": self._optional_int(payload.get("source_report_id"), "source_report_id"),
-            "trace_id": self._optional_text(payload.get("trace_id"), max_length=64),
+            "trace_id": self._optional_text(payload.get("trace_id"), "trace_id", max_length=64),
             "market_phase": self._normalize_optional_enum(payload.get("market_phase"), MARKET_PHASES, "market_phase"),
             "trigger_source": self._normalize_trigger_source(payload.get("trigger_source")),
             "action": action,
@@ -183,10 +184,10 @@ class DecisionSignalService:
             "confidence": confidence,
             "score": score,
             "horizon": self._normalize_optional_enum(payload.get("horizon"), HORIZONS, "horizon"),
-            "entry_low": self._optional_float(payload.get("entry_low"), "entry_low"),
-            "entry_high": self._optional_float(payload.get("entry_high"), "entry_high"),
-            "stop_loss": self._optional_float(payload.get("stop_loss"), "stop_loss"),
-            "target_price": self._optional_float(payload.get("target_price"), "target_price"),
+            "entry_low": self._optional_price_float(payload.get("entry_low"), "entry_low"),
+            "entry_high": self._optional_price_float(payload.get("entry_high"), "entry_high"),
+            "stop_loss": self._optional_price_float(payload.get("stop_loss"), "stop_loss"),
+            "target_price": self._optional_price_float(payload.get("target_price"), "target_price"),
             "invalidation": self._optional_signal_text(payload.get("invalidation")),
             "watch_conditions": self._optional_signal_text(payload.get("watch_conditions")),
             "reason": self._optional_signal_text(payload.get("reason")),
@@ -198,6 +199,7 @@ class DecisionSignalService:
             "expires_at": self._parse_datetime(payload.get("expires_at")),
             "metadata_json": self._json_dumps(payload.get("metadata")),
         }
+        self._validate_entry_range(fields)
         fields["plan_quality"] = self._normalize_plan_quality(
             payload.get("plan_quality"),
             fields=fields,
@@ -304,13 +306,15 @@ class DecisionSignalService:
         return cls._normalize_trigger_source(value)
 
     @staticmethod
-    def _optional_text(value: Any, *, max_length: int) -> Optional[str]:
+    def _optional_text(value: Any, field_name: str, *, max_length: int) -> Optional[str]:
         if value is None:
             return None
         text = str(value).strip()
         if not text:
             return None
-        return text[:max_length]
+        if len(text) > max_length:
+            raise ValueError(f"{field_name} must be at most {max_length} characters")
+        return text
 
     @staticmethod
     def _optional_signal_text(value: Any) -> Optional[str]:
@@ -329,6 +333,22 @@ class DecisionSignalService:
             return float(value)
         except (TypeError, ValueError) as exc:
             raise ValueError(f"{field_name} must be a number") from exc
+
+    @classmethod
+    def _optional_price_float(cls, value: Any, field_name: str) -> Optional[float]:
+        number = cls._optional_float(value, field_name)
+        if number is None:
+            return None
+        if not math.isfinite(number) or number <= 0:
+            raise ValueError(f"{field_name} must be a finite positive number")
+        return number
+
+    @staticmethod
+    def _validate_entry_range(fields: Dict[str, Any]) -> None:
+        entry_low = fields.get("entry_low")
+        entry_high = fields.get("entry_high")
+        if entry_low is not None and entry_high is not None and entry_low > entry_high:
+            raise ValueError("entry_low must be less than or equal to entry_high")
 
     @staticmethod
     def _optional_int(value: Any, field_name: str) -> Optional[int]:

@@ -34,10 +34,10 @@ class DecisionSignalCreateRequest(BaseModel):
     confidence: Optional[float] = Field(None, ge=0.0, le=1.0)
     score: Optional[int] = Field(None, ge=0, le=100)
     horizon: Optional[DecisionSignalHorizon] = None
-    entry_low: Optional[float] = None
-    entry_high: Optional[float] = None
-    stop_loss: Optional[float] = None
-    target_price: Optional[float] = None
+    entry_low: Optional[float] = Field(None, gt=0, allow_inf_nan=False)
+    entry_high: Optional[float] = Field(None, gt=0, allow_inf_nan=False)
+    stop_loss: Optional[float] = Field(None, gt=0, allow_inf_nan=False)
+    target_price: Optional[float] = Field(None, gt=0, allow_inf_nan=False)
     invalidation: Optional[Any] = None
     watch_conditions: Optional[Any] = None
     reason: Optional[Any] = None

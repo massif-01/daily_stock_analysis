@@ -1305,11 +1305,11 @@ python main.py --debug
 
 核心字段包括 `stock_code`、`stock_name`、`market`、`source_type`、`source_agent`、`source_report_id`、`trace_id`、`market_phase`、`trigger_source`、`action`、`action_label`、`confidence`、`score`、`horizon`、`entry_low`、`entry_high`、`stop_loss`、`target_price`、`invalidation`、`watch_conditions`、`reason`、`risk_summary`、`catalyst_summary`、`evidence`、`data_quality_summary`、`plan_quality`、`status`、`expires_at`、`created_at`、`updated_at` 和 `metadata`。`action` 复用八态建议动作；`market_phase` 复用市场阶段枚举；`source_type` 支持 `analysis|agent|alert|market_review|manual`；`status` 支持 `active|expired|invalidated|closed|archived`；`horizon` 支持 `intraday|1d|3d|5d|10d|swing|long`。
 
-`confidence` 为 `0.0-1.0`，`score` 为 `0-100`，与历史报告的 `sentiment_score` 解耦。`plan_quality` 支持 `complete|partial|minimal|unknown`：调用方显式传入合法值时直接保存；未传时由 service 计算，入场区间（`entry_low` 或 `entry_high` 任一有值）算 1 项，`stop_loss`、`target_price`、`invalidation`、`watch_conditions` 各算 1 项，满足 2 项为 `partial`，满足 4 项及以上为 `complete`，仅有 action/reason 为 `minimal`。
+`confidence` 为 `0.0-1.0`，`score` 为 `0-100`，与历史报告的 `sentiment_score` 解耦。价格计划字段 `entry_low`、`entry_high`、`stop_loss`、`target_price` 必须是有限正数，且同时传入 `entry_low` 和 `entry_high` 时要求 `entry_low <= entry_high`。`plan_quality` 支持 `complete|partial|minimal|unknown`：调用方显式传入合法值时直接保存；未传时由 service 计算，入场区间（`entry_low` 或 `entry_high` 任一有值）算 1 项，`stop_loss`、`target_price`、`invalidation`、`watch_conditions` 各算 1 项，满足 2 项为 `partial`，满足 4 项及以上为 `complete`，仅有 action/reason 为 `minimal`。
 
 新增 API：
 
-- `POST /api/v1/decision-signals`：创建或按同源键去重，返回 `{ item, created }`，HTTP 200。去重键为 `(source_report_id, stock_code, action)`；没有 report 但有 `trace_id` 时使用 `(trace_id, stock_code, action)`；两者皆无则不去重。P1 不提供并发唯一性保证。
+- `POST /api/v1/decision-signals`：创建或按同源键去重，返回 `{ item, created }`，HTTP 200。去重键为 `(source_report_id, stock_code, action, horizon, market_phase)`；没有 report 但有 `trace_id` 时使用 `(trace_id, stock_code, action, horizon, market_phase)`；两者皆无则不去重。`horizon` 和 `market_phase` 同为 `NULL` 时才互相去重，不同期限或不同市场阶段允许保存多条信号。P1 不提供并发唯一性保证。
 - `GET /api/v1/decision-signals`：分页查询，支持 `market`、`stock_code`、`action`、`market_phase`、`source_type`、`trigger_source`、`status`、时间范围、`holding_only`、`account_id`。
 - `GET /api/v1/decision-signals/{signal_id}`：查询单条，不存在返回 404。
 - `PATCH /api/v1/decision-signals/{signal_id}/status`：更新合法状态和可选 `metadata`；传入 `metadata` 时按整包替换保存，不实现复杂状态机。
@@ -1317,7 +1317,7 @@ python main.py --debug
 
 读取入口会懒过期：列表、详情和 latest 查询前会把已到 `expires_at` 的 active 信号标为 expired。股票代码入库与查询统一归一化，`600519`、`SH600519`、`600519.SH` 等常见变体按同一代码匹配。`holding_only=true` 只读取 `portfolio_positions` 中 `quantity > 0` 的缓存持仓，可选 `account_id`；该查询不会调用组合 snapshot replay，无缓存时返回空结果，需先通过 portfolio snapshot API 刷新缓存。
 
-`source_report_id` 可为空且不强制校验历史记录存在；删除历史记录时会显式清理 `source_report_id` 命中的信号。`task_id`、`alert_trigger_id` 等后续关联字段先放入 `metadata`，P1 不新增独立列。JSON 字段和文本字段会在写入前执行信号专用脱敏，覆盖敏感 key、URL、Bearer 和 token-like 字符串，且长文本不会套用诊断文本的 300 字符截断。
+`source_report_id` 可为空且不强制校验历史记录存在；删除历史记录时会显式清理 `source_report_id` 命中的信号。`task_id`、`alert_trigger_id` 等后续关联字段先放入 `metadata`，P1 不新增独立列。JSON 字段和文本字段会在写入前执行信号专用脱敏，覆盖敏感 key、Bearer、token-like 字符串、敏感赋值和带敏感 query 参数的 URL；普通证据 URL 会保留以保证来源可追溯，且长文本不会套用诊断文本的 300 字符截断。
 
 ## 回测功能
 

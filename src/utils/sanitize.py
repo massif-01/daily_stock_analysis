@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
+from urllib.parse import parse_qsl, urlsplit
 
 
 _REDACTED = "[REDACTED]"
@@ -52,7 +53,9 @@ _SENSITIVE_COMPACT_KEY_PATTERN = re.compile(
 _URL_PATTERN = re.compile(r"https?://[^\s,;)\]}]+", re.IGNORECASE)
 _BEARER_PATTERN = re.compile(r"\b(bearer\s+)[a-z0-9._\-:]+", re.IGNORECASE)
 _SECRET_ASSIGNMENT_PATTERN = re.compile(
-    r"\b(token|secret|password|sendkey|api[_-]?key|apikey|access[_-]?token)([=:]\s*)[^\s,;&]+",
+    r"\b(token|secret|password|sendkey|api[_-]?key|apikey|api[_-]?token|auth[_-]?token|"
+    r"access[_-]?token|refresh[_-]?token|session[_-]?token|license[_-]?key|private[_-]?key|"
+    r"secret[_-]?key|webhook[_-]?url)([=:]\s*)[^\s,;&]+",
     re.IGNORECASE,
 )
 _TOKEN_LIKE_PATTERN = re.compile(
@@ -96,10 +99,10 @@ def sanitize_decision_signal_text(text: Any) -> str:
     sanitized = str(text or "").strip()
     if not sanitized:
         return ""
+    sanitized = _URL_PATTERN.sub(_redact_sensitive_url_match, sanitized)
     sanitized = _BEARER_PATTERN.sub(r"\1[REDACTED]", sanitized)
     sanitized = _SECRET_ASSIGNMENT_PATTERN.sub(r"\1\2[REDACTED]", sanitized)
     sanitized = _TOKEN_LIKE_PATTERN.sub("[REDACTED]", sanitized)
-    sanitized = _URL_PATTERN.sub("[REDACTED_URL]", sanitized)
     return " ".join(sanitized.split())
 
 
@@ -120,6 +123,23 @@ def _sanitize_decision_signal_payload_values(obj: Any) -> Any:
     if isinstance(obj, str):
         return sanitize_decision_signal_text(obj)
     return obj
+
+
+def _redact_sensitive_url_match(match: re.Match[str]) -> str:
+    url = match.group(0)
+    if _is_sensitive_url(url):
+        return "[REDACTED_URL]"
+    return url
+
+
+def _is_sensitive_url(url: str) -> bool:
+    if _TOKEN_LIKE_PATTERN.search(url):
+        return True
+    try:
+        query_items = parse_qsl(urlsplit(url).query, keep_blank_values=True)
+    except ValueError:
+        return False
+    return any(_is_sensitive_mapping_key(key) for key, _value in query_items)
 
 
 def _is_sensitive_mapping_key(key: Any) -> bool:
