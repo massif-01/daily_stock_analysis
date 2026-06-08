@@ -42,7 +42,7 @@ def _internal_error(message: str, exc: Exception) -> HTTPException:
     logger.error("%s: %s", message, exc, exc_info=True)
     return HTTPException(
         status_code=500,
-        detail={"error": "internal_error", "message": f"{message}: {str(exc)}"},
+        detail={"error": "internal_error", "message": message},
     )
 
 

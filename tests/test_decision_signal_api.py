@@ -20,7 +20,7 @@ except ModuleNotFoundError:
 import src.auth as auth
 from api.app import create_app
 from src.config import Config
-from src.storage import DatabaseManager, PortfolioAccount, PortfolioPosition
+from src.storage import DatabaseManager, DecisionSignalRecord, PortfolioAccount, PortfolioPosition
 
 
 def _reset_auth_globals() -> None:
@@ -175,11 +175,57 @@ def test_create_duplicate_list_detail_latest_and_status_update(client_and_db) ->
         f"/api/v1/decision-signals/{signal_id}/status",
         json={"status": "bad_status"},
     )
-    assert invalid_status_resp.status_code == 400
+    assert invalid_status_resp.status_code == 422
     assert invalid_status_resp.json()["error"] == "validation_error"
 
     missing_resp = client.get("/api/v1/decision-signals/999999")
     assert missing_resp.status_code == 404
+
+
+def test_status_update_sanitizes_metadata_before_response_and_persistence(client_and_db) -> None:
+    client, db = client_and_db
+
+    created_resp = client.post(
+        "/api/v1/decision-signals",
+        json=_payload(source_report_id=3051, trace_id="trace-3051"),
+    )
+    assert created_resp.status_code == 200, created_resp.text
+    signal_id = created_resp.json()["item"]["id"]
+
+    patch_resp = client.patch(
+        f"/api/v1/decision-signals/{signal_id}/status",
+        json={
+            "status": "closed",
+            "metadata": {
+                "source_url": "https://news.example.com/article?id=1",
+                "webhook": "https://hooks.slack.com/services/T000/B000/abcdef",
+                "feishu": "https://open.feishu.cn/open-apis/bot/v2/hook/abcdef",
+                "userinfo": "https://user:pass@example.com/path",
+                "fragment": "https://news.example.com/cb#access_token=abc",
+                "note": "Bearer abcdef0123456789",
+            },
+        },
+    )
+    assert patch_resp.status_code == 200, patch_resp.text
+    response_blob = str(patch_resp.json()["metadata"])
+    assert "https://news.example.com/article?id=1" in response_blob
+    assert "[REDACTED_URL]" in response_blob
+    assert "hooks.slack.com" not in response_blob
+    assert "open.feishu.cn" not in response_blob
+    assert "user:pass" not in response_blob
+    assert "access_token=abc" not in response_blob
+    assert "abcdef0123456789" not in response_blob
+
+    with db.session_scope() as session:
+        row = session.query(DecisionSignalRecord).filter_by(id=signal_id).one()
+        stored_blob = str(row.metadata_json)
+    assert "https://news.example.com/article?id=1" in stored_blob
+    assert "[REDACTED_URL]" in stored_blob
+    assert "hooks.slack.com" not in stored_blob
+    assert "open.feishu.cn" not in stored_blob
+    assert "user:pass" not in stored_blob
+    assert "access_token=abc" not in stored_blob
+    assert "abcdef0123456789" not in stored_blob
 
 
 def test_detail_endpoint_lazily_expires_active_signal(client_and_db) -> None:
@@ -305,6 +351,23 @@ def test_query_validation_error_envelope(client_and_db) -> None:
     page_size_resp = client.get("/api/v1/decision-signals", params={"page_size": 0})
     assert page_size_resp.status_code == 422
     assert page_size_resp.json()["error"] == "validation_error"
+
+
+def test_internal_errors_do_not_reflect_exception_details(client_and_db) -> None:
+    client, _db = client_and_db
+
+    with patch("api.v1.endpoints.decision_signals.DecisionSignalService") as service_cls:
+        service_cls.return_value.list_signals.side_effect = RuntimeError(
+            "secret-token /private/tmp/internal-path"
+        )
+        resp = client.get("/api/v1/decision-signals")
+
+    assert resp.status_code == 500
+    payload = resp.json()
+    assert payload["error"] == "internal_error"
+    assert payload["message"] == "List decision signals failed"
+    assert "secret-token" not in str(payload)
+    assert "internal-path" not in str(payload)
 
 
 def test_create_schema_and_service_validation_errors(client_and_db) -> None:

@@ -53,7 +53,7 @@ class DecisionSignalCreateRequest(BaseModel):
 
 
 class DecisionSignalStatusUpdateRequest(BaseModel):
-    status: str = Field(..., min_length=1, max_length=32)
+    status: DecisionSignalStatus
     metadata: Optional[Dict[str, Any]] = None
 
 

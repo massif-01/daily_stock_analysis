@@ -177,14 +177,23 @@ def test_decision_signal_sanitizer_redacts_sensitive_url_queries_without_url_tai
         "plain https://news.example.com/article?id=1 "
         "signed https://news.example.com/article?token=abc&id=1 "
         "auth https://news.example.com/article?auth_token=abc&id=2 "
-        "api https://news.example.com/article?api-token=abc&id=3"
+        "api https://news.example.com/article?api-token=abc&id=3 "
+        "userinfo https://user:pass@example.com/path "
+        "fragment https://news.example.com/cb#access_token=abc "
+        "slack https://hooks.slack.com/services/T000/B000/abc123 "
+        "feishu https://open.feishu.cn/open-apis/bot/v2/hook/abcdef123456 "
+        "wecom https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=abcdef"
     )
 
     assert "https://news.example.com/article?id=1" in sanitized
-    assert sanitized.count("[REDACTED_URL]") == 3
+    assert sanitized.count("[REDACTED_URL]") == 8
     assert "token=abc" not in sanitized
     assert "auth_token=abc" not in sanitized
     assert "api-token=abc" not in sanitized
+    assert "user:pass" not in sanitized
+    assert "hooks.slack.com" not in sanitized
+    assert "open.feishu.cn" not in sanitized
+    assert "qyapi.weixin.qq.com" not in sanitized
     assert "]&id=" not in sanitized
 
 
@@ -217,6 +226,10 @@ def test_service_sanitizes_text_and_json_before_persisting(isolated_db) -> None:
                 "signed_url": "https://news.example.com/article?token=abc&id=1",
                 "auth_url": "https://news.example.com/article?auth_token=abc&id=2",
                 "hyphen_signed_url": "https://news.example.com/article?api-key=abc",
+                "slack": "https://hooks.slack.com/services/T000/B000/abcdef",
+                "feishu": "https://open.feishu.cn/open-apis/bot/v2/hook/abcdef",
+                "userinfo": "https://user:pass@example.com/path",
+                "fragment": "https://news.example.com/cb#access_token=abc",
                 "note": "Bearer abcdef0123456789",
             },
             metadata={"access_token": "abc", "callback": "https://example.com/cb"},
@@ -226,10 +239,14 @@ def test_service_sanitizes_text_and_json_before_persisting(isolated_db) -> None:
     item = result["item"]
     assert len(item["reason"]) > 300
     response_blob = str(item)
-    assert "hooks.example.com" in response_blob
+    assert "hooks.example.com" not in response_blob
     assert "news.example.com/article?id=1" in response_blob
     assert "example.com/cb" in response_blob
     assert "secret.example.com" not in response_blob
+    assert "hooks.slack.com" not in response_blob
+    assert "open.feishu.cn" not in response_blob
+    assert "user:pass" not in response_blob
+    assert "access_token=abc" not in response_blob
     assert "token=abc" not in response_blob
     assert "auth_token=abc" not in response_blob
     assert "api-key=abc" not in response_blob
@@ -252,8 +269,12 @@ def test_service_sanitizes_text_and_json_before_persisting(isolated_db) -> None:
                 row.metadata_json,
             )
         )
-    assert "hooks.example.com" in stored_blob
+    assert "hooks.example.com" not in stored_blob
     assert "news.example.com/article?id=1" in stored_blob
+    assert "hooks.slack.com" not in stored_blob
+    assert "open.feishu.cn" not in stored_blob
+    assert "user:pass" not in stored_blob
+    assert "access_token=abc" not in stored_blob
     assert "token=abc" not in stored_blob
     assert "auth_token=abc" not in stored_blob
     assert "api-key=abc" not in stored_blob

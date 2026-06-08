@@ -136,10 +136,59 @@ def _is_sensitive_url(url: str) -> bool:
     if _TOKEN_LIKE_PATTERN.search(url):
         return True
     try:
-        query_items = parse_qsl(urlsplit(url).query, keep_blank_values=True)
+        parsed = urlsplit(url)
     except ValueError:
         return False
-    return any(_is_sensitive_mapping_key(key) for key, _value in query_items)
+    if parsed.username or parsed.password:
+        return True
+    if _is_webhook_url(parsed.hostname or "", parsed.path):
+        return True
+    return (
+        _has_sensitive_url_params(parsed.query)
+        or _has_sensitive_url_params(parsed.fragment)
+    )
+
+
+def _is_webhook_url(hostname: str, path: str) -> bool:
+    hostname = str(hostname or "").lower().strip(".")
+    normalized_path = f"/{path.lstrip('/').lower()}"
+    path_segments = [segment for segment in normalized_path.split("/") if segment]
+
+    if hostname == "hooks.slack.com" and normalized_path.startswith("/services/"):
+        return True
+    if hostname in {"discord.com", "discordapp.com"} and "/api/webhooks/" in normalized_path:
+        return True
+    if hostname == "open.feishu.cn" and "/open-apis/bot/" in normalized_path and "/hook/" in normalized_path:
+        return True
+    if hostname == "oapi.dingtalk.com" and normalized_path.startswith("/robot/send"):
+        return True
+    if hostname == "qyapi.weixin.qq.com" and normalized_path.startswith("/cgi-bin/webhook/send"):
+        return True
+    if hostname in {"sctapi.ftqq.com", "sc.ftqq.com"}:
+        return True
+    if hostname.startswith("hooks."):
+        return True
+    if {"hook", "webhook", "webhooks"} & set(path_segments):
+        return True
+    if normalized_path.startswith("/robot/send") or normalized_path.startswith("/services/"):
+        return True
+    return False
+
+
+def _has_sensitive_url_params(params_text: str) -> bool:
+    if not params_text:
+        return False
+    try:
+        params = parse_qsl(params_text, keep_blank_values=True)
+    except ValueError:
+        return False
+    for key, value in params:
+        key_text = str(key or "").strip().lower()
+        if _is_sensitive_mapping_key(key_text):
+            return True
+        if _TOKEN_LIKE_PATTERN.search(str(value or "")):
+            return True
+    return False
 
 
 def _is_sensitive_mapping_key(key: Any) -> bool:

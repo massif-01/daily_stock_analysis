@@ -2959,8 +2959,13 @@
         "properties": {
           "status": {
             "type": "string",
-            "maxLength": 32,
-            "minLength": 1,
+            "enum": [
+              "active",
+              "expired",
+              "invalidated",
+              "closed",
+              "archived"
+            ],
             "title": "Status"
           },
           "metadata": {
