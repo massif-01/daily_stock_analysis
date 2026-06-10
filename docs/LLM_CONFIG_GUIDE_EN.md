@@ -103,7 +103,7 @@ The backend exposes a read-only status endpoint at `GET /api/v1/system/config/se
 - External references: LiteLLM Python SDK / OpenAI I/O format / streaming / exception mapping: <https://docs.litellm.ai/>; LiteLLM OpenAI-compatible routing: <https://docs.litellm.ai/docs/providers/openai_compatible>; OpenAI Chat Completions: <https://platform.openai.com/docs/api-reference/chat/create>; JSON mode: <https://platform.openai.com/docs/guides/structured-outputs?api-mode=chat>; tool calling: <https://platform.openai.com/docs/guides/function-calling?api-mode=chat>; streaming: <https://platform.openai.com/docs/guides/streaming-responses?api-mode=chat>; vision input: <https://platform.openai.com/docs/guides/images-vision?api-mode=chat>.
 - Saving channels only updates the keys submitted in that save operation; there is no whole-config silent migration when you switch channel settings. The one deliberate cleanup is runtime model references: if `LITELLM_MODEL`, `AGENT_LITELLM_MODEL`, `VISION_MODEL`, or `LITELLM_FALLBACK_MODELS` point to models that no longer exist in the currently enabled channels, the editor clears/removes those stale references before saving so runtime calls do not keep targeting invalid models. Even when enabled channels expose no selectable models, stale managed-provider values without a matching legacy key are cleaned. `cohere/*`, `google/*`, and `xai/*` are kept as explicit direct-env compatibility examples for legacy retention behavior only, and are not a runtime availability guarantee.
 - Backend consistency basis: runtime validation in `SystemConfigService._validate_llm_runtime_selection` (`src/services/system_config_service.py`) relies on `_uses_direct_env_provider` (`src/config.py`). Only `gemini`, `vertex_ai`, `anthropic`, `openai`, and `deepseek` are treated as managed key-backed providers; `cohere`, `google`, and `xai` are not in that allowlist, so they remain valid direct provider runtime entries.
-- Rollback stays minimal: restore the previous channel model list and re-select the runtime models, or restore the previous `LLM_*`, `LITELLM_MODEL`, `AGENT_LITELLM_MODEL`, `VISION_MODEL`, and `LLM_TEMPERATURE` values from your desktop export / manual `.env` backup. No extra migration script is required.
+- Rollback stays minimal: restore the previous channel model list and re-select the runtime models, or restore the previous `LLM_*`, `LITELLM_MODEL`, `AGENT_LITELLM_MODEL`, `VISION_MODEL`, `LLM_TEMPERATURE`, and `LLM_USAGE_HMAC_*` values from your desktop export / manual `.env` backup. No extra migration script is required.
 - The current dependency constraint for this flow in the repository is `litellm>=1.80.10,!=1.82.7,!=1.82.8,<2.0.0` (see `requirements.txt`). Regression coverage for it lives in `tests/test_system_config_service.py`, `tests/test_system_config_api.py`, and `apps/dsa-web/src/components/settings/__tests__/LLMChannelEditor.test.tsx`.
 
 > **External provider model examples notice**: `cohere/*`, `google/*`, and `xai/*` provider-prefixed values are included here only to describe current runtime retention behavior and are **not** a global availability guarantee. Specific model names in docs or tests are configuration-retention examples, not production recommendations. Check the provider's official model/API docs and validate against the repository dependency constraint `litellm>=1.80.10,!=1.82.7,!=1.82.8,<2.0.0` before production use.
@@ -111,7 +111,7 @@ The backend exposes a read-only status endpoint at `GET /api/v1/system/config/se
 ### Rollback & compatibility evidence
 
 - Scope and cleanup behavior under `litellm>=1.80.10,!=1.82.7,!=1.82.8,<2.0.0`: only runtime references (`LITELLM_MODEL`, `AGENT_LITELLM_MODEL`, `VISION_MODEL`, `LITELLM_FALLBACK_MODELS`) are sanitized during save; non-channel direct providers such as `cohere/*`, `google/*`, and `xai/*` are preserved.
-- Rollback path: export desktop config, then restore the backup through `POST /api/v1/system/config/import`; or manually restore historical `.env` entries (`LITELLM_*`, `AGENT_LITELLM_MODEL`, `VISION_MODEL`, `LLM_TEMPERATURE`) and restart.
+- Rollback path: export desktop config, then restore the backup through `POST /api/v1/system/config/import`; or manually restore historical `.env` entries (`LITELLM_*`, `AGENT_LITELLM_MODEL`, `VISION_MODEL`, `LLM_TEMPERATURE`, `LLM_USAGE_HMAC_*`) and restart.
 - Rollback evidence: `tests/test_system_config_service.py::test_import_desktop_env_restores_runtime_models_after_cleanup` covers restore from exported desktop backup after runtime cleanup.
 - Direct-provider evidence: `tests/test_system_config_service.py::SystemConfigServiceTestCase::test_validate_accepts_minimax_model_as_direct_env_provider`, `test_validate_accepts_cohere_model_as_direct_env_provider`, `test_validate_accepts_google_model_as_direct_env_provider`, and `test_validate_accepts_xai_model_as_direct_env_provider` cover the preserved direct-provider behavior.
 - Frontend regression commands: `cd apps/dsa-web && npm run lint && npm run build && npm run test -- src/components/settings/__tests__/LLMChannelEditor.test.tsx`.
@@ -250,11 +250,25 @@ model_list:
 
 > **Priority Rule**: YAML is king! If YAML is configured, both **Channels Mode** and **Simple Mode** are entirely ignored. Hierarchy: `YAML > Channels > Simple`.
 
+### LLM usage HMAC telemetry
+
+P0a usage telemetry creates HMAC-SHA256 fingerprints for the actual messages sent to the model. This only writes local `llm_usage` telemetry. It does not change prompts, provider parameters, cache hints, model output, or fallback order.
+
+```env
+LLM_USAGE_HMAC_SECRET=
+LLM_USAGE_HMAC_KEY_VERSION=local-v1
+```
+
+- When `LLM_USAGE_HMAC_SECRET` is empty, the backend creates `.llm_usage_hmac_secret` in the data directory for local deployment-scoped comparisons.
+- Set the same random secret only when multiple deployments intentionally need comparable HMACs.
+- When rotating the secret, update `LLM_USAGE_HMAC_KEY_VERSION` so old and new fingerprints are not compared as if they used the same key.
+- Do not reuse the login session secret and do not expose this secret in issues, logs, or screenshots.
+
 ### GitHub Actions Notes
 
 The bundled `00-daily-analysis.yml` explicitly passes the common LLM runtime fields to the job environment:
 
-- Runtime selection: `LLM_CHANNELS`, `LITELLM_MODEL`, `LITELLM_FALLBACK_MODELS`, `AGENT_LITELLM_MODEL`, `VISION_MODEL`, `VISION_PROVIDER_PRIORITY`, `LLM_TEMPERATURE`
+- Runtime selection: `LLM_CHANNELS`, `LITELLM_MODEL`, `LITELLM_FALLBACK_MODELS`, `AGENT_LITELLM_MODEL`, `VISION_MODEL`, `VISION_PROVIDER_PRIORITY`, `LLM_TEMPERATURE`, `LLM_USAGE_HMAC_SECRET`, `LLM_USAGE_HMAC_KEY_VERSION`
 - Multiple keys: `GEMINI_API_KEYS`, `ANTHROPIC_API_KEYS`, `OPENAI_API_KEYS`, `DEEPSEEK_API_KEYS` (the current workflow imports these from repository Secrets only, not from same-named Variables)
 - Common channel names: `primary`, `secondary`, `aihubmix`, `deepseek`, `dashscope`, `zhipu`, `moonshot`, `minimax`, `volcengine`, `siliconflow`, `openrouter`, `gemini`, `anthropic`, `openai`, `ollama`
 

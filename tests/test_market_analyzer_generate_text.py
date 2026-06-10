@@ -20,6 +20,30 @@ for _mod in ("litellm", "google.generativeai", "google.genai", "anthropic"):
 import pytest
 from unittest.mock import PropertyMock
 
+
+@pytest.fixture(autouse=True)
+def _llm_usage_hmac_env(monkeypatch):
+    monkeypatch.setenv("LLM_USAGE_HMAC_SECRET", "test-usage-hmac-secret")
+    monkeypatch.setenv("LLM_USAGE_HMAC_KEY_VERSION", "test-v1")
+
+
+def _assert_usage_contains(usage, expected):
+    for key, value in expected.items():
+        assert usage[key] == value
+    assert usage["normalized_prompt_tokens"] == expected.get("prompt_tokens")
+    assert usage["normalized_completion_tokens"] == expected.get("completion_tokens")
+    assert usage["normalized_total_tokens"] == expected.get("total_tokens")
+    assert usage["provider_usage_json"]
+    assert usage["messages_hmac"] and len(usage["messages_hmac"]) == 64
+    assert usage["hmac_key_version"] == "test-v1"
+
+
+def _assert_no_provider_usage_hmac_only(usage):
+    assert "prompt_tokens" not in usage
+    assert usage["messages_hmac"] and len(usage["messages_hmac"]) == 64
+    assert usage["hmac_key_version"] == "test-v1"
+
+
 _OPENAI_COMPATIBILITY_PAYLOAD_FIXTURES = [
     # Repro case 1 (Issue #1279): OpenAI-compatible provider message.content is None while text is in content_blocks.
     (
@@ -139,7 +163,7 @@ class TestAnalyzerGenerateText:
 
         assert text == "abcdef"
         assert model == "gemini/gemini-2.0-flash"
-        assert usage == {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3}
+        _assert_usage_contains(usage, {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3})
         assert progress_updates == [3, 6]
 
     def test_call_litellm_legacy_path_uses_legacy_model_list_for_param_recovery(self):
@@ -319,7 +343,7 @@ class TestAnalyzerGenerateText:
 
         assert text == "full response"
         assert model == "gemini/gemini-2.0-flash"
-        assert usage == {"prompt_tokens": 4, "completion_tokens": 5, "total_tokens": 9}
+        _assert_usage_contains(usage, {"prompt_tokens": 4, "completion_tokens": 5, "total_tokens": 9})
         assert len(dispatch_calls) == 2
         assert dispatch_calls[0]["stream"] is True
         assert "stream" not in dispatch_calls[1]
@@ -344,7 +368,7 @@ class TestAnalyzerGenerateText:
 
         assert text == expected_text
         assert model_used == provider_model
-        assert usage == response_payload["usage"]
+        _assert_usage_contains(usage, response_payload["usage"])
 
     def test_call_litellm_falls_back_to_message_content_when_blocks_empty(self):
         analyzer = self._make_analyzer()
@@ -371,7 +395,7 @@ class TestAnalyzerGenerateText:
 
         assert text == "message response"
         assert model_used == "openai/deepseek-chat"
-        assert usage == {}
+        _assert_no_provider_usage_hmac_only(usage)
 
     def test_call_litellm_normalizes_kimi_k26_temperature(self):
         analyzer = self._make_analyzer()
@@ -393,7 +417,7 @@ class TestAnalyzerGenerateText:
 
         assert text == "ok"
         assert model_used == "openai/kimi-k2.6"
-        assert usage == {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+        _assert_usage_contains(usage, {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
         call_kwargs = mock_dispatch.call_args.args[1]
         assert call_kwargs["temperature"] == 1.0
 
@@ -422,7 +446,7 @@ class TestAnalyzerGenerateText:
 
         assert text == "ok"
         assert model_used == "kimi_router"
-        assert usage == {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+        _assert_usage_contains(usage, {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
         call_kwargs = mock_dispatch.call_args.args[1]
         assert call_kwargs["temperature"] == 1.0
 
@@ -454,7 +478,7 @@ class TestAnalyzerGenerateText:
 
         assert text == "ok"
         assert model_used == "kimi_router"
-        assert usage == {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+        _assert_usage_contains(usage, {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
         call_kwargs = mock_dispatch.call_args.args[1]
         assert call_kwargs["temperature"] == 0.6
 
@@ -478,7 +502,7 @@ class TestAnalyzerGenerateText:
 
         assert text == "ok"
         assert model_used == "openai/gpt5.5-ferr"
-        assert usage == {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+        _assert_usage_contains(usage, {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
         call_kwargs = mock_dispatch.call_args.args[1]
         assert "temperature" not in call_kwargs
 
@@ -514,7 +538,7 @@ class TestAnalyzerGenerateText:
 
         assert text == "ok"
         assert model_used == "openai/custom-default-temp"
-        assert usage == {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+        _assert_usage_contains(usage, {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
         assert calls[0]["temperature"] == 0.2
         assert calls[1]["temperature"] == 1.0
 
@@ -545,7 +569,7 @@ class TestAnalyzerGenerateText:
 
         assert text == "fallback ok"
         assert model_used == "openai/gpt-4o-mini"
-        assert usage == {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+        _assert_usage_contains(usage, {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
         assert temperatures == [
             ("openai/kimi-k2.6", 1.0),
             ("openai/gpt-4o-mini", 0.2),
@@ -598,7 +622,7 @@ class TestAnalyzerGenerateText:
 
         assert text == "fallback"
         assert model_used == "provider/good-model"
-        assert usage == {"prompt_tokens": 4, "completion_tokens": 5, "total_tokens": 9}
+        _assert_usage_contains(usage, {"prompt_tokens": 4, "completion_tokens": 5, "total_tokens": 9})
         assert dispatch_calls == [
             ("provider/bad-model", True),
             ("provider/bad-model", False),

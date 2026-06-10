@@ -116,7 +116,10 @@ class SystemConfigService:
             "skill": "specialist",
         }
     }
-    _SERVER_MASKED_CONFIG_KEYS: Set[str] = {"ALPHASIFT_INSTALL_SPEC"}
+    _SERVER_MASKED_CONFIG_KEYS: Set[str] = {
+        "ALPHASIFT_INSTALL_SPEC",
+        "LLM_USAGE_HMAC_SECRET",
+    }
     _NOTIFICATION_TEST_CHANNELS: Tuple[str, ...] = (
         "wechat",
         "feishu",

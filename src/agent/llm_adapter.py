@@ -32,6 +32,7 @@ from src.agent.provider_trace import (
 )
 from src.llm.errors import call_litellm_with_param_recovery
 from src.llm.generation_params import apply_litellm_generation_params, resolve_litellm_wire_model
+from src.llm.usage import attach_message_hmacs, extract_usage_payload, normalize_litellm_usage
 
 logger = logging.getLogger(__name__)
 
@@ -644,7 +645,7 @@ class LLMToolAdapter:
                 logger=logger,
             )
 
-        return self._parse_litellm_response(response, model)
+        return self._parse_litellm_response(response, model, openai_messages)
 
     def _get_temperature(self) -> float:
         """Return the raw configured temperature before per-model normalization."""
@@ -717,7 +718,12 @@ class LLMToolAdapter:
         model_list = getattr(getattr(self, "_config", None), "llm_model_list", []) or []
         return resolved_provider_namespace(target_model, model_list)
 
-    def _parse_litellm_response(self, response: Any, model: str) -> LLMResponse:
+    def _parse_litellm_response(
+        self,
+        response: Any,
+        model: str,
+        messages: Optional[List[Dict[str, Any]]] = None,
+    ) -> LLMResponse:
         """Parse litellm OpenAI-compatible response into LLMResponse."""
         choice = response.choices[0]
         tool_calls: List[ToolCall] = []
@@ -766,16 +772,14 @@ class LLMToolAdapter:
                     provider_specific_fields=provider_specific_fields,
                 ))
 
-        usage: Dict[str, Any] = {}
-        if response.usage:
-            usage = {
-                "prompt_tokens": response.usage.prompt_tokens,
-                "completion_tokens": response.usage.completion_tokens,
-                "total_tokens": response.usage.total_tokens,
-            }
-
         model_list = getattr(getattr(self, "_config", None), "llm_model_list", []) or []
         provider_name = resolved_provider_namespace(model, model_list)
+        usage = normalize_litellm_usage(
+            extract_usage_payload(response),
+            model=model,
+            provider=provider_name,
+        )
+        usage = attach_message_hmacs(usage, messages)
         return LLMResponse(
             content=text_content,
             tool_calls=tool_calls,

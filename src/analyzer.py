@@ -40,6 +40,11 @@ from src.config import (
 )
 from src.llm.generation_params import apply_litellm_generation_params
 from src.llm.errors import call_litellm_with_param_recovery
+from src.llm.usage import (
+    attach_message_hmacs,
+    extract_usage_payload,
+    normalize_litellm_usage,
+)
 from src.storage import persist_llm_usage
 from src.data.stock_mapping import STOCK_NAME_MAP
 from src.report_language import (
@@ -2315,21 +2320,20 @@ class GeminiAnalyzer:
         effective_kwargs.update(extra_litellm_params(model, config))
         return litellm.completion(**effective_kwargs)
 
-    def _normalize_usage(self, usage_obj: Any) -> Dict[str, Any]:
+    def _normalize_usage(
+        self,
+        usage_obj: Any,
+        *,
+        model: str = "",
+        messages: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         """Normalize usage objects from LiteLLM responses/chunks."""
         if not usage_obj:
-            return {}
-
-        def _get_value(key: str) -> int:
-            if isinstance(usage_obj, dict):
-                return int(usage_obj.get(key) or 0)
-            return int(getattr(usage_obj, key, 0) or 0)
-
-        return {
-            "prompt_tokens": _get_value("prompt_tokens"),
-            "completion_tokens": _get_value("completion_tokens"),
-            "total_tokens": _get_value("total_tokens"),
-        }
+            return attach_message_hmacs({}, messages) if messages is not None else {}
+        usage = normalize_litellm_usage(usage_obj, model=model)
+        if messages is not None:
+            usage = attach_message_hmacs(usage, messages)
+        return usage
 
     @staticmethod
     def _get_response_field(obj: Any, key: str) -> Any:
@@ -2444,8 +2448,8 @@ class GeminiAnalyzer:
 
         try:
             for chunk in stream_response:
-                chunk_usage = chunk.get("usage") if isinstance(chunk, dict) else getattr(chunk, "usage", None)
-                normalized_usage = self._normalize_usage(chunk_usage)
+                chunk_usage = extract_usage_payload(chunk)
+                normalized_usage = self._normalize_usage(chunk_usage, model=model)
                 if normalized_usage:
                     usage = normalized_usage
 
@@ -2614,6 +2618,7 @@ class GeminiAnalyzer:
                 if _stream_text is not None:
                     last_response_text = _stream_text
                     last_model = model
+                    _stream_usage = attach_message_hmacs(_stream_usage, call_kwargs["messages"])
                     last_usage = _stream_usage
                     if response_validator is not None:
                         response_validator(_stream_text)
@@ -2635,7 +2640,11 @@ class GeminiAnalyzer:
 
                 content = self._extract_completion_text(response)
                 if content:
-                    usage = self._normalize_usage(self._get_response_field(response, "usage"))
+                    usage = self._normalize_usage(
+                        extract_usage_payload(response),
+                        model=model,
+                        messages=call_kwargs["messages"],
+                    )
                     last_response_text = content
                     last_model = model
                     last_usage = usage

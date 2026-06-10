@@ -9,7 +9,7 @@
 > 本页的 provider/model/Base URL 说明本次未新增外部兼容语义，仅用于同步现网约定；实际兼容判断仍按当前仓库锁定依赖与运行时实现执行：
 > - 依赖边界：`litellm>=1.80.10,!=1.82.7,!=1.82.8,<2.0.0`（与 `requirements.txt` 一致）。
 > - 兼容验证入口：`tests/test_system_config_service.py`、`tests/test_system_config_api.py` 以及现有前端模型配置页回归用例。
-> - 回退路径：优先使用 `.env` 配置备份 + `POST /api/v1/system/config/import` 恢复；也可在重启前手动回填旧 `LITELLM_MODEL` / `LLM_*` / `AGENT_LITELLM_MODEL` / `VISION_MODEL` / `LLM_TEMPERATURE`。
+> - 回退路径：优先使用 `.env` 配置备份 + `POST /api/v1/system/config/import` 恢复；也可在重启前手动回填旧 `LITELLM_MODEL` / `LLM_*` / `AGENT_LITELLM_MODEL` / `VISION_MODEL` / `LLM_TEMPERATURE` / `LLM_USAGE_HMAC_*`。
 
 > **说明**：本页对 provider/model/base URL 的说明同步沿用当前依赖约束与历史约定，仅做文档补充，不引入新的运行时 provider、模型或 Base URL 行为变更。
 
@@ -238,7 +238,7 @@ AGENT_CONTEXT_PROTECTED_TURNS=
   - 运行时源清理与恢复（含桌面导出备份链路）：`tests/test_system_config_service.py`
   - 接口校验与问题面向字段：`tests/test_system_config_api.py`
   - 设置页交互与保存后提示：`apps/dsa-web/src/components/settings/__tests__/LLMChannelEditor.test.tsx`
-- 旧配置回退路径：`桌面端导出备份 -> /api/v1/system/config/import`，或手动恢复 `LLM_* / LITELLM_* / AGENT_LITELLM_MODEL / VISION_MODEL / LLM_TEMPERATURE`；Web 导入备份前同样要求 `ADMIN_AUTH_ENABLED=true`，否则会返回 403。
+- 旧配置回退路径：`桌面端导出备份 -> /api/v1/system/config/import`，或手动恢复 `LLM_* / LITELLM_* / AGENT_LITELLM_MODEL / VISION_MODEL / LLM_TEMPERATURE / LLM_USAGE_HMAC_*`；Web 导入备份前同样要求 `ADMIN_AUTH_ENABLED=true`，否则会返回 403。
 
 > **致命避坑说明**：如果你启用了 `LLM_CHANNELS`，那么你直接写在外面的 `DEEPSEEK_API_KEY` 或 `OPENAI_API_KEY` 将**全部失效（系统一律无视）**！二者**选其一即可**，千万不要既写了新手模式又写了渠道模式结果产生冲突。
 > **Docker 注意**：如果你在 `docker compose environment:` 或 `docker run -e` 中显式传入 `LITELLM_MODEL`、`LLM_CHANNELS`、`LLM_DEEPSEEK_MODELS` 等变量，容器重启后这些环境变量会覆盖 Web 设置页写入的 `.env`，需要同步修改部署配置。
@@ -248,6 +248,22 @@ AGENT_CONTEXT_PROTECTED_TURNS=
 - 官方与运行时兼容依据采用两层：第一层为官方接口语义（LiteLLM OpenAI-compatible 路由、OpenAI Chat Completions、Moonshot/Kimi 文档与官方模型说明）；第二层为本仓库当前运行时语义（`litellm>=1.80.10,!=1.82.7,!=1.82.8,<2.0.0`）下的实际错误归类。
 - 本次兼容恢复只使用“本地运行时错误归类 + 单请求修正重试 + 进程内缓存”策略，不写入 `.env`、不做配置迁移，仅在执行路径上动态规避不支持参数（`temperature`、`top_p`、`presence_penalty`、`frequency_penalty`、`seed`）。若要回退，不需要额外迁移命令，恢复旧值即可。
 - 回归与证据：`tests/test_llm_param_recovery.py`、`tests/test_system_config_service.py`、`tests/test_llm_channel_config.py`、`tests/test_system_config_api.py`、`tests/test_market_analyzer_generate_text.py`、`tests/test_agent_pipeline.py`；桌面导入与运行时清理回退另有 `test_import_desktop_env_restores_runtime_models_after_cleanup` 直接覆盖。
+
+---
+
+### LLM usage HMAC 遥测
+
+P0a usage telemetry 会为实际发送的 message 生成 HMAC-SHA256 指纹，用于后续判断相同 prompt/message 前缀是否稳定。该能力只写入本地 `llm_usage` 记录，不改变 prompt、provider 参数、cache hint、模型输出或 fallback 顺序。
+
+```env
+LLM_USAGE_HMAC_SECRET=
+LLM_USAGE_HMAC_KEY_VERSION=local-v1
+```
+
+- `LLM_USAGE_HMAC_SECRET` 留空时，系统会在数据目录生成 `.llm_usage_hmac_secret`，适合单部署本地比较。
+- 只有需要跨部署比较 HMAC 时，才显式配置同一个随机密钥。
+- 轮换密钥时同步更新 `LLM_USAGE_HMAC_KEY_VERSION`，避免不同密钥生成的 HMAC 被误比较。
+- 不要复用登录 session secret，也不要在 issue、日志、截图中暴露该密钥。
 
 ---
 
@@ -298,7 +314,7 @@ model_list:
 
 渠道模式无需上传 YAML 文件。仓库自带 `00-daily-analysis.yml` 已显式透传以下常用字段：
 
-- 运行时选择：`LLM_CHANNELS`、`LITELLM_MODEL`、`LITELLM_FALLBACK_MODELS`、`AGENT_LITELLM_MODEL`、`VISION_MODEL`、`VISION_PROVIDER_PRIORITY`、`LLM_TEMPERATURE`
+- 运行时选择：`LLM_CHANNELS`、`LITELLM_MODEL`、`LITELLM_FALLBACK_MODELS`、`AGENT_LITELLM_MODEL`、`VISION_MODEL`、`VISION_PROVIDER_PRIORITY`、`LLM_TEMPERATURE`、`LLM_USAGE_HMAC_SECRET`、`LLM_USAGE_HMAC_KEY_VERSION`
 - 多 Key：`GEMINI_API_KEYS`、`ANTHROPIC_API_KEYS`、`OPENAI_API_KEYS`、`DEEPSEEK_API_KEYS`（当前 workflow 仅从 repository secrets 导入，不会读取同名 Variables）
 - 常用渠道名：`primary`、`secondary`、`aihubmix`、`deepseek`、`dashscope`、`zhipu`、`moonshot`、`minimax`、`volcengine`、`siliconflow`、`openrouter`、`gemini`、`anthropic`、`openai`、`ollama`
 
