@@ -482,6 +482,80 @@ class TestAnalyzerGenerateText:
         call_kwargs = mock_dispatch.call_args.args[1]
         assert call_kwargs["temperature"] == 0.6
 
+    def test_call_litellm_resolves_anthropic_alias_for_usage_normalization(self):
+        analyzer = self._make_analyzer()
+        analyzer._config_override = SimpleNamespace(
+            litellm_model="claude-router",
+            litellm_fallback_models=[],
+            llm_model_list=[
+                {
+                    "model_name": "claude-router",
+                    "litellm_params": {"model": "anthropic/claude-sonnet-test"},
+                }
+            ],
+        )
+        response = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))],
+            usage=SimpleNamespace(
+                input_tokens=100,
+                output_tokens=30,
+                cache_read_input_tokens=10,
+                cache_creation_input_tokens=20,
+            ),
+        )
+
+        with patch.object(analyzer, "_dispatch_litellm_completion", return_value=response):
+            text, model_used, usage = analyzer._call_litellm(
+                "prompt",
+                {"max_tokens": 128, "temperature": 0.2},
+            )
+
+        assert text == "ok"
+        assert model_used == "claude-router"
+        assert usage["prompt_tokens"] == 130
+        assert usage["completion_tokens"] == 30
+        assert usage["total_tokens"] == 160
+        assert usage["normalized_cache_read_tokens"] == 10
+        assert usage["normalized_cache_write_tokens"] == 20
+        assert usage["cache_observation"] == "read_and_write"
+
+    def test_call_litellm_stream_resolves_glm_alias_for_usage_normalization(self):
+        analyzer = self._make_analyzer()
+        analyzer._config_override = SimpleNamespace(
+            litellm_model="glm-router",
+            litellm_fallback_models=[],
+            llm_model_list=[
+                {
+                    "model_name": "glm-router",
+                    "litellm_params": {"model": "zhipu/glm-4.5"},
+                }
+            ],
+        )
+
+        def stream_response():
+            yield SimpleNamespace(
+                choices=[SimpleNamespace(delta=SimpleNamespace(content="ok"))],
+                usage=SimpleNamespace(
+                    prompt_tokens=1200,
+                    completion_tokens=80,
+                    total_tokens=1280,
+                    prompt_tokens_details={"cached_tokens": 1200},
+                ),
+            )
+
+        with patch.object(analyzer, "_dispatch_litellm_completion", return_value=stream_response()):
+            text, model_used, usage = analyzer._call_litellm(
+                "prompt",
+                {"max_tokens": 128, "temperature": 0.2},
+                stream=True,
+            )
+
+        assert text == "ok"
+        assert model_used == "glm-router"
+        assert usage["normalized_cache_read_tokens"] == 1200
+        assert usage["cache_capability"] == "supported"
+        assert usage["cache_observation"] == "full_hit"
+
     def test_call_litellm_omits_temperature_for_gpt5_family(self):
         analyzer = self._make_analyzer()
         analyzer._config_override = SimpleNamespace(

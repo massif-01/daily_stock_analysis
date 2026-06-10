@@ -8,10 +8,12 @@ import hmac
 import json
 import logging
 import os
+import re
 import secrets
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, Optional, Sequence
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +58,32 @@ _FORBIDDEN_RAW_USAGE_KEY_MARKERS = {
     "traceback",
     "webhook",
 }
+_OPENAI_LITELLM_PROVIDER = "openai"
+_OPENAI_COMPATIBLE_PROVIDER = "openai_compatible"
+_SENSITIVE_VALUE_KEYS = {
+    "access_token",
+    "api_key",
+    "api_token",
+    "auth_token",
+    "authorization",
+    "key",
+    "private_key",
+    "refresh_token",
+    "secret_key",
+    "session_token",
+    "token",
+}
+_SENSITIVE_COMPACT_VALUE_KEYS = {key.replace("_", "") for key in _SENSITIVE_VALUE_KEYS}
+_BEARER_VALUE_RE = re.compile(
+    r"(?i)\b(authorization\s*:\s*bearer|bearer)(\s+)[A-Za-z0-9._~+/=-]+"
+)
+_ASSIGNMENT_SECRET_RE = re.compile(
+    r"(?i)\b("
+    r"access_token|api_key|api_token|auth_token|authorization|key|private_key|"
+    r"refresh_token|secret_key|session_token|token"
+    r")(\s*[=:]\s*)[^\s,;&]+"
+)
+_URL_RE = re.compile(r"https?://[^\s\"'<>]+")
 
 
 def extract_usage_payload(response: Any) -> Any:
@@ -135,13 +163,19 @@ def normalize_litellm_usage(
     cache_field_observed = False
     capability = "unknown"
 
-    if provider_name in {"openai", "glm"}:
+    if provider_name == "openai":
         cached = _nested_int(usage, ("prompt_tokens_details", "cached_tokens"))
         if cached is not None:
             cache_read = cached
             cache_field_observed = True
             capability = "supported"
-        provider_min_cache_tokens = 1024 if provider_name == "openai" else None
+        provider_min_cache_tokens = 1024
+    elif provider_name in {"glm", _OPENAI_COMPATIBLE_PROVIDER}:
+        cached = _nested_int(usage, ("prompt_tokens_details", "cached_tokens"))
+        if cached is not None:
+            cache_read = cached
+            cache_field_observed = True
+            capability = "supported"
     elif provider_name == "anthropic":
         read_tokens = _first_int(usage, "cache_read_input_tokens")
         creation_tokens = _first_int(usage, "cache_creation_input_tokens")
@@ -189,8 +223,6 @@ def normalize_litellm_usage(
     result["provider_reported_cached_tokens"] = cache_read
     result["provider_min_cache_tokens"] = provider_min_cache_tokens
 
-    if capability == "unknown" and provider_name in {"openai", "glm", "anthropic", "gemini", "deepseek", "stepfun"}:
-        capability = "supported"
     result["cache_capability"] = capability
 
     result["normalized_cache_read_tokens"] = cache_read
@@ -271,10 +303,14 @@ def _hmac_json(secret: bytes, value: Any) -> str:
 
 
 def _message_for_hmac(message: Mapping[str, Any]) -> Dict[str, Any]:
-    return {
-        "role": str(message.get("role") or ""),
-        "content": message.get("content"),
-    }
+    normalized: Dict[str, Any] = {}
+    for key, value in message.items():
+        key_text = str(key)
+        if key_text.startswith("_trace_"):
+            continue
+        normalized[key_text] = str(value or "") if key_text == "role" else _plain_value(value)
+    normalized.setdefault("role", "")
+    return normalized
 
 
 def _load_usage_hmac_secret() -> Optional[bytes]:
@@ -402,9 +438,11 @@ def _sanitize_raw_usage(value: Any) -> Any:
         return result
     if isinstance(value, list):
         return [_sanitize_raw_usage(item) for item in value[:100]]
-    if isinstance(value, (str, int, float, bool)) or value is None:
+    if isinstance(value, str):
+        return _sanitize_raw_usage_text(value)
+    if isinstance(value, (int, float, bool)) or value is None:
         return value
-    return str(value)
+    return _sanitize_raw_usage_text(str(value))
 
 
 def _is_forbidden_raw_usage_key(key: str) -> bool:
@@ -417,21 +455,126 @@ def _is_forbidden_raw_usage_key(key: str) -> bool:
     return any(marker in normalized for marker in _FORBIDDEN_RAW_USAGE_KEY_MARKERS)
 
 
+def _sanitize_raw_usage_text(text: str) -> str:
+    sanitized = _BEARER_VALUE_RE.sub(r"\1\2[REDACTED]", text)
+    sanitized = _ASSIGNMENT_SECRET_RE.sub(r"\1\2[REDACTED]", sanitized)
+    return _URL_RE.sub(_sanitize_url_match, sanitized)
+
+
+def _sanitize_url_match(match: re.Match[str]) -> str:
+    url = match.group(0)
+    trailing = ""
+    while url and url[-1] in ".,);":
+        trailing = url[-1] + trailing
+        url = url[:-1]
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return match.group(0)
+
+    netloc = parts.netloc
+    if "@" in netloc:
+        netloc = f"[REDACTED]@{netloc.rsplit('@', 1)[1]}"
+
+    query = _sanitize_query_string(parts.query)
+    fragment = _sanitize_fragment(parts.fragment)
+    redacted = urlunsplit((parts.scheme, netloc, parts.path, query, fragment))
+    return redacted + trailing
+
+
+def _sanitize_query_string(query: str) -> str:
+    if not query:
+        return query
+    pairs = parse_qsl(query, keep_blank_values=True)
+    if not pairs:
+        return query
+    sanitized_pairs = [
+        (key, "[REDACTED]" if _is_sensitive_value_key(key) else value)
+        for key, value in pairs
+    ]
+    return urlencode(sanitized_pairs, doseq=True)
+
+
+def _sanitize_fragment(fragment: str) -> str:
+    if not fragment:
+        return fragment
+    if "=" in fragment:
+        return _sanitize_query_string(fragment)
+    return _ASSIGNMENT_SECRET_RE.sub(r"\1\2[REDACTED]", fragment)
+
+
+def _is_sensitive_value_key(key: str) -> bool:
+    normalized = re.sub(r"[^A-Za-z0-9]+", "_", str(key or "").strip().lower()).strip("_")
+    if normalized in _SENSITIVE_VALUE_KEYS:
+        return True
+    compact = normalized.replace("_", "")
+    return compact in _SENSITIVE_COMPACT_VALUE_KEYS
+
+
 def _infer_provider(model: str, provider: Optional[str]) -> str:
-    if provider:
-        normalized_provider = provider.strip().lower()
-        if normalized_provider and normalized_provider != "openai":
-            return normalized_provider
     normalized_model = (model or "").strip().lower()
-    if "glm" in normalized_model or "zhipu" in normalized_model or "bigmodel" in normalized_model:
+    normalized_provider = (provider or "").strip().lower()
+    route_text = f"{normalized_provider} {normalized_model}"
+
+    if normalized_model.startswith("openai/~") or "openrouter" in route_text:
+        return "openrouter"
+    if normalized_provider in {"zhipu", "bigmodel", "glm"}:
+        return "glm"
+    if normalized_provider in {"anthropic", "gemini", "deepseek", "stepfun"}:
+        return normalized_provider
+    if normalized_provider == _OPENAI_LITELLM_PROVIDER:
+        return "openai" if _is_native_openai_model(normalized_model) else _OPENAI_COMPATIBLE_PROVIDER
+    if normalized_model.startswith("openai/"):
+        return "openai" if _is_native_openai_model(normalized_model) else _OPENAI_COMPATIBLE_PROVIDER
+
+    if _is_glm_model(normalized_model):
         return "glm"
     if "stepfun" in normalized_model or normalized_model.startswith("step/"):
         return "stepfun"
-    if normalized_model.startswith("openai/~") or "openrouter" in normalized_model:
-        return "openrouter"
+    if normalized_model.startswith("anthropic/"):
+        return "anthropic"
+    if normalized_model.startswith("gemini/"):
+        return "gemini"
+    if normalized_model.startswith("deepseek/"):
+        return "deepseek"
     if "/" in normalized_model:
         return normalized_model.split("/", 1)[0]
-    return (provider or "unknown").strip().lower() or "unknown"
+    return normalized_provider or "unknown"
+
+
+def _is_glm_model(normalized_model: str) -> bool:
+    if not normalized_model:
+        return False
+    return (
+        normalized_model.startswith("glm")
+        or normalized_model.startswith("zhipu/")
+        or normalized_model.startswith("bigmodel/")
+        or "/glm" in normalized_model
+    )
+
+
+def _is_native_openai_model(model: str) -> bool:
+    normalized = (model or "").strip().lower()
+    if normalized.startswith("openai/"):
+        normalized = normalized.split("/", 1)[1]
+    if not normalized or "/" in normalized:
+        return False
+    return normalized.startswith(
+        (
+            "gpt-",
+            "gpt4",
+            "gpt5",
+            "chatgpt-",
+            "o1",
+            "o3",
+            "o4",
+            "text-",
+            "davinci",
+            "babbage",
+            "curie",
+            "ada",
+        )
+    )
 
 
 def _first_int(mapping: Mapping[str, Any], *keys: str) -> Optional[int]:

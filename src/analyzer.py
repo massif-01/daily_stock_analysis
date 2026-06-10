@@ -27,6 +27,7 @@ from src.agent.llm_adapter import (
     resolve_fallback_litellm_wire_models,
     register_fallback_model_pricing,
 )
+from src.agent.provider_trace import resolved_provider_namespace
 from src.agent.skills.defaults import CORE_TRADING_SKILL_POLICY_ZH
 from src.config import (
     Config,
@@ -2325,12 +2326,13 @@ class GeminiAnalyzer:
         usage_obj: Any,
         *,
         model: str = "",
+        provider: Optional[str] = None,
         messages: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """Normalize usage objects from LiteLLM responses/chunks."""
         if not usage_obj:
             return attach_message_hmacs({}, messages) if messages is not None else {}
-        usage = normalize_litellm_usage(usage_obj, model=model)
+        usage = normalize_litellm_usage(usage_obj, model=model, provider=provider)
         if messages is not None:
             usage = attach_message_hmacs(usage, messages)
         return usage
@@ -2438,6 +2440,7 @@ class GeminiAnalyzer:
         stream_response: Any,
         *,
         model: str,
+        provider: Optional[str] = None,
         progress_callback: Optional[Callable[[int], None]] = None,
     ) -> Tuple[str, Dict[str, Any]]:
         """Consume a LiteLLM stream into a single text payload."""
@@ -2449,7 +2452,11 @@ class GeminiAnalyzer:
         try:
             for chunk in stream_response:
                 chunk_usage = extract_usage_payload(chunk)
-                normalized_usage = self._normalize_usage(chunk_usage, model=model)
+                normalized_usage = self._normalize_usage(
+                    chunk_usage,
+                    model=model,
+                    provider=provider,
+                )
                 if normalized_usage:
                     usage = normalized_usage
 
@@ -2534,6 +2541,7 @@ class GeminiAnalyzer:
             legacy_router_model_list = getattr(self, "_legacy_router_model_list", None) or []
             if legacy_router_model_list and model == config.litellm_model and not use_channel_router:
                 recovery_model_list = legacy_router_model_list
+            usage_provider = resolved_provider_namespace(model, recovery_model_list)
 
             try:
                 model_short = model.split("/")[-1] if "/" in model else model
@@ -2592,6 +2600,7 @@ class GeminiAnalyzer:
                         _stream_text, _stream_usage = self._consume_litellm_stream(
                             stream_response,
                             model=model,
+                            provider=usage_provider,
                             progress_callback=stream_progress_callback,
                         )
                     except _LiteLLMStreamError as exc:
@@ -2643,6 +2652,7 @@ class GeminiAnalyzer:
                     usage = self._normalize_usage(
                         extract_usage_payload(response),
                         model=model,
+                        provider=usage_provider,
                         messages=call_kwargs["messages"],
                     )
                     last_response_text = content

@@ -227,3 +227,88 @@ def test_parse_litellm_response_resolves_provider_for_slashless_router_alias() -
     assert parsed_alias.model == "claude-router"
     assert parsed_bare_openai.provider == "openai"
     assert parsed_bare_openai.model == "gpt-4o-mini"
+
+
+def test_parse_litellm_response_maps_zhipu_usage_to_glm_cache_shape() -> None:
+    adapter = LLMToolAdapter.__new__(LLMToolAdapter)
+    adapter._config = SimpleNamespace(llm_model_list=[])
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    content="ok",
+                    reasoning_content=None,
+                    tool_calls=[],
+                )
+            )
+        ],
+        usage=SimpleNamespace(
+            prompt_tokens=1200,
+            completion_tokens=80,
+            total_tokens=1280,
+            prompt_tokens_details={"cached_tokens": 1200},
+        ),
+    )
+
+    parsed = adapter._parse_litellm_response(response, "zhipu/glm-4.5")
+
+    assert parsed.provider == "zhipu"
+    assert parsed.usage["normalized_cache_read_tokens"] == 1200
+    assert parsed.usage["cache_capability"] == "supported"
+    assert parsed.usage["cache_observation"] == "full_hit"
+
+
+def test_parse_litellm_response_hmac_covers_tool_call_wire_messages(monkeypatch) -> None:
+    monkeypatch.setenv("LLM_USAGE_HMAC_SECRET", "agent-tool-secret")
+    adapter = LLMToolAdapter.__new__(LLMToolAdapter)
+    adapter._config = SimpleNamespace(llm_model_list=[])
+
+    def _response() -> SimpleNamespace:
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content="ok",
+                        reasoning_content=None,
+                        tool_calls=[],
+                    )
+                )
+            ],
+            usage=SimpleNamespace(prompt_tokens=1, completion_tokens=2, total_tokens=3),
+        )
+
+    first_messages = [
+        {
+            "role": "assistant",
+            "content": "same",
+            "tool_calls": [
+                {
+                    "id": "call_a",
+                    "type": "function",
+                    "function": {"name": "lookup", "arguments": "{}"},
+                    "provider_specific_fields": {"thought_signature": "sig-a"},
+                }
+            ],
+        }
+    ]
+    second_messages = [
+        {
+            "role": "assistant",
+            "content": "same",
+            "tool_calls": [
+                {
+                    "id": "call_b",
+                    "type": "function",
+                    "function": {"name": "lookup", "arguments": '{"n":1}'},
+                    "provider_specific_fields": {"thought_signature": "sig-b"},
+                }
+            ],
+        }
+    ]
+
+    first = adapter._parse_litellm_response(_response(), "anthropic/claude-test", first_messages)
+    second = adapter._parse_litellm_response(_response(), "anthropic/claude-test", second_messages)
+
+    assert first.usage["messages_hmac"]
+    assert second.usage["messages_hmac"]
+    assert first.usage["messages_hmac"] != second.usage["messages_hmac"]

@@ -121,6 +121,44 @@ class TestLLMUsageNormalizer(unittest.TestCase):
         self.assertIsNone(usage["normalized_cache_eligible_input_tokens"])
         self.assertEqual(usage["cache_observation"], "unknown")
 
+    def test_openai_compatible_model_without_cache_field_keeps_cache_unknown(self):
+        usage = normalize_litellm_usage(
+            {
+                "prompt_tokens": 1500,
+                "completion_tokens": 1,
+                "total_tokens": 1501,
+            },
+            model="openai/Qwen/Qwen3-235B-A22B-Thinking-2507",
+            provider="openai",
+        )
+
+        self.assertEqual(usage["prompt_tokens"], 1500)
+        self.assertEqual(usage["cache_capability"], "unknown")
+        self.assertEqual(usage["cache_eligibility"], "unknown")
+        self.assertEqual(usage["cache_observation"], "unknown")
+        self.assertIsNone(usage["provider_min_cache_tokens"])
+        self.assertIsNone(usage["normalized_cache_eligible_input_tokens"])
+        self.assertIsNone(usage["normalized_cache_read_tokens"])
+
+    def test_openai_compatible_cached_tokens_do_not_use_native_openai_threshold(self):
+        usage = normalize_litellm_usage(
+            {
+                "prompt_tokens": 1500,
+                "completion_tokens": 1,
+                "total_tokens": 1501,
+                "prompt_tokens_details": {"cached_tokens": 1500},
+            },
+            model="openai/Qwen/Qwen3-235B-A22B-Thinking-2507",
+            provider="openai",
+        )
+
+        self.assertEqual(usage["normalized_cache_read_tokens"], 1500)
+        self.assertEqual(usage["cache_capability"], "supported")
+        self.assertEqual(usage["cache_eligibility"], "eligible")
+        self.assertEqual(usage["cache_observation"], "full_hit")
+        self.assertIsNone(usage["provider_min_cache_tokens"])
+        self.assertEqual(usage["normalized_cache_eligible_input_tokens"], 1500)
+
     def test_glm_cached_tokens_use_openai_shape(self):
         usage = normalize_litellm_usage(
             {
@@ -135,6 +173,23 @@ class TestLLMUsageNormalizer(unittest.TestCase):
         self.assertEqual(usage["normalized_cache_read_tokens"], 1200)
         self.assertEqual(usage["cache_capability"], "supported")
         self.assertEqual(usage["cache_observation"], "full_hit")
+
+    def test_zhipu_provider_alias_uses_glm_cache_shape(self):
+        usage = normalize_litellm_usage(
+            {
+                "prompt_tokens": 1200,
+                "completion_tokens": 80,
+                "total_tokens": 1280,
+                "prompt_tokens_details": {"cached_tokens": 1200},
+            },
+            model="zhipu/glm-4.5",
+            provider="zhipu",
+        )
+
+        self.assertEqual(usage["normalized_cache_read_tokens"], 1200)
+        self.assertEqual(usage["cache_capability"], "supported")
+        self.assertEqual(usage["cache_observation"], "full_hit")
+        self.assertIsNone(usage["provider_min_cache_tokens"])
 
     def test_anthropic_cache_read_write_and_total_input(self):
         usage = normalize_litellm_usage(
@@ -277,6 +332,31 @@ class TestLLMUsageNormalizer(unittest.TestCase):
         self.assertEqual(parsed["prompt_tokens"], 1)
         self.assertEqual(parsed["nested"]["safe_count"], 2)
 
+    def test_raw_usage_sanitizes_sensitive_string_values_without_dropping_safe_metrics(self):
+        usage = normalize_litellm_usage(
+            {
+                "prompt_tokens": 1,
+                "metadata": {
+                    "callback": "https://user:pass@example.test/cb?access_token=sk-secret&token_count=2&api_key=sk-query#refresh_token=sk-fragment",
+                    "note": "Authorization: Bearer sk-header api_key=sk-inline",
+                    "plain_url": "https://example.test/path?token_count=2&cached_tokens=10",
+                },
+            },
+            model="gateway/custom-model",
+            provider="gateway",
+        )
+
+        raw = usage["provider_usage_json"]
+        self.assertIsNotNone(raw)
+        self.assertNotIn("user:pass", raw)
+        self.assertNotIn("sk-secret", raw)
+        self.assertNotIn("sk-query", raw)
+        self.assertNotIn("sk-fragment", raw)
+        self.assertNotIn("sk-header", raw)
+        self.assertNotIn("sk-inline", raw)
+        self.assertIn("token_count=2", raw)
+        self.assertIn("cached_tokens=10", raw)
+
 
 class TestLLMUsageHMAC(unittest.TestCase):
     def tearDown(self):
@@ -316,6 +396,63 @@ class TestLLMUsageHMAC(unittest.TestCase):
         self.assertEqual(fields["hmac_domain"], "prompt_message")
         self.assertEqual(fields["hash_scope"], "local_debug")
         self.assertNotIn("user prompt", json.dumps(fields))
+
+    def test_hmac_covers_tool_and_provider_wire_fields(self):
+        first_messages = [
+            {
+                "role": "assistant",
+                "content": "same",
+                "_trace_provider": "anthropic",
+                "tool_calls": [
+                    {
+                        "id": "call_a",
+                        "type": "function",
+                        "function": {"name": "lookup", "arguments": "{}"},
+                        "provider_specific_fields": {"thought_signature": "sig-a"},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call_a", "content": "same result"},
+        ]
+        second_messages = [
+            {
+                "role": "assistant",
+                "content": "same",
+                "_trace_provider": "anthropic",
+                "tool_calls": [
+                    {
+                        "id": "call_b",
+                        "type": "function",
+                        "function": {"name": "lookup", "arguments": '{"n":1}'},
+                        "provider_specific_fields": {"thought_signature": "sig-b"},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call_b", "content": "same result"},
+        ]
+        with patch.dict(os.environ, {"LLM_USAGE_HMAC_SECRET": "tool-secret"}, clear=False):
+            first = build_message_hmacs(first_messages)
+            first_again = build_message_hmacs(first_messages)
+            second = build_message_hmacs(second_messages)
+
+        self.assertEqual(first["messages_hmac"], first_again["messages_hmac"])
+        self.assertNotEqual(first["messages_hmac"], second["messages_hmac"])
+
+    def test_hmac_ignores_internal_trace_metadata(self):
+        base_messages = [{"role": "assistant", "content": "same"}]
+        traced_messages = [
+            {
+                "role": "assistant",
+                "content": "same",
+                "_trace_provider": "anthropic",
+                "_trace_model": "anthropic/claude-test",
+            }
+        ]
+        with patch.dict(os.environ, {"LLM_USAGE_HMAC_SECRET": "trace-secret"}, clear=False):
+            base = build_message_hmacs(base_messages)
+            traced = build_message_hmacs(traced_messages)
+
+        self.assertEqual(base["messages_hmac"], traced["messages_hmac"])
 
     def test_missing_env_uses_generated_local_secret_file(self):
         with tempfile.TemporaryDirectory() as tmpdir:
