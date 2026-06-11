@@ -107,6 +107,15 @@ function toSnakeStatusPayload(payload: DecisionSignalStatusUpdateRequest): Recor
   });
 }
 
+function toLatestStockCodePath(stockCode: string): string {
+  if (stockCode.includes('/')) {
+    throw new Error(
+      'DecisionSignal latest stockCode cannot contain "/" because the backend route accepts a single path segment; use 00700, HK00700, or 00700.HK.',
+    );
+  }
+  return encodeURIComponent(stockCode);
+}
+
 export const decisionSignalsApi = {
   async create(payload: DecisionSignalCreateRequest): Promise<DecisionSignalMutationResponse> {
     const response = await apiClient.post<Record<string, unknown>>(
@@ -133,7 +142,7 @@ export const decisionSignalsApi = {
     params: DecisionSignalLatestParams = {},
   ): Promise<DecisionSignalListResponse> {
     const response = await apiClient.get<Record<string, unknown>>(
-      `/api/v1/decision-signals/latest/${encodeURIComponent(stockCode)}`,
+      `/api/v1/decision-signals/latest/${toLatestStockCodePath(stockCode)}`,
       { params: toLatestParams(params) },
     );
     return toDecisionSignalListResponse(response.data);

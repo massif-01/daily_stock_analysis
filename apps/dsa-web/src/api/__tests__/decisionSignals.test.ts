@@ -201,7 +201,7 @@ describe('decisionSignalsApi', () => {
     expect(response.items[0].stockCode).toBe('HK00700');
   });
 
-  it('gets latest signals with an encoded stock code path', async () => {
+  it('gets latest signals with a backend-supported stock code path', async () => {
     get.mockResolvedValueOnce({
       data: {
         items: [],
@@ -211,12 +211,19 @@ describe('decisionSignalsApi', () => {
       },
     });
 
-    const response = await decisionSignalsApi.getLatest('HK/00700', { market: 'hk', limit: 2 });
+    const response = await decisionSignalsApi.getLatest('00700.HK', { market: 'hk', limit: 2 });
 
-    expect(get).toHaveBeenCalledWith('/api/v1/decision-signals/latest/HK%2F00700', {
+    expect(get).toHaveBeenCalledWith('/api/v1/decision-signals/latest/00700.HK', {
       params: { market: 'hk', limit: 2 },
     });
     expect(response.pageSize).toBe(2);
+  });
+
+  it('rejects slash-containing latest stock codes before calling an unsupported backend path', async () => {
+    await expect(decisionSignalsApi.getLatest('HK/00700', { market: 'hk' })).rejects.toThrow(
+      'DecisionSignal latest stockCode cannot contain "/"',
+    );
+    expect(get).not.toHaveBeenCalled();
   });
 
   it('gets one signal and updates status metadata as a full replacement payload', async () => {
