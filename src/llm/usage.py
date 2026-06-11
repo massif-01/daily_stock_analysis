@@ -95,6 +95,22 @@ _ASSIGNMENT_SECRET_RE = re.compile(
 )
 _URL_RE = re.compile(r"https?://[^\s\"'<>]+")
 _REDACTED_URL = "[REDACTED_URL]"
+_PROVIDER_USAGE_SIGNAL_TOKEN_KEYS = (
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens",
+    "input_tokens",
+    "output_tokens",
+    "prompt_token_count",
+    "input_token_count",
+    "candidates_token_count",
+    "output_token_count",
+    "total_token_count",
+    "normalized_prompt_tokens",
+    "normalized_completion_tokens",
+    "normalized_total_tokens",
+    "provider_reported_prompt_tokens",
+)
 
 
 def extract_usage_payload(response: Any) -> Any:
@@ -104,6 +120,24 @@ def extract_usage_payload(response: Any) -> Any:
     if isinstance(response, Mapping):
         return response.get("usage") or response.get("usage_metadata")
     return getattr(response, "usage", None) or getattr(response, "usage_metadata", None)
+
+
+def has_provider_usage_payload(usage: Mapping[str, Any] | None) -> bool:
+    """Return whether a usage dict represents provider-reported token usage."""
+    if not usage:
+        return False
+
+    provider_usage_json = usage.get("provider_usage_json")
+    if isinstance(provider_usage_json, str):
+        if provider_usage_json.strip():
+            return True
+    elif provider_usage_json:
+        return True
+
+    for key in _PROVIDER_USAGE_SIGNAL_TOKEN_KEYS:
+        if key in usage and _usage_value_is_nonzero(usage.get(key)):
+            return True
+    return False
 
 
 def normalize_litellm_usage(
@@ -432,6 +466,22 @@ def _plain_value(value: Any) -> Any:
             except Exception:
                 pass
     return str(value)
+
+
+def _usage_value_is_nonzero(value: Any) -> bool:
+    if value is None or isinstance(value, bool):
+        return False
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return False
+        try:
+            return float(text) != 0
+        except ValueError:
+            return True
+    return True
 
 
 def _safe_provider_usage_json(usage: Mapping[str, Any]) -> Optional[str]:

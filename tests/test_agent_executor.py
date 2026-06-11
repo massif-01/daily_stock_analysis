@@ -340,6 +340,53 @@ class TestAgentExecutor(unittest.TestCase):
         self.assertEqual(result.effective_context["stock_code"], "600519")
         self.assertEqual(result.stock_scope.allowed_stock_codes, {"600519"})
 
+    def test_run_agent_loop_does_not_persist_agent_usage_without_provider_usage(self):
+        registry = _make_registry_with_echo()
+        adapter = _make_mock_adapter()
+        adapter.call_with_tools.return_value = LLMResponse(
+            content="Done.",
+            tool_calls=[],
+            usage={},
+            provider="openai",
+            model="openai/gpt-test",
+        )
+
+        with patch("src.agent.runner._persist_usage") as persist_usage:
+            result = run_agent_loop(
+                messages=[{"role": "user", "content": "Analyze"}],
+                tool_registry=registry,
+                llm_adapter=adapter,
+                max_steps=1,
+            )
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.total_tokens, 0)
+        persist_usage.assert_not_called()
+
+    def test_run_agent_loop_persists_agent_usage_with_provider_usage(self):
+        registry = _make_registry_with_echo()
+        adapter = _make_mock_adapter()
+        usage = {"total_tokens": 5}
+        adapter.call_with_tools.return_value = LLMResponse(
+            content="Done.",
+            tool_calls=[],
+            usage=usage,
+            provider="openai",
+            model="openai/gpt-test",
+        )
+
+        with patch("src.agent.runner._persist_usage") as persist_usage:
+            result = run_agent_loop(
+                messages=[{"role": "user", "content": "Analyze"}],
+                tool_registry=registry,
+                llm_adapter=adapter,
+                max_steps=1,
+            )
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.total_tokens, 5)
+        persist_usage.assert_called_once_with(usage, "openai/gpt-test", call_type="agent")
+
     def test_run_agent_loop_blocks_conflicting_stock_scoped_tool_and_keeps_tool_result(self):
         executed_calls = []
         registry = _make_stock_registry(executed_calls)

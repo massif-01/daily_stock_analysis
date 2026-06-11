@@ -19,6 +19,7 @@ from src.llm.usage import (
     attach_message_hmacs,
     build_message_hmacs,
     extract_usage_payload,
+    has_provider_usage_payload,
     normalize_litellm_usage,
     _reset_usage_hmac_secret_cache_for_tests,
 )
@@ -297,6 +298,43 @@ class TestLLMUsageNormalizer(unittest.TestCase):
         self.assertIsNone(usage["normalized_cache_miss_tokens"])
         self.assertEqual(usage["cache_capability"], "unknown")
         self.assertEqual(usage["cache_observation"], "unknown")
+
+    def test_has_provider_usage_payload_detects_real_usage_signals(self):
+        self.assertTrue(has_provider_usage_payload({"total_tokens": 5}))
+        self.assertTrue(has_provider_usage_payload({"normalized_total_tokens": 5}))
+        self.assertTrue(has_provider_usage_payload({"provider_usage_json": '{"prompt_tokens":1}'}))
+
+    def test_has_provider_usage_payload_ignores_empty_hmac_and_cache_metadata(self):
+        self.assertFalse(has_provider_usage_payload(None))
+        self.assertFalse(has_provider_usage_payload({}))
+        self.assertFalse(
+            has_provider_usage_payload(
+                {
+                    "messages_hmac": "a" * 64,
+                    "system_message_hmac": None,
+                    "user_message_hmac": "b" * 64,
+                    "hmac_key_version": "local-v1",
+                    "hmac_domain": "prompt_message",
+                    "hash_scope": "deployment",
+                }
+            )
+        )
+        self.assertFalse(
+            has_provider_usage_payload(
+                {
+                    "cache_observation": "no_usage",
+                    "cache_capability": "unknown",
+                    "normalized_cache_read_tokens": None,
+                }
+            )
+        )
+
+    def test_has_provider_usage_payload_ignores_normalized_no_usage_shape(self):
+        usage = normalize_litellm_usage(None, model="openai/gpt-4o")
+
+        self.assertEqual(usage["cache_observation"], "no_usage")
+        self.assertEqual(usage["total_tokens"], 0)
+        self.assertFalse(has_provider_usage_payload(usage))
 
     def test_provider_usage_json_preserves_allowlisted_usage_cache_shapes(self):
         cases = [

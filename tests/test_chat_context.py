@@ -391,6 +391,63 @@ def test_over_trigger_generates_summary_and_updates_covered_message_id() -> None
     assert [msg["content"] for msg in history[1:]] == ["u3"]
 
 
+def test_summary_compression_does_not_persist_agent_usage_without_provider_usage() -> None:
+    db = _reset_db()
+    session_id = "chat-summarize-no-usage"
+    _add_messages(
+        db,
+        session_id,
+        [
+            ("user", "u1"),
+            ("assistant", "a1"),
+            ("user", "u2"),
+        ],
+    )
+    adapter = MagicMock()
+    adapter.call_text.return_value = SimpleNamespace(
+        content="## 会话摘要\n新摘要",
+        provider="openai",
+        model="openai/test-model",
+        usage={},
+    )
+
+    with patch("src.agent.chat_context.estimate_messages_tokens", return_value=999999):
+        with patch("src.agent.chat_context.persist_llm_usage") as persist_usage:
+            history = build_visible_chat_history(session_id, adapter, _config(trigger=1, protected=1))
+
+    assert history[0]["content"].startswith(SUMMARY_USER_PREFIX)
+    persist_usage.assert_not_called()
+
+
+def test_summary_compression_persists_agent_usage_with_provider_usage() -> None:
+    db = _reset_db()
+    session_id = "chat-summarize-with-usage"
+    _add_messages(
+        db,
+        session_id,
+        [
+            ("user", "u1"),
+            ("assistant", "a1"),
+            ("user", "u2"),
+        ],
+    )
+    usage = {"total_tokens": 3}
+    adapter = MagicMock()
+    adapter.call_text.return_value = SimpleNamespace(
+        content="## 会话摘要\n新摘要",
+        provider="openai",
+        model="openai/test-model",
+        usage=usage,
+    )
+
+    with patch("src.agent.chat_context.estimate_messages_tokens", return_value=999999):
+        with patch("src.agent.chat_context.persist_llm_usage") as persist_usage:
+            history = build_visible_chat_history(session_id, adapter, _config(trigger=1, protected=1))
+
+    assert history[0]["content"].startswith(SUMMARY_USER_PREFIX)
+    persist_usage.assert_called_once_with(usage, "openai/test-model", call_type="agent")
+
+
 def test_second_request_only_summarizes_incremental_unprotected_messages() -> None:
     db = _reset_db()
     session_id = "chat-incremental"

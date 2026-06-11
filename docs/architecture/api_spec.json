@@ -450,7 +450,7 @@
           "SystemConfig"
         ],
         "summary": "获取系统配置",
-        "description": "读取当前系统配置并返回分类后的字段列表。敏感字段返回真实值，前端自行控制显示/隐藏。",
+        "description": "读取当前系统配置并返回分类后的字段列表。敏感字段可能返回掩码，真实值不保证返回；客户端应使用 raw_value_exists 与 is_masked 判断。",
         "operationId": "getSystemConfig",
         "parameters": [
           {
@@ -2373,7 +2373,7 @@
           },
           "value": {
             "type": "string",
-            "description": "当前配置值（敏感字段返回真实值）"
+            "description": "当前配置值；敏感字段可能返回掩码，真实值不保证返回，客户端应结合 raw_value_exists 与 is_masked 判断"
           },
           "raw_value_exists": {
             "type": "boolean",

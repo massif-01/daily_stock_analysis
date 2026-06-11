@@ -774,12 +774,16 @@ class LLMToolAdapter:
 
         model_list = getattr(getattr(self, "_config", None), "llm_model_list", []) or []
         provider_name = resolved_provider_namespace(model, model_list)
-        usage = normalize_litellm_usage(
-            extract_usage_payload(response),
-            model=model,
-            provider=provider_name,
-        )
-        usage = attach_message_hmacs(usage, messages)
+        usage_payload = extract_usage_payload(response)
+        if usage_payload:
+            usage = normalize_litellm_usage(
+                usage_payload,
+                model=model,
+                provider=provider_name,
+            )
+            usage = attach_message_hmacs(usage, messages)
+        else:
+            usage = {}
         return LLMResponse(
             content=text_content,
             tool_calls=tool_calls,

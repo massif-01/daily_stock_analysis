@@ -229,6 +229,30 @@ def test_parse_litellm_response_resolves_provider_for_slashless_router_alias() -
     assert parsed_bare_openai.model == "gpt-4o-mini"
 
 
+def test_parse_litellm_response_without_provider_usage_keeps_usage_empty() -> None:
+    adapter = LLMToolAdapter.__new__(LLMToolAdapter)
+    adapter._config = SimpleNamespace(llm_model_list=[])
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    content="ok",
+                    reasoning_content=None,
+                    tool_calls=[],
+                )
+            )
+        ],
+    )
+
+    parsed = adapter._parse_litellm_response(
+        response,
+        "openai/gpt-test",
+        [{"role": "user", "content": "hello"}],
+    )
+
+    assert parsed.usage == {}
+
+
 def test_parse_litellm_response_maps_zhipu_usage_to_glm_cache_shape() -> None:
     adapter = LLMToolAdapter.__new__(LLMToolAdapter)
     adapter._config = SimpleNamespace(llm_model_list=[])

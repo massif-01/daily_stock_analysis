@@ -27,6 +27,7 @@ from typing import Any, Callable, Dict, List, Optional
 from src.agent.llm_adapter import LLMToolAdapter
 from src.agent.tools.registry import ToolRegistry
 from src.agent.stock_scope import StockScope
+from src.llm.usage import has_provider_usage_payload
 from src.storage import persist_llm_usage as _persist_usage
 
 logger = logging.getLogger(__name__)
@@ -521,7 +522,7 @@ def run_agent_loop(
         if m and m != "error":
             models_used.append(m)
         model_for_usage = m or response.provider
-        if model_for_usage and model_for_usage != "error" and response.usage:
+        if model_for_usage and model_for_usage != "error" and has_provider_usage_payload(response.usage):
             _persist_usage(response.usage, model_for_usage, call_type="agent")
 
         remaining_timeout = _remaining_timeout_seconds(start_time, max_wall_clock_seconds)
