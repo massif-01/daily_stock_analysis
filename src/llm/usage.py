@@ -109,7 +109,42 @@ _PROVIDER_USAGE_SIGNAL_TOKEN_KEYS = (
     "normalized_prompt_tokens",
     "normalized_completion_tokens",
     "normalized_total_tokens",
+    "normalized_cache_read_tokens",
+    "normalized_cache_write_tokens",
+    "normalized_cache_miss_tokens",
     "provider_reported_prompt_tokens",
+    "provider_reported_cached_tokens",
+)
+_PROVIDER_USAGE_JSON_SIGNAL_KEYS = (
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens",
+    "input_tokens",
+    "output_tokens",
+    "prompt_token_count",
+    "input_token_count",
+    "candidates_token_count",
+    "output_token_count",
+    "total_token_count",
+    "cached_tokens",
+    "cached_content_token_count",
+    "cache_read_tokens",
+    "cache_read_input_tokens",
+    "cache_creation_input_tokens",
+    "prompt_cache_hit_tokens",
+    "prompt_cache_miss_tokens",
+)
+_PROVIDER_USAGE_JSON_DETAIL_SIGNAL_KEYS = (
+    "accepted_prediction_tokens",
+    "audio_tokens",
+    "cache_creation_input_tokens",
+    "cache_creation_tokens",
+    "cache_read_input_tokens",
+    "cached_tokens",
+    "image_tokens",
+    "reasoning_tokens",
+    "rejected_prediction_tokens",
+    "text_tokens",
 )
 
 
@@ -118,8 +153,23 @@ def extract_usage_payload(response: Any) -> Any:
     if response is None:
         return None
     if isinstance(response, Mapping):
-        return response.get("usage") or response.get("usage_metadata")
-    return getattr(response, "usage", None) or getattr(response, "usage_metadata", None)
+        return (
+            response.get("usage")
+            or response.get("usage_metadata")
+            or _extract_hidden_usage_payload(response.get("_hidden_params"))
+        )
+    return (
+        getattr(response, "usage", None)
+        or getattr(response, "usage_metadata", None)
+        or _extract_hidden_usage_payload(getattr(response, "_hidden_params", None))
+    )
+
+
+def _extract_hidden_usage_payload(hidden_params: Any) -> Any:
+    """Return LiteLLM's internally accumulated stream usage payload, if present."""
+    if isinstance(hidden_params, Mapping):
+        return hidden_params.get("usage")
+    return None
 
 
 def has_provider_usage_payload(usage: Mapping[str, Any] | None) -> bool:
@@ -127,16 +177,42 @@ def has_provider_usage_payload(usage: Mapping[str, Any] | None) -> bool:
     if not usage:
         return False
 
-    provider_usage_json = usage.get("provider_usage_json")
-    if isinstance(provider_usage_json, str):
-        if provider_usage_json.strip():
-            return True
-    elif provider_usage_json:
-        return True
-
     for key in _PROVIDER_USAGE_SIGNAL_TOKEN_KEYS:
         if key in usage and _usage_value_is_nonzero(usage.get(key)):
             return True
+
+    return _provider_usage_json_has_count_signal(usage.get("provider_usage_json"))
+
+
+def _provider_usage_json_has_count_signal(provider_usage_json: Any) -> bool:
+    if isinstance(provider_usage_json, str):
+        payload_text = provider_usage_json.strip()
+        if not payload_text:
+            return False
+        try:
+            payload = json.loads(payload_text)
+        except (TypeError, ValueError):
+            return False
+    elif isinstance(provider_usage_json, Mapping):
+        payload = provider_usage_json
+    else:
+        return False
+
+    if not isinstance(payload, Mapping) or not payload:
+        return False
+
+    for key in _PROVIDER_USAGE_JSON_SIGNAL_KEYS:
+        if _usage_count_is_nonzero(payload.get(key)):
+            return True
+
+    for detail_key in _ALLOWED_RAW_USAGE_DETAIL_KEYS:
+        detail = payload.get(detail_key)
+        if not isinstance(detail, Mapping):
+            continue
+        for key in _PROVIDER_USAGE_JSON_DETAIL_SIGNAL_KEYS:
+            if _usage_count_is_nonzero(detail.get(key)):
+                return True
+
     return False
 
 
@@ -234,7 +310,11 @@ def normalize_litellm_usage(
                 prompt_tokens = input_tokens + (cache_read or 0) + (cache_write or 0)
                 result["normalized_uncached_input_tokens"] = input_tokens
     elif provider_name == "gemini":
-        cached = _first_int(usage, "cached_content_token_count", "cache_read_tokens")
+        cached = _first_int(usage, "cache_read_input_tokens")
+        if cached is None:
+            cached = _nested_int(usage, ("prompt_tokens_details", "cached_tokens"))
+        if cached is None:
+            cached = _first_int(usage, "cached_content_token_count", "cache_read_tokens")
         if cached is not None:
             cache_read = cached
             cache_field_observed = True
@@ -483,6 +563,13 @@ def _usage_value_is_nonzero(value: Any) -> bool:
         except ValueError:
             return True
     return True
+
+
+def _usage_count_is_nonzero(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    parsed = _as_int(value)
+    return parsed is not None and parsed != 0
 
 
 def _safe_provider_usage_json(usage: Mapping[str, Any]) -> Optional[str]:

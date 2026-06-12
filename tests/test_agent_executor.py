@@ -40,6 +40,7 @@ from src.agent.stock_scope import StockScope, resolve_stock_scope
 from src.agent.tools.registry import ToolRegistry, ToolDefinition, ToolParameter
 from src.analysis_context_pack_prompt import format_analysis_context_pack_prompt_section
 from src.config import Config
+from src.llm.usage import normalize_litellm_usage
 from src.services.analysis_context_builder import (
     AnalysisContextBuilder,
     PipelineAnalysisArtifacts,
@@ -347,6 +348,32 @@ class TestAgentExecutor(unittest.TestCase):
             content="Done.",
             tool_calls=[],
             usage={},
+            provider="openai",
+            model="openai/gpt-test",
+        )
+
+        with patch("src.agent.runner._persist_usage") as persist_usage:
+            result = run_agent_loop(
+                messages=[{"role": "user", "content": "Analyze"}],
+                tool_registry=registry,
+                llm_adapter=adapter,
+                max_steps=1,
+            )
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.total_tokens, 0)
+        persist_usage.assert_not_called()
+
+    def test_run_agent_loop_does_not_persist_metadata_only_provider_usage(self):
+        registry = _make_registry_with_echo()
+        adapter = _make_mock_adapter()
+        adapter.call_with_tools.return_value = LLMResponse(
+            content="Done.",
+            tool_calls=[],
+            usage=normalize_litellm_usage(
+                {"estimated_prefix_tokens": 123},
+                model="openai/gpt-4o",
+            ),
             provider="openai",
             model="openai/gpt-test",
         )

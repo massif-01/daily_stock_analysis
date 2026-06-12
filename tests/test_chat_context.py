@@ -17,6 +17,7 @@ from src.agent.chat_context import (  # noqa: E402
 )
 from src.agent.llm_adapter import LLMToolAdapter  # noqa: E402
 from src.config import Config  # noqa: E402
+from src.llm.usage import normalize_litellm_usage  # noqa: E402
 from src.storage import DatabaseManager  # noqa: E402
 
 
@@ -409,6 +410,37 @@ def test_summary_compression_does_not_persist_agent_usage_without_provider_usage
         provider="openai",
         model="openai/test-model",
         usage={},
+    )
+
+    with patch("src.agent.chat_context.estimate_messages_tokens", return_value=999999):
+        with patch("src.agent.chat_context.persist_llm_usage") as persist_usage:
+            history = build_visible_chat_history(session_id, adapter, _config(trigger=1, protected=1))
+
+    assert history[0]["content"].startswith(SUMMARY_USER_PREFIX)
+    persist_usage.assert_not_called()
+
+
+def test_summary_compression_does_not_persist_metadata_only_provider_usage() -> None:
+    db = _reset_db()
+    session_id = "chat-summarize-metadata-only-usage"
+    _add_messages(
+        db,
+        session_id,
+        [
+            ("user", "u1"),
+            ("assistant", "a1"),
+            ("user", "u2"),
+        ],
+    )
+    adapter = MagicMock()
+    adapter.call_text.return_value = SimpleNamespace(
+        content="## 会话摘要\n新摘要",
+        provider="openai",
+        model="openai/test-model",
+        usage=normalize_litellm_usage(
+            {"estimated_prefix_tokens": 123},
+            model="openai/gpt-4o",
+        ),
     )
 
     with patch("src.agent.chat_context.estimate_messages_tokens", return_value=999999):

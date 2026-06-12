@@ -11,6 +11,8 @@ try:
 except ModuleNotFoundError:
     sys.modules["litellm"] = MagicMock()
 
+from litellm.types.utils import Usage  # noqa: E402
+
 from src.agent.llm_adapter import LLMToolAdapter  # noqa: E402
 
 
@@ -227,6 +229,83 @@ def test_parse_litellm_response_resolves_provider_for_slashless_router_alias() -
     assert parsed_alias.model == "claude-router"
     assert parsed_bare_openai.provider == "openai"
     assert parsed_bare_openai.model == "gpt-4o-mini"
+
+
+def test_parse_litellm_response_normalizes_litellm_usage_object(monkeypatch) -> None:
+    monkeypatch.setenv("LLM_USAGE_HMAC_SECRET", "adapter-usage-object-secret")
+    adapter = LLMToolAdapter.__new__(LLMToolAdapter)
+    adapter._config = SimpleNamespace(llm_model_list=[])
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    content="ok",
+                    reasoning_content=None,
+                    tool_calls=[],
+                )
+            )
+        ],
+        usage=Usage(
+            prompt_tokens=2000,
+            completion_tokens=100,
+            total_tokens=2100,
+            prompt_tokens_details={"cached_tokens": 500},
+        ),
+    )
+
+    parsed = adapter._parse_litellm_response(
+        response,
+        "openai/gpt-4o",
+        [{"role": "user", "content": "hello"}],
+    )
+
+    assert parsed.provider == "openai"
+    assert parsed.usage["prompt_tokens"] == 2000
+    assert parsed.usage["completion_tokens"] == 100
+    assert parsed.usage["total_tokens"] == 2100
+    assert parsed.usage["normalized_cache_read_tokens"] == 500
+    assert parsed.usage["cache_capability"] == "supported"
+    assert parsed.usage["cache_observation"] == "partial_hit"
+    assert parsed.usage["messages_hmac"]
+
+
+def test_parse_litellm_response_reads_hidden_usage_from_litellm_chunk(monkeypatch) -> None:
+    monkeypatch.setenv("LLM_USAGE_HMAC_SECRET", "adapter-hidden-usage-secret")
+    adapter = LLMToolAdapter.__new__(LLMToolAdapter)
+    adapter._config = SimpleNamespace(llm_model_list=[])
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    content="ok",
+                    reasoning_content=None,
+                    tool_calls=[],
+                )
+            )
+        ],
+        usage=None,
+        _hidden_params={
+            "usage": Usage(
+                prompt_tokens=2000,
+                completion_tokens=100,
+                total_tokens=2100,
+                prompt_tokens_details={"cached_tokens": 500},
+            )
+        },
+    )
+
+    parsed = adapter._parse_litellm_response(
+        response,
+        "openai/gpt-4o",
+        [{"role": "user", "content": "hello"}],
+    )
+
+    assert parsed.usage["prompt_tokens"] == 2000
+    assert parsed.usage["completion_tokens"] == 100
+    assert parsed.usage["total_tokens"] == 2100
+    assert parsed.usage["normalized_cache_read_tokens"] == 500
+    assert parsed.usage["provider_usage_json"]
+    assert parsed.usage["messages_hmac"]
 
 
 def test_parse_litellm_response_preserves_anthropic_litellm_prompt_tokens_without_input_tokens(monkeypatch) -> None:

@@ -166,6 +166,38 @@ class TestAnalyzerGenerateText:
         _assert_usage_contains(usage, {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3})
         assert progress_updates == [3, 6]
 
+    def test_call_litellm_stream_reads_hidden_usage_from_final_chunk(self):
+        analyzer = self._make_analyzer()
+        analyzer._config_override = SimpleNamespace(
+            litellm_model="openai/gpt-4o-mini",
+            litellm_fallback_models=[],
+            llm_model_list=[],
+        )
+
+        def stream_response():
+            yield SimpleNamespace(
+                choices=[SimpleNamespace(delta=SimpleNamespace(content="abc"))],
+                usage=None,
+            )
+            yield SimpleNamespace(
+                choices=[SimpleNamespace(delta=SimpleNamespace(content=""))],
+                usage=None,
+                _hidden_params={
+                    "usage": SimpleNamespace(prompt_tokens=11, completion_tokens=2, total_tokens=13)
+                },
+            )
+
+        with patch.object(analyzer, "_dispatch_litellm_completion", return_value=stream_response()):
+            text, model, usage = analyzer._call_litellm(
+                "prompt",
+                {"max_tokens": 128, "temperature": 0.2},
+                stream=True,
+            )
+
+        assert text == "abc"
+        assert model == "openai/gpt-4o-mini"
+        _assert_usage_contains(usage, {"prompt_tokens": 11, "completion_tokens": 2, "total_tokens": 13})
+
     def test_call_litellm_legacy_path_uses_legacy_model_list_for_param_recovery(self):
         with patch("src.analyzer.get_config") as mock_cfg:
             cfg = MagicMock()
@@ -802,6 +834,60 @@ class TestAnalyzerGenerateText:
         assert [progress for progress, _ in progress_updates] == [68, 93, 94, 95]
         assert "补全重试" in progress_updates[2][1]
         assert "解析 JSON" in progress_updates[3][1]
+
+    def test_analyze_persists_provider_usage_from_stream_hidden_usage(self):
+        analyzer = self._make_analyzer()
+        analyzer._config_override = SimpleNamespace(
+            gemini_request_delay=0,
+            report_language="zh",
+            litellm_model="openai/gpt-4o-mini",
+            litellm_fallback_models=[],
+            llm_model_list=[],
+            llm_temperature=0.2,
+            report_integrity_enabled=False,
+            report_integrity_retry=0,
+        )
+
+        from src.analyzer import AnalysisResult
+
+        parsed_result = AnalysisResult(
+            code="600519",
+            name="贵州茅台",
+            sentiment_score=80,
+            trend_prediction="看多",
+            operation_advice="持有",
+            analysis_summary="分析结果",
+        )
+
+        def stream_response():
+            yield SimpleNamespace(
+                choices=[SimpleNamespace(delta=SimpleNamespace(content='{"sentiment_score":80}'))],
+                usage=None,
+            )
+            yield SimpleNamespace(
+                choices=[SimpleNamespace(delta=SimpleNamespace(content=""))],
+                usage=None,
+                _hidden_params={
+                    "usage": SimpleNamespace(prompt_tokens=11, completion_tokens=2, total_tokens=13)
+                },
+            )
+
+        with patch.object(analyzer, "is_available", return_value=True), \
+             patch.object(analyzer, "_get_analysis_system_prompt", return_value="system"), \
+             patch.object(analyzer, "_format_prompt", return_value="prompt"), \
+             patch.object(analyzer, "_validate_json_response"), \
+             patch.object(analyzer, "_dispatch_litellm_completion", return_value=stream_response()), \
+             patch.object(analyzer, "_parse_response", return_value=parsed_result), \
+             patch.object(analyzer, "_build_market_snapshot", return_value={}), \
+             patch("src.analyzer.persist_llm_usage") as mock_usage:
+            result = analyzer.analyze({"code": "600519", "stock_name": "贵州茅台"})
+
+        assert result.analysis_summary == "分析结果"
+        mock_usage.assert_called_once()
+        usage_arg, model_arg = mock_usage.call_args[0]
+        assert model_arg == "openai/gpt-4o-mini"
+        _assert_usage_contains(usage_arg, {"prompt_tokens": 11, "completion_tokens": 2, "total_tokens": 13})
+        assert mock_usage.call_args.kwargs == {"call_type": "analysis", "stock_code": "600519"}
 
     def test_parse_response_non_json_returns_failure(self):
         """_parse_response must return success=False when LLM output is not valid JSON."""

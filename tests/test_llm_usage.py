@@ -11,9 +11,12 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from litellm.types.utils import Usage
 
 from src.llm.usage import (
     attach_message_hmacs,
@@ -31,6 +34,39 @@ def _fresh_db() -> DatabaseManager:
     DatabaseManager.reset_instance()
     db = DatabaseManager(db_url="sqlite:///:memory:")
     return db
+
+
+class TestExtractUsagePayload(unittest.TestCase):
+    def test_extracts_top_level_usage_before_hidden_usage(self):
+        top_level_usage = {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3}
+        hidden_usage = {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30}
+
+        response = SimpleNamespace(
+            usage=top_level_usage,
+            usage_metadata=None,
+            _hidden_params={"usage": hidden_usage},
+        )
+
+        self.assertIs(extract_usage_payload(response), top_level_usage)
+
+    def test_extracts_litellm_hidden_usage_from_object_chunk(self):
+        hidden_usage = {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30}
+
+        response = SimpleNamespace(usage=None, usage_metadata=None, _hidden_params={"usage": hidden_usage})
+
+        self.assertIs(extract_usage_payload(response), hidden_usage)
+
+    def test_extracts_litellm_hidden_usage_from_dict_chunk(self):
+        hidden_usage = {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30}
+
+        response = {"usage": None, "usage_metadata": None, "_hidden_params": {"usage": hidden_usage}}
+
+        self.assertIs(extract_usage_payload(response), hidden_usage)
+
+    def test_returns_none_when_no_usage_payload_exists(self):
+        response = SimpleNamespace(usage=None, usage_metadata=None, _hidden_params={})
+
+        self.assertIsNone(extract_usage_payload(response))
 
 
 class TestRecordLLMUsage(unittest.TestCase):
@@ -294,6 +330,62 @@ class TestLLMUsageNormalizer(unittest.TestCase):
         self.assertEqual(usage["normalized_cache_read_tokens"], 32)
         self.assertEqual(usage["cache_observation"], "partial_hit")
 
+    def test_gemini_litellm_usage_cache_read_input_tokens(self):
+        usage = normalize_litellm_usage(
+            Usage(
+                prompt_tokens=1000,
+                completion_tokens=50,
+                total_tokens=1050,
+                cache_read_input_tokens=32,
+            ),
+            model="gemini/gemini-2.5-flash",
+        )
+
+        self.assertEqual(usage["prompt_tokens"], 1000)
+        self.assertEqual(usage["completion_tokens"], 50)
+        self.assertEqual(usage["total_tokens"], 1050)
+        self.assertEqual(usage["normalized_cache_read_tokens"], 32)
+        self.assertEqual(usage["provider_reported_cached_tokens"], 32)
+        self.assertEqual(usage["cache_capability"], "supported")
+        self.assertEqual(usage["cache_observation"], "partial_hit")
+        raw = json.loads(usage["provider_usage_json"])
+        self.assertTrue(
+            raw.get("cache_read_input_tokens") == 32
+            or raw.get("prompt_tokens_details", {}).get("cached_tokens") == 32
+        )
+
+    def test_gemini_litellm_usage_zero_cache_hit(self):
+        usage = normalize_litellm_usage(
+            Usage(
+                prompt_tokens=1000,
+                completion_tokens=50,
+                total_tokens=1050,
+                cache_read_input_tokens=0,
+            ),
+            model="gemini/gemini-2.5-flash",
+        )
+
+        self.assertEqual(usage["normalized_cache_read_tokens"], 0)
+        self.assertEqual(usage["provider_reported_cached_tokens"], 0)
+        self.assertEqual(usage["cache_capability"], "supported")
+        self.assertEqual(usage["cache_observation"], "zero_hit")
+
+    def test_gemini_prompt_tokens_details_cached_tokens_fallback(self):
+        usage = normalize_litellm_usage(
+            {
+                "prompt_tokens": 1000,
+                "completion_tokens": 50,
+                "total_tokens": 1050,
+                "prompt_tokens_details": {"cached_tokens": 32},
+            },
+            model="gemini/gemini-2.5-flash",
+        )
+
+        self.assertEqual(usage["normalized_cache_read_tokens"], 32)
+        self.assertEqual(usage["provider_reported_cached_tokens"], 32)
+        self.assertEqual(usage["cache_capability"], "supported")
+        self.assertEqual(usage["cache_observation"], "partial_hit")
+
     def test_deepseek_hit_miss_tokens(self):
         usage = normalize_litellm_usage(
             {
@@ -345,6 +437,22 @@ class TestLLMUsageNormalizer(unittest.TestCase):
         self.assertTrue(has_provider_usage_payload({"total_tokens": 5}))
         self.assertTrue(has_provider_usage_payload({"normalized_total_tokens": 5}))
         self.assertTrue(has_provider_usage_payload({"provider_usage_json": '{"prompt_tokens":1}'}))
+        self.assertTrue(has_provider_usage_payload({"normalized_cache_read_tokens": 5}))
+        self.assertTrue(has_provider_usage_payload({"normalized_cache_write_tokens": 5}))
+        self.assertTrue(has_provider_usage_payload({"normalized_cache_miss_tokens": 5}))
+        self.assertTrue(has_provider_usage_payload({"provider_reported_cached_tokens": 5}))
+        self.assertTrue(
+            has_provider_usage_payload(
+                {"provider_usage_json": '{"prompt_tokens_details":{"cached_tokens":1}}'}
+            )
+        )
+        self.assertTrue(has_provider_usage_payload({"provider_usage_json": '{"cache_read_input_tokens":1}'}))
+        self.assertTrue(has_provider_usage_payload({"provider_usage_json": '{"prompt_cache_hit_tokens":1}'}))
+        self.assertTrue(
+            has_provider_usage_payload(
+                {"provider_usage_json": '{"prompt_tokens":1000,"cache_read_input_tokens":0}'}
+            )
+        )
 
     def test_has_provider_usage_payload_ignores_empty_hmac_and_cache_metadata(self):
         self.assertFalse(has_provider_usage_payload(None))
@@ -361,6 +469,19 @@ class TestLLMUsageNormalizer(unittest.TestCase):
                 }
             )
         )
+        for provider_usage_json in (
+            '{"estimated_prefix_tokens":123}',
+            '{"tokenizer_name":"cl100k_base","tokenizer_version":"v1"}',
+            '{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}',
+            '{"cache_read_input_tokens":0}',
+            '{"prompt_tokens_details":{"cached_tokens":0}}',
+            '{"_truncated":true,"_original_size_bytes":8192}',
+            '{not valid json',
+            '["prompt_tokens",1]',
+            '"prompt_tokens"',
+            "1",
+        ):
+            self.assertFalse(has_provider_usage_payload({"provider_usage_json": provider_usage_json}))
         self.assertFalse(
             has_provider_usage_payload(
                 {
@@ -370,6 +491,15 @@ class TestLLMUsageNormalizer(unittest.TestCase):
                 }
             )
         )
+
+    def test_has_provider_usage_payload_ignores_normalized_metadata_only_usage(self):
+        usage = normalize_litellm_usage(
+            {"estimated_prefix_tokens": 123},
+            model="openai/gpt-4o",
+        )
+
+        self.assertEqual(json.loads(usage["provider_usage_json"]), {"estimated_prefix_tokens": 123})
+        self.assertFalse(has_provider_usage_payload(usage))
 
     def test_has_provider_usage_payload_ignores_normalized_no_usage_shape(self):
         usage = normalize_litellm_usage(None, model="openai/gpt-4o")
