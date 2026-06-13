@@ -430,13 +430,14 @@ class MarketReviewLocalizationTestCase(unittest.TestCase):
                     },
                 )
 
-                self.assertEqual(saved, 1)
+                self.assertGreater(saved, 0)
                 db = DatabaseManager.get_instance()
                 with db.get_session() as session:
                     row = session.query(AnalysisHistory).filter(
                         AnalysisHistory.query_id == "market-task-001"
                     ).first()
                     self.assertIsNotNone(row)
+                    self.assertEqual(row.id, saved)
                     self.assertEqual(row.code, market_review_module.MARKET_REVIEW_HISTORY_CODE)
                     self.assertEqual(row.name, "大盘复盘")
                     self.assertEqual(row.report_type, market_review_module.MARKET_REVIEW_REPORT_TYPE)
