@@ -446,6 +446,8 @@ class MarketReviewLocalizationTestCase(unittest.TestCase):
                     self.assertIn('"market_light_snapshots"', row.context_snapshot)
                     self.assertIn('"market_review_payload"', row.context_snapshot)
                     self.assertIn('"trade_date": "2026-03-06"', row.context_snapshot)
+                    snapshot = json.loads(row.context_snapshot or "{}")
+                    self.assertIn("analysis_context_pack_overview", snapshot)
             finally:
                 DatabaseManager.reset_instance()
                 Config._instance = None
