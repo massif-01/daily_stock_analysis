@@ -245,6 +245,28 @@ def test_create_duplicate_list_detail_latest_and_status_update(client_and_db) ->
     assert missing_resp.status_code == 404
 
 
+def test_create_treats_null_lifecycle_fields_as_missing(client_and_db) -> None:
+    client, _db = client_and_db
+
+    response = client.post(
+        "/api/v1/decision-signals",
+        json=_payload(
+            source_report_id=3002,
+            trace_id="trace-null-lifecycle-api",
+            horizon=None,
+            expires_at=None,
+            market_phase="intraday",
+            metadata={"market_phase_summary": {"minutes_to_close": 25}},
+        ),
+    )
+
+    assert response.status_code == 200, response.text
+    item = response.json()["item"]
+    assert item["status"] == "active"
+    assert item["horizon"] == "intraday"
+    assert item["expires_at"] is not None
+
+
 def test_status_update_sanitizes_metadata_before_response_and_persistence(client_and_db) -> None:
     client, db = client_and_db
 
@@ -398,7 +420,6 @@ def test_patch_status_rejects_expired_signal_without_expires_at_extension(client
     assert created_resp.status_code == 200, created_resp.text
     item = created_resp.json()["item"]
     assert item["status"] == "expired"
-    assert item["expires_at"] is None
 
     reactivate_resp = client.patch(
         f"/api/v1/decision-signals/{item['id']}/status",

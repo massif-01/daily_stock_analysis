@@ -162,6 +162,21 @@ def test_service_defaults_lifecycle_and_preserves_explicit_values(isolated_db) -
     assert before_postmarket + timedelta(days=3, seconds=-1) <= postmarket_expiry
     assert postmarket_expiry <= utc_naive_now() + timedelta(days=3, seconds=1)
 
+    null_lifecycle_payload = _payload(
+        source_report_id=158,
+        trace_id="trace-lifecycle-null-values",
+        horizon=None,
+        expires_at=None,
+        market_phase="intraday",
+        metadata={"market_phase_summary": {"minutes_to_close": 30}},
+    )
+    before_null_lifecycle = utc_naive_now()
+    null_lifecycle = service.create_signal(null_lifecycle_payload)["item"]
+    null_lifecycle_expiry = datetime.fromisoformat(null_lifecycle["expires_at"])
+    assert null_lifecycle["horizon"] == "intraday"
+    assert before_null_lifecycle + timedelta(minutes=29) <= null_lifecycle_expiry
+    assert null_lifecycle_expiry <= utc_naive_now() + timedelta(minutes=31)
+
     swing = service.create_signal(
         _payload(
             source_report_id=154,

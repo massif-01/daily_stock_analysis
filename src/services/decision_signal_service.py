@@ -241,7 +241,7 @@ class DecisionSignalService:
         if horizon is None:
             horizon = self._default_horizon(action=action, market_phase=market_phase)
             horizon_defaulted = horizon is not None and not horizon_explicit
-        expires_explicit = "expires_at" in payload
+        expires_explicit = self._payload_has_value(payload, "expires_at")
         expires_at = self._parse_datetime(payload.get("expires_at"))
         if expires_at is None and not expires_explicit:
             expires_at = self._default_expires_at(
