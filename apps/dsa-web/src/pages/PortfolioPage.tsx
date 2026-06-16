@@ -1,10 +1,12 @@
 import type React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pie, PieChart, ResponsiveContainer, Tooltip, Legend, Cell } from 'recharts';
+import { decisionSignalsApi } from '../api/decisionSignals';
 import { portfolioApi } from '../api/portfolio';
 import type { ParsedApiError } from '../api/error';
 import { getParsedApiError } from '../api/error';
 import { ApiErrorAlert, Card, Badge, ConfirmDialog, EmptyState, InlineAlert } from '../components/common';
+import { PortfolioSignalSummary } from '../components/decision-signals/DecisionSignalDisplay';
 import { useUiLanguage } from '../contexts/UiLanguageContext';
 import { formatUiText } from '../i18n/uiText';
 import { PORTFOLIO_TEXT } from '../locales/featureText';
@@ -28,6 +30,10 @@ import {
   hasPositionPrice,
 } from '../utils/portfolioFormat';
 import type {
+  DecisionSignalItem,
+  DecisionSignalListParams,
+} from '../types/decisionSignals';
+import type {
   PortfolioAccountItem,
   PortfolioCashDirection,
   PortfolioCashLedgerListItem,
@@ -43,9 +49,11 @@ import type {
   PortfolioSnapshotResponse,
   PortfolioTradeListItem,
 } from '../types/portfolio';
+import { areStockCodesEquivalent } from '../utils/stockCode';
 
 const PIE_COLORS = ['#00d4ff', '#00ff88', '#ffaa00', '#ff7a45', '#7f8cff', '#ff4466'];
 const DEFAULT_PAGE_SIZE = 20;
+const DECISION_SIGNAL_PAGE_SIZE = 100;
 const FALLBACK_BROKERS: PortfolioImportBrokerItem[] = [
   { broker: 'huatai', aliases: [], displayName: '华泰' },
   { broker: 'citic', aliases: ['zhongxin'], displayName: '中信' },
@@ -81,8 +89,19 @@ const PORTFOLIO_SELECT_CLASS = `${PORTFOLIO_INPUT_CLASS} appearance-none pr-10`;
 const PORTFOLIO_FILE_PICKER_CLASS =
   'input-surface input-focus-glow flex h-11 w-full cursor-pointer items-center justify-center rounded-xl border bg-transparent px-4 text-sm transition-all focus:outline-none disabled:cursor-not-allowed disabled:opacity-60';
 
+function getSignalTime(item: DecisionSignalItem): number {
+  const value = item.createdAt || item.updatedAt || '';
+  const time = new Date(value).getTime();
+  return Number.isNaN(time) ? 0 : time;
+}
+
+function isNewerSignal(left: DecisionSignalItem | undefined, right: DecisionSignalItem): boolean {
+  if (!left) return true;
+  return getSignalTime(right) > getSignalTime(left);
+}
+
 const PortfolioPage: React.FC = () => {
-  const { language } = useUiLanguage();
+  const { language, t } = useUiLanguage();
   const text = PORTFOLIO_TEXT[language];
 
   // Set page title
@@ -111,6 +130,10 @@ const PortfolioPage: React.FC = () => {
   const [error, setError] = useState<ParsedApiError | null>(null);
   const [riskWarning, setRiskWarning] = useState<string | null>(null);
   const [writeWarning, setWriteWarning] = useState<string | null>(null);
+  const [portfolioSignals, setPortfolioSignals] = useState<DecisionSignalItem[]>([]);
+  const [portfolioSignalsLoading, setPortfolioSignalsLoading] = useState(false);
+  const [portfolioSignalsWarning, setPortfolioSignalsWarning] = useState<string | null>(null);
+  const portfolioSignalsRequestRef = useRef(0);
   const [positionAnalysisLoadingKey, setPositionAnalysisLoadingKey] = useState<string | null>(null);
   const [positionAnalysisMessage, setPositionAnalysisMessage] = useState<string | null>(null);
 
@@ -374,6 +397,104 @@ const PortfolioPage: React.FC = () => {
     rows.sort((a, b) => Number(b.marketValueBase || 0) - Number(a.marketValueBase || 0));
     return rows;
   }, [snapshot]);
+
+  const snapshotMatchesAccountScope = useMemo(() => {
+    if (!snapshot) return false;
+    const snapshotAccountIds = new Set((snapshot.accounts || []).map((account) => account.accountId));
+    if (queryAccountId !== undefined) {
+      return snapshotAccountIds.size === 1 && snapshotAccountIds.has(queryAccountId);
+    }
+    return accounts.length === 0 || Number(snapshot.accountCount || 0) === accounts.length;
+  }, [accounts.length, queryAccountId, snapshot]);
+
+  const positionSignalQueryKey = useMemo(() => {
+    return positionRows.map((row) => `${row.accountId}:${row.market}:${row.symbol}`).join('|');
+  }, [positionRows]);
+
+  useEffect(() => {
+    const requestId = portfolioSignalsRequestRef.current + 1;
+    portfolioSignalsRequestRef.current = requestId;
+
+    if (positionRows.length === 0 || !snapshotMatchesAccountScope) {
+      setPortfolioSignals([]);
+      setPortfolioSignalsWarning(null);
+      setPortfolioSignalsLoading(false);
+      return;
+    }
+
+    const isActiveRequest = () => portfolioSignalsRequestRef.current === requestId;
+
+    const loadPortfolioSignals = async () => {
+      setPortfolioSignalsLoading(true);
+      setPortfolioSignalsWarning(null);
+      const collected: DecisionSignalItem[] = [];
+      let page = 1;
+      let total = 0;
+
+      try {
+        while (true) {
+          const query: DecisionSignalListParams = {
+            holdingOnly: true,
+            accountId: queryAccountId,
+            status: 'active',
+            page,
+            pageSize: DECISION_SIGNAL_PAGE_SIZE,
+          };
+          const response = await decisionSignalsApi.list(query);
+          if (!isActiveRequest()) return;
+          collected.push(...response.items);
+          total = response.total;
+          if (collected.length >= total || response.items.length === 0) {
+            break;
+          }
+          page += 1;
+        }
+        setPortfolioSignals(collected);
+        setPortfolioSignalsWarning(null);
+      } catch (err) {
+        if (!isActiveRequest()) return;
+        const parsed = getParsedApiError(err);
+        setPortfolioSignals(collected);
+        setPortfolioSignalsWarning(
+          collected.length > 0
+            ? formatUiText(t('decisionSignals.portfolioPartialWarning'), { message: parsed.message })
+            : parsed.message,
+        );
+      } finally {
+        if (isActiveRequest()) {
+          setPortfolioSignalsLoading(false);
+        }
+      }
+    };
+
+    void loadPortfolioSignals();
+
+    return () => {
+      portfolioSignalsRequestRef.current += 1;
+    };
+  }, [positionRows.length, positionSignalQueryKey, queryAccountId, snapshotMatchesAccountScope, t]);
+
+  const signalByPositionKey = useMemo(() => {
+    const mapped = new Map<string, DecisionSignalItem>();
+    for (const row of positionRows) {
+      const rowMarket = String(row.market || '').toLowerCase();
+      for (const signal of portfolioSignals) {
+        const signalMarket = String(signal.market || '').toLowerCase();
+        if (rowMarket && signalMarket && rowMarket !== signalMarket) {
+          continue;
+        }
+        if (!areStockCodesEquivalent(row.symbol, signal.stockCode)) {
+          continue;
+        }
+        const key = `${row.accountId}-${row.symbol}-${row.market}`;
+        const existing = mapped.get(key);
+        if (isNewerSignal(existing, signal)) {
+          mapped.set(key, signal);
+        }
+      }
+    }
+    return mapped;
+  }, [portfolioSignals, positionRows]);
 
   const handleAnalyzePosition = async (row: FlatPosition) => {
     const key = `${row.accountId}-${row.symbol}-${row.market}`;
@@ -955,6 +1076,14 @@ const PortfolioPage: React.FC = () => {
             <h2 className="text-sm font-semibold text-foreground">{text.positionsTitle}</h2>
             <span className="text-xs text-secondary">{formatUiText(text.countItems, { count: positionRows.length })}</span>
           </div>
+          {portfolioSignalsWarning ? (
+            <InlineAlert
+              variant="warning"
+              title={t('decisionSignals.portfolioWarningTitle')}
+              message={portfolioSignalsWarning}
+              className="mb-3 rounded-xl px-3 py-2 text-xs shadow-none"
+            />
+          ) : null}
           {positionRows.length === 0 ? (
             <EmptyState
               title={text.noPositionsTitle}
@@ -963,7 +1092,7 @@ const PortfolioPage: React.FC = () => {
             />
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="min-w-[860px] w-full text-sm">
                 <thead className="text-xs text-secondary border-b border-white/10">
                   <tr>
                     <th className="text-left py-2 pr-2">{text.account}</th>
@@ -972,15 +1101,17 @@ const PortfolioPage: React.FC = () => {
                     <th className="text-right py-2 pr-2">{text.avgCost}</th>
                     <th className="text-right py-2 pr-2">{text.lastPrice}</th>
                     <th className="text-right py-2 pr-2">{text.marketValue}</th>
-                    <th className="text-right py-2">{text.unrealizedPnl}</th>
-                    <th className="text-right py-2">{text.returnPct}</th>
-                    <th className="text-right py-2">{text.action}</th>
+                    <th className="text-right py-2 pr-3">{text.unrealizedPnl}</th>
+                    <th className="text-right py-2 pr-3">{text.returnPct}</th>
+                    <th className="min-w-[9rem] text-right py-2 pr-3">{t('decisionSignals.portfolioColumn')}</th>
+                    <th className="w-20 text-right py-2">{text.action}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {positionRows.map((row) => {
                     const rowKey = `${row.accountId}-${row.symbol}-${row.market}`;
                     const analyzing = positionAnalysisLoadingKey === rowKey;
+                    const signal = signalByPositionKey.get(rowKey);
                     return (
                     <tr key={rowKey} className="border-b border-white/5">
                       <td className="py-2 pr-2 text-secondary">{row.accountName}</td>
@@ -995,7 +1126,7 @@ const PortfolioPage: React.FC = () => {
                       </td>
                       <td className="py-2 pr-2 text-right">{formatPositionMoney(row.marketValueBase, row)}</td>
                       <td
-                        className={`py-2 text-right ${
+                        className={`py-2 pr-3 text-right ${
                           hasPositionPrice(row)
                             ? row.unrealizedPnlBase >= 0
                               ? 'text-success'
@@ -1006,7 +1137,7 @@ const PortfolioPage: React.FC = () => {
                         {formatPositionMoney(row.unrealizedPnlBase, row)}
                       </td>
                       <td
-                        className={`py-2 text-right ${
+                        className={`py-2 pr-3 text-right ${
                           hasPositionPrice(row) && row.unrealizedPnlPct !== null && row.unrealizedPnlPct !== undefined
                             ? row.unrealizedPnlPct >= 0
                               ? 'text-success'
@@ -1015,6 +1146,9 @@ const PortfolioPage: React.FC = () => {
                         }`}
                       >
                         {formatSignedPct(row.unrealizedPnlPct)}
+                      </td>
+                      <td className="py-2 pr-3 text-right align-top">
+                        <PortfolioSignalSummary item={signal} loading={portfolioSignalsLoading} />
                       </td>
                       <td className="py-2 text-right">
                         <button

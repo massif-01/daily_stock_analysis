@@ -1,8 +1,10 @@
 import type React from 'react';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { decisionSignalsApi } from '../../api/decisionSignals';
 import { createApiError, createParsedApiError } from '../../api/error';
 import { UiLanguageProvider } from '../../contexts/UiLanguageContext';
+import type { DecisionSignalItem } from '../../types/decisionSignals';
 import { UI_LANGUAGE_STORAGE_KEY } from '../../utils/uiLanguage';
 import PortfolioPage from '../PortfolioPage';
 
@@ -26,6 +28,7 @@ const {
   createAccount,
   deleteAccount,
   analyzePosition,
+  listDecisionSignals,
 } = vi.hoisted(() => ({
   getAccounts: vi.fn(),
   getSnapshot: vi.fn(),
@@ -46,6 +49,13 @@ const {
   createAccount: vi.fn(),
   deleteAccount: vi.fn(),
   analyzePosition: vi.fn(),
+  listDecisionSignals: vi.fn(),
+}));
+
+vi.mock('../../api/decisionSignals', () => ({
+  decisionSignalsApi: {
+    list: listDecisionSignals,
+  },
 }));
 
 vi.mock('../../api/portfolio', () => ({
@@ -185,6 +195,43 @@ function makeRisk() {
   };
 }
 
+function makeDecisionSignal(overrides: Partial<DecisionSignalItem> = {}): DecisionSignalItem {
+  return {
+    id: 100,
+    stockCode: '600519',
+    stockName: '贵州茅台',
+    market: 'cn',
+    sourceType: 'analysis',
+    sourceReportId: 1,
+    traceId: null,
+    marketPhase: 'intraday',
+    triggerSource: 'portfolio',
+    action: 'hold',
+    actionLabel: null,
+    confidence: 0.7,
+    score: 80,
+    horizon: '3d',
+    entryLow: null,
+    entryHigh: null,
+    stopLoss: null,
+    targetPrice: null,
+    invalidation: null,
+    watchConditions: '观察量能',
+    reason: '趋势延续',
+    riskSummary: '短线回撤风险',
+    catalystSummary: null,
+    evidence: undefined,
+    dataQualitySummary: undefined,
+    planQuality: 'partial',
+    status: 'active',
+    expiresAt: null,
+    createdAt: '2026-06-17T08:00:00Z',
+    updatedAt: '2026-06-17T08:00:00Z',
+    metadata: undefined,
+    ...overrides,
+  };
+}
+
 function deferredPromise<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -251,6 +298,7 @@ describe('PortfolioPage FX refresh', () => {
       message: '分析任务已加入队列: HK00700',
       analysisPhase: 'auto',
     });
+    listDecisionSignals.mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 100 });
   });
 
   function renderEnglishPage() {
@@ -385,8 +433,205 @@ describe('PortfolioPage FX refresh', () => {
 
     const hkRowCells = within(hkRow as HTMLTableRowElement).getAllByRole('cell');
     const aaplRowCells = within(aaplRow as HTMLTableRowElement).getAllByRole('cell');
-    expect(hkRowCells.at(-2)).toHaveClass('text-success');
-    expect(aaplRowCells.at(-2)).toHaveClass('text-secondary');
+    expect(hkRowCells.at(-3)).toHaveClass('text-success');
+    expect(aaplRowCells.at(-3)).toHaveClass('text-secondary');
+  });
+
+  it('loads active holding signals across pages without blocking position rendering', async () => {
+    getSnapshot.mockResolvedValueOnce(makeSnapshot({ positions: [
+      { symbol: '600519', market: 'cn', currency: 'CNY', quantity: 1, avgCost: 1500, totalCost: 1500, lastPrice: 1600, marketValueBase: 1600, unrealizedPnlBase: 100, unrealizedPnlPct: 6.67, valuationCurrency: 'CNY', priceSource: 'history_close', priceDate: '2026-06-17', priceStale: false, priceAvailable: true },
+    ] }));
+    const firstPage = Array.from({ length: 100 }, (_, index) => makeDecisionSignal({
+      id: index + 1,
+      stockCode: `TEST${index}`,
+      market: 'us',
+    }));
+    const secondPageSignal = makeDecisionSignal({
+      id: 101,
+      stockCode: '600519',
+      riskSummary: '分页后的风险摘要',
+      watchConditions: '分页后的观察条件',
+    });
+    listDecisionSignals
+      .mockResolvedValueOnce({ items: firstPage, total: 101, page: 1, pageSize: 100 })
+      .mockResolvedValueOnce({ items: [secondPageSignal], total: 101, page: 2, pageSize: 100 });
+
+    render(<PortfolioPage />);
+
+    expect(await screen.findByText('600519')).toBeInTheDocument();
+    expect(await screen.findByText('分页后的风险摘要')).toBeInTheDocument();
+    expect(decisionSignalsApi.list).toHaveBeenNthCalledWith(1, {
+      holdingOnly: true,
+      accountId: undefined,
+      status: 'active',
+      page: 1,
+      pageSize: 100,
+    });
+    expect(decisionSignalsApi.list).toHaveBeenNthCalledWith(2, {
+      holdingOnly: true,
+      accountId: undefined,
+      status: 'active',
+      page: 2,
+      pageSize: 100,
+    });
+  });
+
+  it('waits for the selected-account snapshot before loading account-scoped holding signals', async () => {
+    getAccounts.mockResolvedValueOnce(makeAccounts([
+      { id: 1, name: 'Main' },
+      { id: 2, name: 'Alt' },
+    ]));
+    const accountTwoSnapshot = deferredPromise<ReturnType<typeof makeSnapshot>>();
+    getSnapshot
+      .mockResolvedValueOnce(makeSnapshot({
+        accountCount: 2,
+        positions: [
+          { symbol: '600519', market: 'cn', currency: 'CNY', quantity: 1, avgCost: 1500, totalCost: 1500, lastPrice: 1600, marketValueBase: 1600, unrealizedPnlBase: 100, unrealizedPnlPct: 6.67, valuationCurrency: 'CNY', priceSource: 'history_close', priceDate: '2026-06-17', priceStale: false, priceAvailable: true },
+        ],
+      }))
+      .mockReturnValueOnce(accountTwoSnapshot.promise);
+    listDecisionSignals.mockResolvedValue({
+      items: [makeDecisionSignal({ stockCode: '600519', riskSummary: '账号信号' })],
+      total: 1,
+      page: 1,
+      pageSize: 100,
+    });
+
+    render(<PortfolioPage />);
+
+    expect(await screen.findByText('账号信号')).toBeInTheDocument();
+    const signalCallsBeforeSwitch = listDecisionSignals.mock.calls.length;
+
+    const accountSelect = screen.getAllByRole('combobox')[0];
+    fireEvent.change(accountSelect, { target: { value: '2' } });
+
+    await waitFor(() => {
+      expect(getSnapshot).toHaveBeenLastCalledWith({ accountId: 2, costMethod: 'fifo' });
+    });
+    expect(screen.queryByText('账号信号')).not.toBeInTheDocument();
+    expect(listDecisionSignals).toHaveBeenCalledTimes(signalCallsBeforeSwitch);
+
+    await act(async () => {
+      accountTwoSnapshot.resolve(makeSnapshot({
+        accountId: 2,
+        positions: [
+          { symbol: '600519', market: 'cn', currency: 'CNY', quantity: 1, avgCost: 1500, totalCost: 1500, lastPrice: 1600, marketValueBase: 1600, unrealizedPnlBase: 100, unrealizedPnlPct: 6.67, valuationCurrency: 'CNY', priceSource: 'history_close', priceDate: '2026-06-17', priceStale: false, priceAvailable: true },
+        ],
+      }));
+      await accountTwoSnapshot.promise;
+    });
+
+    await waitFor(() => {
+      expect(listDecisionSignals).toHaveBeenLastCalledWith({
+        holdingOnly: true,
+        accountId: 2,
+        status: 'active',
+        page: 1,
+        pageSize: 100,
+      });
+    });
+  });
+
+  it('drops late holding-signal responses after switching account scope', async () => {
+    getAccounts.mockResolvedValueOnce(makeAccounts([
+      { id: 1, name: 'Main' },
+      { id: 2, name: 'Alt' },
+    ]));
+    getSnapshot
+      .mockResolvedValueOnce(makeSnapshot({
+        accountCount: 2,
+        positions: [
+          { symbol: '600519', market: 'cn', currency: 'CNY', quantity: 1, avgCost: 1500, totalCost: 1500, lastPrice: 1600, marketValueBase: 1600, unrealizedPnlBase: 100, unrealizedPnlPct: 6.67, valuationCurrency: 'CNY', priceSource: 'history_close', priceDate: '2026-06-17', priceStale: false, priceAvailable: true },
+        ],
+      }))
+      .mockResolvedValueOnce(makeSnapshot({
+        accountId: 2,
+        positions: [
+          { symbol: '600519', market: 'cn', currency: 'CNY', quantity: 1, avgCost: 1500, totalCost: 1500, lastPrice: 1600, marketValueBase: 1600, unrealizedPnlBase: 100, unrealizedPnlPct: 6.67, valuationCurrency: 'CNY', priceSource: 'history_close', priceDate: '2026-06-17', priceStale: false, priceAvailable: true },
+        ],
+      }));
+    const oldSignals = deferredPromise<{
+      items: DecisionSignalItem[];
+      total: number;
+      page: number;
+      pageSize: number;
+    }>();
+    listDecisionSignals
+      .mockReturnValueOnce(oldSignals.promise)
+      .mockResolvedValueOnce({
+        items: [makeDecisionSignal({ stockCode: '600519', riskSummary: '新账号信号' })],
+        total: 1,
+        page: 1,
+        pageSize: 100,
+      });
+
+    render(<PortfolioPage />);
+
+    expect(await screen.findByText('600519')).toBeInTheDocument();
+
+    const accountSelect = screen.getAllByRole('combobox')[0];
+    fireEvent.change(accountSelect, { target: { value: '2' } });
+
+    expect(await screen.findByText('新账号信号')).toBeInTheDocument();
+
+    await act(async () => {
+      oldSignals.resolve({
+        items: [makeDecisionSignal({ stockCode: '600519', riskSummary: '旧账号晚返回信号' })],
+        total: 1,
+        page: 1,
+        pageSize: 100,
+      });
+      await oldSignals.promise;
+    });
+
+    expect(screen.getByText('新账号信号')).toBeInTheDocument();
+    expect(screen.queryByText('旧账号晚返回信号')).not.toBeInTheDocument();
+  });
+
+  it('matches holding signals by stock-code equivalence and leaves unmatched rows empty', async () => {
+    getSnapshot.mockResolvedValueOnce(makeSnapshot({ positions: [
+      { symbol: '600519', market: 'cn', currency: 'CNY', quantity: 1, avgCost: 1500, totalCost: 1500, lastPrice: 1600, marketValueBase: 1600, unrealizedPnlBase: 100, unrealizedPnlPct: 6.67, valuationCurrency: 'CNY', priceSource: 'history_close', priceDate: '2026-06-17', priceStale: false, priceAvailable: true },
+      { symbol: 'SH600519', market: 'cn', currency: 'CNY', quantity: 1, avgCost: 1500, totalCost: 1500, lastPrice: 1600, marketValueBase: 1600, unrealizedPnlBase: 100, unrealizedPnlPct: 6.67, valuationCurrency: 'CNY', priceSource: 'history_close', priceDate: '2026-06-17', priceStale: false, priceAvailable: true },
+      { symbol: '00700.HK', market: 'hk', currency: 'HKD', quantity: 10, avgCost: 400, totalCost: 4000, lastPrice: 420, marketValueBase: 4200, unrealizedPnlBase: 200, unrealizedPnlPct: 5, valuationCurrency: 'HKD', priceSource: 'history_close', priceDate: '2026-06-17', priceStale: false, priceAvailable: true },
+      { symbol: 'AAPL', market: 'us', currency: 'USD', quantity: 2, avgCost: 180, totalCost: 360, lastPrice: 190, marketValueBase: 380, unrealizedPnlBase: 20, unrealizedPnlPct: 5.56, valuationCurrency: 'USD', priceSource: 'history_close', priceDate: '2026-06-17', priceStale: false, priceAvailable: true },
+    ] }));
+    listDecisionSignals.mockResolvedValueOnce({
+      items: [
+        makeDecisionSignal({ id: 1, stockCode: '600519', market: 'cn', riskSummary: 'A 股风险' }),
+        makeDecisionSignal({ id: 2, stockCode: 'HK00700', market: 'hk', riskSummary: '港股风险', watchConditions: '观察回购' }),
+      ],
+      total: 2,
+      page: 1,
+      pageSize: 100,
+    });
+
+    render(<PortfolioPage />);
+
+    expect(await screen.findAllByText('A 股风险')).toHaveLength(2);
+    expect(screen.getByText('港股风险')).toBeInTheDocument();
+    const aaplRow = screen.getByText('AAPL').closest('tr');
+    expect(aaplRow).not.toBeNull();
+    expect(within(aaplRow as HTMLTableRowElement).getByText('—')).toBeInTheDocument();
+  });
+
+  it('shows a visible partial warning when holding signal pagination fails after partial data', async () => {
+    getSnapshot.mockResolvedValueOnce(makeSnapshot({ positions: [
+      { symbol: '600519', market: 'cn', currency: 'CNY', quantity: 1, avgCost: 1500, totalCost: 1500, lastPrice: 1600, marketValueBase: 1600, unrealizedPnlBase: 100, unrealizedPnlPct: 6.67, valuationCurrency: 'CNY', priceSource: 'history_close', priceDate: '2026-06-17', priceStale: false, priceAvailable: true },
+    ] }));
+    listDecisionSignals
+      .mockResolvedValueOnce({
+        items: [makeDecisionSignal({ stockCode: '600519', riskSummary: '已加载风险' })],
+        total: 101,
+        page: 1,
+        pageSize: 100,
+      })
+      .mockRejectedValueOnce(new Error('page two failed'));
+
+    render(<PortfolioPage />);
+
+    expect(await screen.findByText('已加载风险')).toBeInTheDocument();
+    expect(await screen.findByText('AI 建议降级')).toBeInTheDocument();
+    expect(screen.getByText(/page two failed/)).toBeInTheDocument();
   });
 
   it('submits manual analysis for a held position without exposing portfolio details in the UI call', async () => {
