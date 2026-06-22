@@ -14,6 +14,9 @@ const requiredLocalizedKeys = [
   'BIAS_THRESHOLD',
   'GENERATION_BACKEND',
   'GENERATION_FALLBACK_BACKEND',
+  'LLM_PROMPT_CACHE_TELEMETRY_ENABLED',
+  'LLM_PROMPT_CACHE_HINTS_ENABLED',
+  'LLM_PROMPT_CACHE_DIAGNOSTICS_LEVEL',
   'LLM_USAGE_HMAC_SECRET',
   'LLM_USAGE_HMAC_KEY_VERSION',
   'TELEGRAM_BOT_TOKEN',
@@ -129,16 +132,19 @@ describe('systemConfigI18n option label localization', () => {
     ['LOG_LEVEL', 'WARNING', undefined, '警告'],
     ['LOG_LEVEL', 'ERROR', undefined, '错误'],
     ['LOG_LEVEL', 'CRITICAL', undefined, '严重'],
+    ['LLM_PROMPT_CACHE_DIAGNOSTICS_LEVEL', 'off', undefined, '关闭'],
+    ['LLM_PROMPT_CACHE_DIAGNOSTICS_LEVEL', 'basic', undefined, '基础'],
+    ['LLM_PROMPT_CACHE_DIAGNOSTICS_LEVEL', 'debug', undefined, '调试'],
     ['MARKET_REVIEW_REGION', 'cn', undefined, 'A 股'],
     ['MARKET_REVIEW_REGION', 'hk', undefined, '港股'],
     ['MARKET_REVIEW_REGION', 'us', undefined, '美股'],
     ['MARKET_REVIEW_REGION', 'both', undefined, '全部市场'],
     ['MARKET_REVIEW_COLOR_SCHEME', 'green_up', 'Green Up / Red Down', '绿涨红跌'],
     ['MARKET_REVIEW_COLOR_SCHEME', 'red_up', 'Red Up / Green Down', '红涨绿跌'],
-    ['GENERATION_BACKEND', 'litellm', undefined, 'LiteLLM'],
-    ['GENERATION_FALLBACK_BACKEND', 'litellm', undefined, 'LiteLLM'],
+    ['GENERATION_BACKEND', 'litellm', undefined, '默认模型配置'],
+    ['GENERATION_FALLBACK_BACKEND', 'litellm', undefined, '默认模型配置'],
     ['AGENT_GENERATION_BACKEND', 'auto', 'Auto', '自动'],
-    ['AGENT_GENERATION_BACKEND', 'litellm', undefined, 'LiteLLM'],
+    ['AGENT_GENERATION_BACKEND', 'litellm', undefined, '默认模型工具调用'],
     ['AGENT_ARCH', 'single', 'Single Agent', '单 Agent'],
     ['AGENT_ARCH', 'multi', 'Multi Agent (Orchestrator)', '多 Agent（编排）'],
     ['AGENT_ORCHESTRATOR_MODE', 'quick', 'Quick', '快速'],
@@ -237,9 +243,9 @@ describe('generation backend settings help contract', () => {
       ...(enAgent?.notes ?? []),
     ].join('\n');
 
-    expect(zhBackend?.title).toBe('分析生成通道');
-    expect(zhFallback?.title).toBe('备用生成通道');
-    expect(zhAgent?.title).toBe('问股生成通道');
+    expect(zhBackend?.title).toBe('分析生成方式');
+    expect(zhFallback?.title).toBe('备用生成方式（预留）');
+    expect(zhAgent?.title).toBe('问股生成方式');
     expect(zhBackend?.showFieldKey).toBe(false);
     expect(zhFallback?.showFieldKey).toBe(false);
     expect(zhAgent?.showFieldKey).toBe(false);
@@ -248,25 +254,33 @@ describe('generation backend settings help contract', () => {
     expect(zhAgent?.examples).toEqual([]);
     expect(zhInlineText).toContain('个股分析');
     expect(zhInlineText).toContain('问股助手');
-    expect(zhInlineText).toContain('“自动”当前使用 LiteLLM 工具调用路径');
+    expect(zhInlineText).toContain('当前可用的模型工具调用方式');
     expect(zhInlineText).not.toContain('沿用当前可用的模型通道');
     expect(zhText).toContain('个股分析');
     expect(zhText).toContain('大盘复盘');
     expect(zhText).toContain('自动');
-    expect(zhAgent?.usage).toContain('“自动”当前使用 LiteLLM 工具调用路径');
-    expect(zhAgent?.valueNotes).toContain('“自动”和 LiteLLM 当前都会走 LiteLLM 工具调用路径。');
+    expect(zhBackend?.usage).toContain('默认模型配置');
+    expect(zhFallback?.usage).toContain('默认模型配置');
+    expect(zhAgent?.usage).toContain('当前可用的模型工具调用方式');
+    expect(zhAgent?.valueNotes).toContain('如果不确定，选择“自动”即可。');
+    expect(zhBackend?.notes?.join('\n')).toContain('高级说明');
+    expect(zhBackend?.notes?.join('\n')).toContain('LiteLLM');
     expect(zhText).not.toContain('优先选择当前可用');
     expect(zhText).not.toContain('unsupported_tool_calling');
     expect(zhText).not.toContain('run_agent_loop');
 
-    expect(enBackend?.title).toBe('Analysis Generation Channel');
-    expect(enFallback?.title).toBe('Fallback Generation Channel');
-    expect(enAgent?.title).toBe('Ask-Stock Generation Channel');
+    expect(enBackend?.title).toBe('Analysis Generation Method');
+    expect(enFallback?.title).toBe('Fallback Generation Method (reserved)');
+    expect(enAgent?.title).toBe('Ask-Stock Generation Method');
     expect(enText).toContain('stock analysis');
     expect(enText).toContain('market reviews');
     expect(enText).toContain('Auto');
-    expect(enAgent?.usage).toContain('Auto currently uses the LiteLLM tool-capable path');
-    expect(enAgent?.valueNotes).toContain('Auto and LiteLLM currently both use the LiteLLM assistant tool path.');
+    expect(enBackend?.usage).toContain('Default model settings');
+    expect(enFallback?.usage).toContain('Default model settings');
+    expect(enAgent?.usage).toContain('currently available model tool-calling method');
+    expect(enAgent?.valueNotes).toContain('If you are unsure, choose Auto.');
+    expect(enBackend?.notes?.join('\n')).toContain('Advanced note');
+    expect(enBackend?.notes?.join('\n')).toContain('LiteLLM');
     expect(enText).not.toContain('current available model channel');
     expect(enText).not.toContain('unsupported_tool_calling');
     expect(enText).not.toContain('run_agent_loop');

@@ -181,7 +181,7 @@ describe('SettingsField', () => {
             isRequired: false,
             isEditable: true,
             defaultValue: 'litellm',
-            options: [{ label: 'LiteLLM', value: 'litellm' }],
+            options: [{ label: 'Default model settings', value: 'litellm' }],
             validation: { enum: ['litellm'] },
             displayOrder: 1,
           },
@@ -191,7 +191,7 @@ describe('SettingsField', () => {
       />
     );
 
-    expect(screen.getByLabelText('分析生成通道')).toHaveValue('litellm');
+    expect(screen.getByLabelText('分析生成方式')).toHaveValue('litellm');
     expect(onChange).not.toHaveBeenCalled();
   });
 
@@ -468,7 +468,7 @@ describe('SettingsField', () => {
             isSensitive: false,
             isRequired: false,
             isEditable: true,
-            options: [{ label: 'LiteLLM', value: 'litellm' }],
+            options: [{ label: 'Default model settings', value: 'litellm' }],
             validation: { enum: ['litellm'] },
             displayOrder: 1,
             helpKey: 'settings.ai_model.GENERATION_BACKEND',
@@ -481,17 +481,18 @@ describe('SettingsField', () => {
       />
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '查看 分析生成通道 配置说明' }));
+    fireEvent.click(screen.getByRole('button', { name: '查看 分析生成方式 配置说明' }));
 
-    const dialog = screen.getByRole('dialog', { name: '分析生成通道' });
-    expect(dialog).toHaveTextContent('决定系统用哪条模型调用通道');
+    const dialog = screen.getByRole('dialog', { name: '分析生成方式' });
+    expect(dialog).toHaveTextContent('决定系统用哪种方式生成');
     expect(dialog).not.toHaveTextContent('GENERATION_BACKEND');
     expect(dialog).not.toHaveTextContent('配置样例');
     expect(dialog).not.toHaveTextContent('Phase 1');
-    expect(dialog).not.toHaveTextContent('backend');
+    expect(dialog).toHaveTextContent('高级说明');
+    expect(dialog).toHaveTextContent('LiteLLM');
   });
 
-  it('describes agent auto generation as the current LiteLLM tool path', () => {
+  it('describes agent auto generation without exposing implementation labels as the primary UI copy', () => {
     render(
       <SettingsField
         item={{
@@ -510,7 +511,7 @@ describe('SettingsField', () => {
             isEditable: true,
             options: [
               { label: 'Auto', value: 'auto' },
-              { label: 'LiteLLM', value: 'litellm' },
+              { label: 'Default model tool calling', value: 'litellm' },
             ],
             validation: { enum: ['auto', 'litellm'] },
             displayOrder: 1,
@@ -524,11 +525,13 @@ describe('SettingsField', () => {
       />
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '查看 问股生成通道 配置说明' }));
+    fireEvent.click(screen.getByRole('button', { name: '查看 问股生成方式 配置说明' }));
 
-    const dialog = screen.getByRole('dialog', { name: '问股生成通道' });
-    expect(dialog).toHaveTextContent('“自动”当前使用 LiteLLM 工具调用路径');
-    expect(dialog).toHaveTextContent('“自动”和 LiteLLM 当前都会走 LiteLLM 工具调用路径');
+    const dialog = screen.getByRole('dialog', { name: '问股生成方式' });
+    expect(dialog).toHaveTextContent('系统会选择当前可用的模型工具调用方式');
+    expect(dialog).toHaveTextContent('如果不确定，选择“自动”即可');
+    expect(dialog).toHaveTextContent('高级说明');
+    expect(dialog).toHaveTextContent('LiteLLM');
     expect(dialog).not.toHaveTextContent('优先选择当前可用');
   });
 
