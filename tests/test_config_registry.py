@@ -192,11 +192,12 @@ class TestGenerationBackendFieldsRegistered(unittest.TestCase):
             self.assertEqual(field["category"], "ai_model")
             self.assertEqual(field["ui_control"], "select")
             self.assertEqual(field["default_value"], "litellm")
-            self.assertEqual(field["validation"], {"enum": ["litellm"]})
-            self.assertEqual(
-                field["options"],
-                [{"label": "Default model settings", "value": "litellm"}],
-            )
+            if key == "GENERATION_BACKEND":
+                self.assertEqual(field["validation"], {"enum": ["litellm", "codex_cli"]})
+                self.assertIn({"label": "Codex CLI (experimental)", "value": "codex_cli"}, field["options"])
+            else:
+                self.assertEqual(field["validation"], {"enum": ["", "litellm"]})
+                self.assertIn({"label": "Disabled", "value": ""}, field["options"])
             self.assertEqual(field["help_key"], help_key)
             self.assertNotEqual(field["display_order"], 9000)
 
@@ -206,12 +207,13 @@ class TestGenerationBackendFieldsRegistered(unittest.TestCase):
         self.assertEqual(field["category"], "agent")
         self.assertEqual(field["ui_control"], "select")
         self.assertEqual(field["default_value"], "auto")
-        self.assertEqual(field["validation"], {"enum": ["auto", "litellm"]})
+        self.assertEqual(field["validation"], {"enum": ["auto", "litellm", "codex_cli"]})
         self.assertEqual(
             field["options"],
             [
                 {"label": "Auto", "value": "auto"},
                 {"label": "Default model tool calling", "value": "litellm"},
+                {"label": "Codex CLI (unsupported for tools)", "value": "codex_cli"},
             ],
         )
         self.assertEqual(field["help_key"], "settings.agent.AGENT_GENERATION_BACKEND")
@@ -220,7 +222,7 @@ class TestGenerationBackendFieldsRegistered(unittest.TestCase):
     def test_schema_response_groups_generation_backend_fields(self):
         schema = build_schema_response()
         self.assertEqual(schema["schema_version"], SCHEMA_VERSION)
-        self.assertEqual(SCHEMA_VERSION, "2026-06-22")
+        self.assertEqual(SCHEMA_VERSION, "2026-06-23-local-cli-backend")
 
         categories = {
             category["category"]: {field["key"] for field in category["fields"]}
@@ -229,6 +231,10 @@ class TestGenerationBackendFieldsRegistered(unittest.TestCase):
 
         self.assertIn("GENERATION_BACKEND", categories["ai_model"])
         self.assertIn("GENERATION_FALLBACK_BACKEND", categories["ai_model"])
+        self.assertIn("GENERATION_BACKEND_TIMEOUT_SECONDS", categories["ai_model"])
+        self.assertIn("GENERATION_BACKEND_MAX_OUTPUT_BYTES", categories["ai_model"])
+        self.assertIn("GENERATION_BACKEND_MAX_CONCURRENCY", categories["ai_model"])
+        self.assertIn("LOCAL_CLI_BACKEND_MAX_CONCURRENCY", categories["ai_model"])
         self.assertIn("AGENT_GENERATION_BACKEND", categories["agent"])
 
 

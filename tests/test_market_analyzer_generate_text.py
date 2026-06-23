@@ -172,6 +172,140 @@ class TestAnalyzerGenerateText:
                 generation_config={"max_tokens": 1024, "temperature": 0.5},
             )
 
+    def test_generate_text_does_not_persist_unavailable_usage(self):
+        analyzer = self._make_analyzer()
+        usage = {
+            "usage_available": False,
+            "usage_source": "unavailable",
+            "backend": "codex_cli",
+        }
+        with patch.object(analyzer, "_call_litellm", return_value=("复盘", "codex_cli", usage)), \
+             patch("src.analyzer.persist_llm_usage") as mock_persist:
+            result = analyzer.generate_text("写一份复盘")
+
+        assert result == "复盘"
+        mock_persist.assert_not_called()
+
+    def test_codex_cli_is_available_without_litellm_api_keys(self):
+        analyzer = self._make_analyzer()
+        analyzer._litellm_available = False
+        analyzer._router = None
+        analyzer._config_override = SimpleNamespace(
+            generation_backend="codex_cli",
+            generation_fallback_backend="",
+            generation_backend_timeout_seconds=300,
+            generation_backend_max_output_bytes=1048576,
+            generation_backend_max_concurrency=1,
+            local_cli_backend_max_concurrency=1,
+        )
+
+        with patch("src.llm.local_cli_backend.shutil.which", return_value="/usr/bin/codex"), \
+             patch("src.llm.local_cli_backend.os.access", return_value=True):
+            assert analyzer.get_generation_backend_config_error() is None
+            assert analyzer.is_available() is True
+
+    def test_analyze_uses_litellm_fallback_when_codex_cli_config_error_is_fallbackable(self):
+        from src.llm.generation_backend import GenerationError, GenerationErrorCode
+
+        analyzer = self._make_analyzer()
+        analyzer._litellm_available = True
+        analyzer._config_override = SimpleNamespace(
+            generation_backend="codex_cli",
+            generation_fallback_backend="litellm",
+            litellm_model="gemini/gemini-2.0-flash",
+            litellm_fallback_models=[],
+            llm_model_list=[],
+            report_language="zh",
+            gemini_request_delay=0,
+            llm_temperature=0.7,
+            report_integrity_enabled=False,
+            report_integrity_retry=0,
+        )
+        codex_error = GenerationError(
+            error_code=GenerationErrorCode.COMMAND_NOT_FOUND,
+            stage="configuration",
+            retryable=False,
+            fallbackable=True,
+            backend="codex_cli",
+            provider="codex_cli",
+            details={"reason": "executable_not_found"},
+        )
+        primary_backend = MagicMock()
+        primary_backend.get_config_error.return_value = codex_error
+        primary_backend.generate.side_effect = codex_error
+        fallback_backend = MagicMock()
+        fallback_backend.generate.return_value = SimpleNamespace(
+            text=json.dumps({
+                "sentiment_score": 70,
+                "trend_prediction": "看多",
+                "operation_advice": "持有",
+                "analysis_summary": "fallback ok",
+            }),
+            model="gemini/gemini-2.0-flash",
+            usage={
+                "usage_available": False,
+                "usage_source": "unavailable",
+                "backend": "litellm",
+            },
+        )
+
+        def _backend_for(backend_id=None):
+            return primary_backend if backend_id == "codex_cli" else fallback_backend
+
+        with patch.object(analyzer, "_get_generation_backend", side_effect=_backend_for), \
+             patch.object(analyzer, "_get_analysis_system_prompt", return_value="system"), \
+             patch.object(analyzer, "_get_skill_prompt_sections", return_value=(None, None, True)), \
+             patch.object(analyzer, "_format_prompt", return_value="prompt"), \
+             patch.object(analyzer, "_build_market_snapshot", return_value={}):
+            assert analyzer.is_available() is True
+            result = analyzer.analyze({"code": "600519", "stock_name": "贵州茅台"})
+
+        assert result.success is True
+        assert result.analysis_summary == "fallback ok"
+        primary_backend.generate.assert_called()
+        fallback_backend.generate.assert_called()
+
+    def test_analyze_does_not_persist_unavailable_usage(self):
+        analyzer = self._make_analyzer()
+        analyzer._config_override = SimpleNamespace(
+            generation_backend="codex_cli",
+            generation_fallback_backend="",
+            generation_backend_timeout_seconds=300,
+            generation_backend_max_output_bytes=1048576,
+            generation_backend_max_concurrency=1,
+            local_cli_backend_max_concurrency=1,
+            litellm_model="",
+            gemini_request_delay=0,
+            report_language="zh",
+            llm_temperature=0.7,
+            report_integrity_enabled=False,
+            report_integrity_retry=0,
+        )
+        response_text = json.dumps({
+            "sentiment_score": 70,
+            "trend_prediction": "看多",
+            "operation_advice": "持有",
+            "analysis_summary": "测试",
+        })
+        usage = {
+            "usage_available": False,
+            "usage_source": "unavailable",
+            "backend": "codex_cli",
+        }
+
+        with patch.object(analyzer, "get_generation_backend_config_error", return_value=None), \
+             patch.object(analyzer, "is_available", return_value=True), \
+             patch.object(analyzer, "_get_analysis_system_prompt", return_value="system"), \
+             patch.object(analyzer, "_get_skill_prompt_sections", return_value=(None, None, True)), \
+             patch.object(analyzer, "_format_prompt", return_value="prompt"), \
+             patch.object(analyzer, "_call_litellm", return_value=(response_text, "codex_cli", usage)), \
+             patch.object(analyzer, "_build_market_snapshot", return_value={}), \
+             patch("src.analyzer.persist_llm_usage") as mock_persist:
+            result = analyzer.analyze({"code": "600519", "stock_name": "贵州茅台"})
+
+        assert result.success is True
+        mock_persist.assert_not_called()
+
     def test_generate_text_returns_none_on_failure(self):
         analyzer = self._make_analyzer()
         with patch.object(analyzer, "_call_litellm", side_effect=Exception("LLM error")):
@@ -1796,6 +1930,40 @@ class TestMarketAnalyzerBypassFix:
         assert diagnostic["call_type"] == "market_review"
         assert diagnostic["error_type"] == "GenerationError"
         assert "backend_not_configured" in str(diagnostic["error_message"])
+
+    def test_local_backend_execution_error_does_not_template_fallback(self):
+        from src.llm.generation_backend import GenerationError, GenerationErrorCode
+        from src.market_analyzer import MarketOverview, MarketIndex
+
+        ma = self._make_market_analyzer_with_mock_generate_text(return_value=None)
+        ma.analyzer.generate_text.side_effect = GenerationError(
+            error_code=GenerationErrorCode.COMMAND_NOT_FOUND,
+            stage="configuration",
+            retryable=False,
+            fallbackable=True,
+            backend="codex_cli",
+            provider="codex_cli",
+            details={"reason": "executable_not_found"},
+        )
+        overview = MarketOverview(
+            date="2026-03-05",
+            indices=[
+                MarketIndex(
+                    code="000001",
+                    name="上证指数",
+                    current=3300.0,
+                    change=5.0,
+                    change_pct=0.15,
+                )
+            ],
+        )
+
+        with patch.object(ma, "_generate_template_review", wraps=ma._generate_template_review) as template_review:
+            with pytest.raises(GenerationError) as exc_info:
+                ma.generate_market_review(overview, [])
+
+        assert exc_info.value.error_code is GenerationErrorCode.COMMAND_NOT_FOUND
+        template_review.assert_not_called()
 
     def test_generation_backend_config_error_without_analyzer_does_not_template_fallback(self):
         from src.llm.generation_backend import GenerationError

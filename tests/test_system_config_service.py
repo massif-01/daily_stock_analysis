@@ -415,6 +415,37 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         self.assertEqual(checks["stock_list"]["status"], "configured")
         self.assertEqual(checks["notification"]["status"], "optional")
 
+    def test_get_setup_status_treats_codex_cli_as_primary_runtime_without_api_keys(self) -> None:
+        self._rewrite_env(
+            "GENERATION_BACKEND=codex_cli",
+            "GENERATION_FALLBACK_BACKEND=",
+            "STOCK_LIST=600519",
+        )
+
+        with patch.dict(os.environ, {}, clear=True), \
+             patch("src.services.system_config_service.shutil.which", return_value="/usr/bin/codex"):
+            status = self.service.get_setup_status()
+
+        checks = {check["key"]: check for check in status["checks"]}
+        self.assertEqual(checks["llm_primary"]["status"], "configured")
+        self.assertIn("Codex CLI", checks["llm_primary"]["message"])
+        self.assertNotIn("llm_primary", status["required_missing_keys"])
+
+    def test_get_setup_status_rejects_agent_codex_cli_tool_backend(self) -> None:
+        self._rewrite_env(
+            "GENERATION_BACKEND=codex_cli",
+            "AGENT_GENERATION_BACKEND=codex_cli",
+            "STOCK_LIST=600519",
+        )
+
+        with patch.dict(os.environ, {}, clear=True), \
+             patch("src.services.system_config_service.shutil.which", return_value="/usr/bin/codex"):
+            status = self.service.get_setup_status()
+
+        checks = {check["key"]: check for check in status["checks"]}
+        self.assertEqual(checks["llm_agent"]["status"], "needs_action")
+        self.assertIn("暂不支持 codex_cli", checks["llm_agent"]["message"])
+
     def test_get_setup_status_accepts_anspire_one_key_llm(self) -> None:
         self._rewrite_env(
             "ANSPIRE_API_KEYS=sk-anspire-test-value",

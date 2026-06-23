@@ -71,7 +71,11 @@ const fieldTitleMap: Record<string, string> = {
   PYTDX_SERVERS: 'Pytdx 服务器列表',
   BIAS_THRESHOLD: 'BIAS 阈值',
   GENERATION_BACKEND: '分析生成方式',
-  GENERATION_FALLBACK_BACKEND: '备用生成方式（预留）',
+  GENERATION_FALLBACK_BACKEND: '备用生成方式',
+  GENERATION_BACKEND_TIMEOUT_SECONDS: '生成 Backend 超时秒数',
+  GENERATION_BACKEND_MAX_OUTPUT_BYTES: '生成 Backend 最大输出字节数',
+  GENERATION_BACKEND_MAX_CONCURRENCY: '生成 Backend 最大并发',
+  LOCAL_CLI_BACKEND_MAX_CONCURRENCY: '本地 CLI Backend 最大并发',
   LITELLM_MODEL: '主模型',
   AGENT_LITELLM_MODEL: 'Agent 主模型',
   LITELLM_FALLBACK_MODELS: '备选模型',
@@ -227,8 +231,12 @@ const fieldDescriptionMap: Record<string, string> = {
   PYTDX_PORT: 'Pytdx 单节点端口，需与主机配置配套。',
   PYTDX_SERVERS: 'Pytdx 自定义节点列表，支持 host:port 逗号分隔。',
   BIAS_THRESHOLD: 'BIAS 偏离阈值，超过后用于增强超买超卖提示。',
-  GENERATION_BACKEND: '用于个股分析、大盘复盘和普通文本生成。通常保持“默认模型配置”，即可沿用当前模型渠道、备用模型、用量记录和审计设置。',
-  GENERATION_FALLBACK_BACKEND: '为未来多个生成方式之间的备用切换预留。当前保持“默认模型配置”即可；主模型失败后的备用模型仍在“备选模型”或渠道配置里设置。',
+  GENERATION_BACKEND: '用于个股分析、大盘复盘和普通文本生成。codex_cli 为本地 CLI backend experimental/limited，不等于离线模型。',
+  GENERATION_FALLBACK_BACKEND: 'backend-level fallback。留空表示禁用；litellm 表示 local CLI 失败后回退默认模型配置。',
+  GENERATION_BACKEND_TIMEOUT_SECONDS: '单次 generation backend 调用超时秒数，默认 300；主要用于本地 CLI backend。',
+  GENERATION_BACKEND_MAX_OUTPUT_BYTES: '单次本地 CLI 调用可捕获的 stdout/stderr 字节上限，默认 1048576。',
+  GENERATION_BACKEND_MAX_CONCURRENCY: 'generation backend 全局并发上限；litellm 模式不改变 MAX_WORKERS 或 Router 行为。',
+  LOCAL_CLI_BACKEND_MAX_CONCURRENCY: '本地 CLI backend 并发上限；有效并发取本字段与 GENERATION_BACKEND_MAX_CONCURRENCY 的较小值。',
   LITELLM_MODEL: '主模型，格式 provider/model（如 gemini/gemini-2.5-flash）。配置渠道后自动推断。',
   AGENT_LITELLM_MODEL: 'Agent 专用主模型。留空时继承主模型；无 provider 前缀时会按 openai/<model> 解析。',
   LITELLM_FALLBACK_MODELS: '备选模型，逗号分隔，主模型失败时按序尝试。',
@@ -395,13 +403,16 @@ const fieldOptionLabelMap: Record<string, Record<string, string>> = {
   },
   GENERATION_BACKEND: {
     litellm: '默认模型配置',
+    codex_cli: 'Codex CLI（实验）',
   },
   GENERATION_FALLBACK_BACKEND: {
+    '': '禁用',
     litellm: '默认模型配置',
   },
   AGENT_GENERATION_BACKEND: {
     auto: '自动',
     litellm: '默认模型工具调用',
+    codex_cli: 'Codex CLI（不支持工具）',
   },
   LOG_LEVEL: {
     debug: '调试',
@@ -475,13 +486,16 @@ const fieldOptionLabelMapEn: Record<string, Record<string, string>> = {
   },
   GENERATION_BACKEND: {
     litellm: 'Default model settings',
+    codex_cli: 'Codex CLI (experimental)',
   },
   GENERATION_FALLBACK_BACKEND: {
+    '': 'Disabled',
     litellm: 'Default model settings',
   },
   AGENT_GENERATION_BACKEND: {
     auto: 'Auto',
     litellm: 'Default model tool calling',
+    codex_cli: 'Codex CLI (tools unsupported)',
   },
   LOG_LEVEL: {
     debug: 'Debug',

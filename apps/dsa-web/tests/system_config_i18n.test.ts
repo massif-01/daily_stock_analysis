@@ -244,7 +244,7 @@ describe('generation backend settings help contract', () => {
     ].join('\n');
 
     expect(zhBackend?.title).toBe('分析生成方式');
-    expect(zhFallback?.title).toBe('备用生成方式（预留）');
+    expect(zhFallback?.title).toBe('备用生成方式');
     expect(zhAgent?.title).toBe('问股生成方式');
     expect(zhBackend?.showFieldKey).toBe(false);
     expect(zhFallback?.showFieldKey).toBe(false);
@@ -270,7 +270,7 @@ describe('generation backend settings help contract', () => {
     expect(zhText).not.toContain('run_agent_loop');
 
     expect(enBackend?.title).toBe('Analysis Generation Method');
-    expect(enFallback?.title).toBe('Fallback Generation Method (reserved)');
+    expect(enFallback?.title).toBe('Fallback Generation Method');
     expect(enAgent?.title).toBe('Ask-Stock Generation Method');
     expect(enText).toContain('stock analysis');
     expect(enText).toContain('market reviews');

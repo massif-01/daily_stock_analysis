@@ -226,9 +226,13 @@ daily_stock_analysis/
 
 | 变量名 | 说明 | 默认值 | 必填 |
 |--------|------|--------|:----:|
-| `GENERATION_BACKEND` | 普通分析生成后端；Phase 1 仅支持 `litellm`，未知值会作为配置错误处理，不静默回退 | `litellm` | 否 |
-| `GENERATION_FALLBACK_BACKEND` | backend 级 fallback；当前 `litellm -> litellm` 解析为 no-op，模型 fallback 仍由 LiteLLM 配置负责 | `litellm` | 否 |
-| `AGENT_GENERATION_BACKEND` | Agent Chat 生成后端；`auto` 在 Phase 1 中等价于现有 LiteLLM tool-calling 后端 | `auto` | 否 |
+| `GENERATION_BACKEND` | 普通分析生成后端；支持 `litellm` 或显式 opt-in 的 `codex_cli`（experimental/limited） | `litellm` | 否 |
+| `GENERATION_FALLBACK_BACKEND` | backend 级 fallback；未配置默认 `litellm`，空值禁用，self fallback 解析为 no-op | `litellm` | 否 |
+| `GENERATION_BACKEND_TIMEOUT_SECONDS` | 单次 generation backend 调用超时秒数，主要用于本地 CLI backend | `300` | 否 |
+| `GENERATION_BACKEND_MAX_OUTPUT_BYTES` | 单次本地 CLI backend stdout/stderr 与最终响应捕获上限 | `1048576` | 否 |
+| `GENERATION_BACKEND_MAX_CONCURRENCY` | generation backend 全局并发上限；不改变 LiteLLM Router / `MAX_WORKERS` 行为 | `1` | 否 |
+| `LOCAL_CLI_BACKEND_MAX_CONCURRENCY` | 本地 CLI backend 并发上限；有效并发取它与 `GENERATION_BACKEND_MAX_CONCURRENCY` 的较小值 | `1` | 否 |
+| `AGENT_GENERATION_BACKEND` | Agent Chat 生成后端；`auto` 继续使用 LiteLLM tool-calling，不会继承 `supports_tools=false` 的 `codex_cli` | `auto` | 否 |
 | `LITELLM_MODEL` | 主模型，格式 `provider/model`（如 `gemini/gemini-3.1-pro-preview`），推荐优先使用 | - | 否 |
 | `AGENT_LITELLM_MODEL` | Agent 主模型（可选）；留空继承主模型，无 provider 前缀按 `openai/<model>` 解析 | - | 否 |
 | `AGENT_CONTEXT_COMPRESSION_ENABLED` | 问股可见对话上下文压缩开关；默认关闭，开启后仅压缩 `session_id` 下 user/assistant 文本历史 | `false` | 否 |

@@ -1,0 +1,477 @@
+# -*- coding: utf-8 -*-
+"""Tests for the restricted local CLI generation backend."""
+
+from __future__ import annotations
+
+from concurrent.futures import ThreadPoolExecutor
+import json
+import os
+from pathlib import Path
+import sys
+import time
+from types import SimpleNamespace
+
+import pytest
+
+from tests.litellm_stub import ensure_litellm_stub
+
+ensure_litellm_stub()
+
+from src.analyzer import GeminiAnalyzer  # noqa: E402
+from src.llm.generation_backend import GenerationError, GenerationErrorCode  # noqa: E402
+from src.llm.local_cli_backend import (  # noqa: E402
+    LocalCliGenerationBackend,
+    LocalCliPreset,
+    build_local_cli_env,
+    effective_local_cli_concurrency,
+    redact_diagnostic_text,
+)
+
+
+def _config(**overrides):
+    defaults = {
+        "generation_backend_timeout_seconds": 5,
+        "generation_backend_max_output_bytes": 1024 * 1024,
+        "generation_backend_max_concurrency": 1,
+        "local_cli_backend_max_concurrency": 1,
+        "generation_backend": "codex_cli",
+        "generation_fallback_backend": "",
+        "report_language": "zh",
+    }
+    defaults.update(overrides)
+    return SimpleNamespace(**defaults)
+
+
+def _script(tmp_path: Path, source: str) -> str:
+    path = tmp_path / "mock_cli.py"
+    path.write_text(source, encoding="utf-8")
+    return str(path)
+
+
+def _backend(tmp_path: Path, source: str, **config_overrides) -> LocalCliGenerationBackend:
+    preset = LocalCliPreset(
+        preset_id="codex_cli",
+        executable=sys.executable,
+        argv=(_script(tmp_path, source),),
+        display_name="Mock CLI",
+    )
+    return LocalCliGenerationBackend(_config(**config_overrides), preset=preset)
+
+
+def test_success_uses_stdin_temp_cwd_and_usage_unavailable(tmp_path: Path) -> None:
+    backend = _backend(
+        tmp_path,
+        """
+import json, os, sys
+prompt = sys.stdin.read()
+print(json.dumps({"prompt": prompt, "cwd": os.getcwd(), "sentiment_score": 70}, ensure_ascii=False))
+""",
+    )
+
+    result = backend.generate("hello", {}, response_validator=lambda text: json.loads(text))
+    payload = json.loads(result.text)
+
+    assert payload["prompt"] == "hello"
+    assert payload["cwd"] != os.getcwd()
+    assert not Path(payload["cwd"]).exists()
+    assert result.usage == {
+        "usage_available": False,
+        "usage_source": "unavailable",
+        "backend": "codex_cli",
+    }
+    assert result.diagnostics["executable"]["basename"] == Path(sys.executable).name
+    assert "path" not in result.diagnostics["executable"]
+
+
+def test_codex_preset_reads_output_last_message_instead_of_stdout(tmp_path: Path) -> None:
+    script = _script(
+        tmp_path,
+        """
+import json, sys
+args = sys.argv[1:]
+output_path = args[args.index("--output-last-message") + 1]
+prompt = sys.stdin.read()
+with open(output_path, "w", encoding="utf-8") as handle:
+    handle.write(json.dumps({"prompt": prompt, "sentiment_score": 88, "source": "last_message"}))
+print("OpenAI Codex v0.142.0")
+print("23,011")
+print('{"sentiment_score": 1, "source": "stdout_metadata"}')
+""",
+    )
+    preset = LocalCliPreset(
+        preset_id="codex_cli",
+        executable=sys.executable,
+        argv=(script, "-"),
+        display_name="Mock Codex CLI",
+        output_last_message_arg="--output-last-message",
+    )
+    backend = LocalCliGenerationBackend(_config(), preset=preset)
+
+    result = backend.generate("hello", {}, response_validator=lambda text: json.loads(text))
+    payload = json.loads(result.text)
+
+    assert payload == {
+        "prompt": "hello",
+        "sentiment_score": 88,
+        "source": "last_message",
+    }
+    assert result.diagnostics["output_source"] == "output_last_message"
+    assert "OpenAI Codex" in result.diagnostics["stdout_preview"]
+
+
+def test_stream_request_degrades_to_non_stream(tmp_path: Path) -> None:
+    progress = []
+    backend = _backend(tmp_path, "print('{\"sentiment_score\": 60}')")
+
+    result = backend.generate(
+        "prompt",
+        {},
+        stream=True,
+        stream_progress_callback=progress.append,
+    )
+
+    assert json.loads(result.text)["sentiment_score"] == 60
+    assert result.diagnostics["stream_degraded"] is True
+    assert progress
+
+
+def test_stderr_does_not_affect_successful_stdout_or_json_parsing(tmp_path: Path) -> None:
+    analyzer = GeminiAnalyzer.__new__(GeminiAnalyzer)
+    analyzer._config_override = _config()
+    backend = _backend(
+        tmp_path,
+        """
+import sys
+print('{"sentiment_score": 70, "trend_prediction": "看多"}')
+print('{"bad": "stderr"}', file=sys.stderr)
+""",
+    )
+
+    result = backend.generate(
+        "prompt",
+        {},
+        response_validator=analyzer._validate_json_response,
+    )
+
+    assert json.loads(result.text)["sentiment_score"] == 70
+    assert "stderr" in result.diagnostics["stderr_preview"]
+
+
+def test_multiple_json_objects_fail_as_invalid_json_ambiguous(tmp_path: Path) -> None:
+    analyzer = GeminiAnalyzer.__new__(GeminiAnalyzer)
+    analyzer._config_override = _config()
+    backend = _backend(tmp_path, "print('{\"sentiment_score\": 70} {\"sentiment_score\": 80}')")
+
+    with pytest.raises(GenerationError) as exc_info:
+        backend.generate("prompt", {}, response_validator=analyzer._validate_json_response)
+
+    assert exc_info.value.error_code is GenerationErrorCode.INVALID_JSON
+    assert exc_info.value.details["reason"] == "ambiguous_json"
+
+
+def test_command_not_executable(monkeypatch, tmp_path: Path) -> None:
+    not_exec = tmp_path / "not-executable"
+    not_exec.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setattr("src.llm.local_cli_backend.shutil.which", lambda _cmd: str(not_exec))
+    preset = LocalCliPreset("codex_cli", "mock", (), "Mock CLI")
+    backend = LocalCliGenerationBackend(_config(), preset=preset)
+
+    with pytest.raises(GenerationError) as exc_info:
+        backend.generate("prompt", {})
+
+    assert exc_info.value.error_code is GenerationErrorCode.COMMAND_NOT_EXECUTABLE
+
+
+def test_command_not_found(monkeypatch) -> None:
+    monkeypatch.setattr("src.llm.local_cli_backend.shutil.which", lambda _cmd: None)
+    backend = LocalCliGenerationBackend(_config())
+
+    with pytest.raises(GenerationError) as exc_info:
+        backend.generate("prompt", {})
+
+    assert exc_info.value.error_code is GenerationErrorCode.COMMAND_NOT_FOUND
+
+
+def test_shell_metachar_returns_unsafe_config() -> None:
+    preset = LocalCliPreset("codex_cli", "mock", ("echo", "ok;rm"), "Mock CLI")
+    backend = LocalCliGenerationBackend(_config(), preset=preset)
+
+    with pytest.raises(GenerationError) as exc_info:
+        backend.generate("prompt", {})
+
+    assert exc_info.value.error_code is GenerationErrorCode.UNSAFE_CONFIG
+    assert exc_info.value.details["reason"] == "shell_metachar"
+
+
+def test_output_last_message_arg_shell_metachar_returns_unsafe_config(tmp_path: Path) -> None:
+    preset = LocalCliPreset(
+        "codex_cli",
+        sys.executable,
+        (_script(tmp_path, "print('ok')"),),
+        "Mock CLI",
+        output_last_message_arg="--output-last-message;rm",
+    )
+    backend = LocalCliGenerationBackend(_config(), preset=preset)
+
+    with pytest.raises(GenerationError) as exc_info:
+        backend.generate("prompt", {})
+
+    assert exc_info.value.error_code is GenerationErrorCode.UNSAFE_CONFIG
+    assert exc_info.value.details["reason"] == "shell_metachar"
+
+
+def test_output_too_large(tmp_path: Path) -> None:
+    backend = _backend(
+        tmp_path,
+        "print('x' * 100)",
+        generation_backend_max_output_bytes=20,
+    )
+
+    with pytest.raises(GenerationError) as exc_info:
+        backend.generate("prompt", {})
+
+    assert exc_info.value.error_code is GenerationErrorCode.OUTPUT_TOO_LARGE
+
+
+def test_output_last_message_too_large(tmp_path: Path) -> None:
+    script = _script(
+        tmp_path,
+        """
+import sys
+args = sys.argv[1:]
+output_path = args[args.index("--output-last-message") + 1]
+with open(output_path, "w", encoding="utf-8") as handle:
+    handle.write("x" * 100)
+""",
+    )
+    preset = LocalCliPreset(
+        "codex_cli",
+        sys.executable,
+        (script,),
+        "Mock CLI",
+        output_last_message_arg="--output-last-message",
+    )
+    backend = LocalCliGenerationBackend(_config(generation_backend_max_output_bytes=20), preset=preset)
+
+    with pytest.raises(GenerationError) as exc_info:
+        backend.generate("prompt", {})
+
+    assert exc_info.value.error_code is GenerationErrorCode.OUTPUT_TOO_LARGE
+
+
+def test_empty_stdout_returns_empty_output(tmp_path: Path) -> None:
+    backend = _backend(tmp_path, "")
+
+    with pytest.raises(GenerationError) as exc_info:
+        backend.generate("prompt", {})
+
+    assert exc_info.value.error_code is GenerationErrorCode.EMPTY_OUTPUT
+    assert exc_info.value.details["reason"] == "empty_stdout"
+
+
+def test_missing_output_last_message_returns_empty_output(tmp_path: Path) -> None:
+    preset = LocalCliPreset(
+        "codex_cli",
+        sys.executable,
+        (_script(tmp_path, "print('metadata only')"),),
+        "Mock CLI",
+        output_last_message_arg="--output-last-message",
+    )
+    backend = LocalCliGenerationBackend(_config(), preset=preset)
+
+    with pytest.raises(GenerationError) as exc_info:
+        backend.generate("prompt", {})
+
+    assert exc_info.value.error_code is GenerationErrorCode.EMPTY_OUTPUT
+    assert exc_info.value.details["reason"] == "missing_last_message_output"
+    assert exc_info.value.details["output_source"] == "output_last_message"
+
+
+def test_non_zero_exit_maps_login_required(tmp_path: Path) -> None:
+    backend = _backend(
+        tmp_path,
+        """
+import sys
+print('not authenticated, please login', file=sys.stderr)
+raise SystemExit(2)
+""",
+    )
+
+    with pytest.raises(GenerationError) as exc_info:
+        backend.generate("prompt", {})
+
+    assert exc_info.value.error_code is GenerationErrorCode.LOGIN_REQUIRED
+    assert exc_info.value.details["returncode"] == 2
+
+
+def test_non_zero_exit_with_missing_last_message_still_maps_login_required(tmp_path: Path) -> None:
+    preset = LocalCliPreset(
+        "codex_cli",
+        sys.executable,
+        (
+            _script(
+                tmp_path,
+                """
+import sys
+print("not authenticated, please login", file=sys.stderr)
+raise SystemExit(2)
+""",
+            ),
+        ),
+        "Mock CLI",
+        output_last_message_arg="--output-last-message",
+    )
+    backend = LocalCliGenerationBackend(_config(), preset=preset)
+
+    with pytest.raises(GenerationError) as exc_info:
+        backend.generate("prompt", {})
+
+    assert exc_info.value.error_code is GenerationErrorCode.LOGIN_REQUIRED
+    assert exc_info.value.details["reason"] == "login_required"
+
+
+def test_process_start_error_diagnostics_are_redacted(monkeypatch) -> None:
+    home_path = Path.home()
+    executable_path = str(home_path / "secret" / "bin" / "codex")
+    monkeypatch.setattr("src.llm.local_cli_backend.shutil.which", lambda _cmd: executable_path)
+    monkeypatch.setattr("src.llm.local_cli_backend.os.access", lambda _path, _mode: True)
+
+    def _raise_os_error(*_args, **_kwargs):
+        raise OSError(f"Exec format error: {executable_path} sk-secretsecretsecret")
+
+    monkeypatch.setattr("src.llm.local_cli_backend.subprocess.Popen", _raise_os_error)
+    backend = LocalCliGenerationBackend(_config())
+
+    with pytest.raises(GenerationError) as exc_info:
+        backend.generate("prompt", {})
+
+    assert exc_info.value.error_code is GenerationErrorCode.UNKNOWN_BACKEND_ERROR
+    error = exc_info.value.details["error"]
+    assert str(home_path) not in error
+    assert "sk-secret" not in error
+
+
+def test_timeout_kills_process_group(tmp_path: Path) -> None:
+    pid_file = tmp_path / "child.pid"
+    backend = _backend(
+        tmp_path,
+        f"""
+import subprocess, sys, time
+child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+open({str(pid_file)!r}, "w", encoding="utf-8").write(str(child.pid))
+time.sleep(30)
+""",
+        generation_backend_timeout_seconds=1,
+    )
+
+    with pytest.raises(GenerationError) as exc_info:
+        backend.generate("prompt", {})
+
+    assert exc_info.value.error_code is GenerationErrorCode.TIMEOUT
+    child_pid = int(pid_file.read_text(encoding="utf-8"))
+    deadline = time.time() + 3
+    while time.time() < deadline:
+        try:
+            os.kill(child_pid, 0)
+        except OSError:
+            break
+        time.sleep(0.05)
+    else:
+        pytest.fail("child process was not terminated with the process group")
+
+
+def test_env_allowlist_and_denylist(monkeypatch) -> None:
+    monkeypatch.setenv("PATH", "/bin")
+    monkeypatch.setenv("HOME", "/tmp/home")
+    monkeypatch.setenv("UNRELATED_VALUE", "leak")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-secret")
+    monkeypatch.setenv("WEBHOOK_TOKEN", "token")
+    monkeypatch.setenv("AUTHORIZATION", "Bearer token")
+
+    child_env = build_local_cli_env()
+
+    assert child_env["PATH"] == "/bin"
+    assert child_env["HOME"] == "/tmp/home"
+    assert "UNRELATED_VALUE" not in child_env
+    assert "OPENAI_API_KEY" not in child_env
+    assert "WEBHOOK_TOKEN" not in child_env
+    assert "AUTHORIZATION" not in child_env
+
+
+def test_diagnostics_redaction_and_truncation() -> None:
+    text = (
+        "Authorization: Bearer sk-abc123456789012345678901234567890 "
+        "https://user:pass@example.com/path "
+        + "safe text " * 20
+    )
+
+    redacted = redact_diagnostic_text(text, home="/Users/example", limit=60)
+
+    assert "sk-abc" not in redacted
+    assert "user:pass" not in redacted
+    assert "<truncated>" in redacted
+
+
+def test_diagnostics_redacts_webhook_urls_and_preserves_adjacent_normal_urls() -> None:
+    text = (
+        "slack=https://hooks.slack.com/services/T000/B000/super-secret "
+        "dingtalk=https://oapi.dingtalk.com/robot/send?access_token=abc123&foo=bar "
+        "docs=https://example.com/public/docs?foo=bar"
+    )
+
+    redacted = redact_diagnostic_text(text, limit=1000)
+
+    assert "hooks.slack.com" not in redacted
+    assert "oapi.dingtalk.com" not in redacted
+    assert "super-secret" not in redacted
+    assert "access_token" not in redacted
+    assert redacted.count("<redacted-url>") == 2
+    assert "https://example.com/public/docs?foo=bar" in redacted
+
+
+def test_effective_local_cli_concurrency_uses_minimum() -> None:
+    assert effective_local_cli_concurrency(_config()) == 1
+    assert effective_local_cli_concurrency(
+        _config(generation_backend_max_concurrency=4, local_cli_backend_max_concurrency=2)
+    ) == 2
+    assert effective_local_cli_concurrency(
+        _config(generation_backend_max_concurrency=1, local_cli_backend_max_concurrency=5)
+    ) == 1
+
+
+def test_local_cli_concurrency_limit_serializes_subprocesses(tmp_path: Path) -> None:
+    lock_path = tmp_path / "counter.lock"
+    active_path = tmp_path / "active.txt"
+    max_path = tmp_path / "max.txt"
+    backend = _backend(
+        tmp_path,
+        f"""
+import fcntl, json, pathlib, time
+lock_path = pathlib.Path({str(lock_path)!r})
+active_path = pathlib.Path({str(active_path)!r})
+max_path = pathlib.Path({str(max_path)!r})
+with lock_path.open("w", encoding="utf-8") as lock:
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    active = int(active_path.read_text(encoding="utf-8") or "0") if active_path.exists() else 0
+    active += 1
+    active_path.write_text(str(active), encoding="utf-8")
+    current_max = int(max_path.read_text(encoding="utf-8") or "0") if max_path.exists() else 0
+    max_path.write_text(str(max(current_max, active)), encoding="utf-8")
+    fcntl.flock(lock, fcntl.LOCK_UN)
+time.sleep(0.25)
+with lock_path.open("w", encoding="utf-8") as lock:
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    active = int(active_path.read_text(encoding="utf-8") or "0") - 1
+    active_path.write_text(str(active), encoding="utf-8")
+    fcntl.flock(lock, fcntl.LOCK_UN)
+print(json.dumps({{"sentiment_score": 60}}))
+""",
+        generation_backend_max_concurrency=4,
+        local_cli_backend_max_concurrency=1,
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda _: backend.generate("prompt", {}), range(2)))
+
+    assert [json.loads(result.text)["sentiment_score"] for result in results] == [60, 60]
+    assert max_path.read_text(encoding="utf-8") == "1"
