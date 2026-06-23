@@ -94,6 +94,29 @@ class ConfigEnvCompatibilityTestCase(unittest.TestCase):
 
     @patch("src.config.setup_env")
     @patch.object(Config, "_parse_litellm_yaml", return_value=[])
+    def test_generation_backend_env_clamps_phase2_numeric_maxima(
+        self, _mock_parse_litellm_yaml, _mock_setup_env
+    ):
+        with patch.dict(
+            os.environ,
+            {
+                "STOCK_LIST": "600519",
+                "GENERATION_BACKEND_TIMEOUT_SECONDS": "999999",
+                "GENERATION_BACKEND_MAX_OUTPUT_BYTES": "999999999",
+                "GENERATION_BACKEND_MAX_CONCURRENCY": "999",
+                "LOCAL_CLI_BACKEND_MAX_CONCURRENCY": "999",
+            },
+            clear=True,
+        ):
+            config = Config._load_from_env()
+
+        self.assertEqual(config.generation_backend_timeout_seconds, 3600)
+        self.assertEqual(config.generation_backend_max_output_bytes, 33554432)
+        self.assertEqual(config.generation_backend_max_concurrency, 16)
+        self.assertEqual(config.local_cli_backend_max_concurrency, 4)
+
+    @patch("src.config.setup_env")
+    @patch.object(Config, "_parse_litellm_yaml", return_value=[])
     def test_prompt_cache_config_defaults_are_safe(
         self, _mock_parse_litellm_yaml, _mock_setup_env
     ):

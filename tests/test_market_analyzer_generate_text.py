@@ -370,6 +370,51 @@ class TestAnalyzerGenerateText:
         assert callable(backend.generate.call_args.kwargs["response_validator"])
         assert backend.generate.call_args.kwargs["audit_context"] == {"call_type": "analysis"}
 
+    def test_call_litellm_wraps_fallback_generation_error_with_primary_context(self):
+        from src.llm.generation_backend import GenerationError, GenerationErrorCode
+
+        analyzer = self._make_analyzer()
+        analyzer._config_override.generation_backend = "codex_cli"
+        analyzer._config_override.generation_fallback_backend = "litellm"
+        primary_error = GenerationError(
+            error_code=GenerationErrorCode.COMMAND_NOT_FOUND,
+            stage="configuration",
+            retryable=False,
+            fallbackable=True,
+            backend="codex_cli",
+            provider="codex_cli",
+            details={"reason": "executable_not_found"},
+        )
+        fallback_error = GenerationError(
+            error_code=GenerationErrorCode.INVALID_JSON,
+            stage="validation",
+            retryable=True,
+            fallbackable=True,
+            backend="litellm",
+            provider="gemini",
+            details={"reason": "invalid_json"},
+        )
+        primary_backend = MagicMock()
+        primary_backend.generate.side_effect = primary_error
+        fallback_backend = MagicMock()
+        fallback_backend.generate.side_effect = fallback_error
+
+        def _backend_for(backend_id):
+            return primary_backend if backend_id == "codex_cli" else fallback_backend
+
+        with patch.object(analyzer, "_get_generation_backend", side_effect=_backend_for):
+            with pytest.raises(GenerationError) as exc_info:
+                analyzer._call_litellm("prompt", {"max_tokens": 128})
+
+        error = exc_info.value
+        assert error.stage == "fallback"
+        assert error.error_code is GenerationErrorCode.INVALID_JSON
+        assert error.details["reason"] == "fallback_backend_failed"
+        assert error.details["primary_error"]["error_code"] == "command_not_found"
+        assert error.details["primary_error"]["details"]["reason"] == "executable_not_found"
+        assert error.details["fallback_error"]["error_code"] == "invalid_json"
+        assert error.details["fallback_error"]["details"]["reason"] == "invalid_json"
+
     def test_call_litellm_rejects_unknown_generation_backend_without_litellm_fallback(self):
         from src.llm.generation_backend import GenerationError
 

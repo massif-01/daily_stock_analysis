@@ -2683,8 +2683,32 @@ class GeminiAnalyzer:
                     response_validator=response_validator,
                     audit_context=audit_context,
                 )
-            except GenerationError:
-                raise
+            except GenerationError as fallback_exc:
+                raise GenerationError(
+                    error_code=fallback_exc.error_code,
+                    stage="fallback",
+                    retryable=False,
+                    fallbackable=False,
+                    backend=fallback_backend_id,
+                    provider=fallback_exc.provider,
+                    details={
+                        "reason": "fallback_backend_failed",
+                        "primary_error": {
+                            "error_code": exc.error_code.value,
+                            "backend": exc.backend,
+                            "provider": exc.provider,
+                            "stage": exc.stage,
+                            "details": exc.details,
+                        },
+                        "fallback_error": {
+                            "error_code": fallback_exc.error_code.value,
+                            "backend": fallback_exc.backend,
+                            "provider": fallback_exc.provider,
+                            "stage": fallback_exc.stage,
+                            "details": fallback_exc.details,
+                        },
+                    },
+                ) from fallback_exc
             except Exception as fallback_exc:
                 raise GenerationError(
                     error_code=GenerationErrorCode.UNKNOWN_BACKEND_ERROR,
@@ -3916,22 +3940,39 @@ class GeminiAnalyzer:
             if outside:
                 raise ValueError("ambiguous_json")
             json_str = match.group(1).strip()
-            data = json.loads(json_str)
-            if not isinstance(data, dict):
-                raise TypeError("json_root_not_object")
+            data = self._load_analysis_json_candidate(json_str)
             return json_str, data
         if "```" in text:
             raise ValueError("ambiguous_json")
 
         try:
-            data = json.loads(stripped)
+            data = self._load_analysis_json_candidate(stripped)
         except json.JSONDecodeError as exc:
             if self._contains_embedded_json_object(text):
                 raise ValueError("ambiguous_json") from exc
             raise
+        return stripped, data
+
+    def _load_analysis_json_candidate(self, json_str: str) -> Dict[str, Any]:
+        """Parse one already-selected JSON candidate, repairing common LLM JSON drift."""
+        try:
+            data = json.loads(json_str)
+        except json.JSONDecodeError:
+            stripped = (json_str or "").strip()
+            try:
+                _obj, end = json.JSONDecoder().raw_decode(stripped)
+            except json.JSONDecodeError:
+                pass
+            else:
+                if stripped[end:].strip():
+                    raise
+            if not (stripped.startswith("{") and stripped.endswith("}")):
+                raise
+            repaired = self._fix_json_string(stripped)
+            data = json.loads(repaired)
         if not isinstance(data, dict):
             raise TypeError("json_root_not_object")
-        return stripped, data
+        return data
 
     @staticmethod
     def _contains_embedded_json_object(text: str) -> bool:
@@ -3955,11 +3996,10 @@ class GeminiAnalyzer:
         try:
             AnalysisReportSchema.model_validate(data)
         except Exception as exc:
-            raise self._generation_validation_error(
-                GenerationErrorCode.SCHEMA_VALIDATION_FAILED,
-                reason="schema_validation_failed",
-                message=str(exc)[:200],
-            ) from exc
+            logger.warning(
+                "AnalysisReportSchema validation failed; continuing with raw parser contract: %s",
+                str(exc)[:200],
+            )
         minimal_keys = {
             "sentiment_score",
             "trend_prediction",
@@ -3973,6 +4013,15 @@ class GeminiAnalyzer:
                 reason="minimal_contract_failed",
                 message="analysis JSON does not contain any minimal parser field",
             )
+        if "sentiment_score" in data:
+            try:
+                int(data.get("sentiment_score", 50))
+            except (TypeError, ValueError) as exc:
+                raise self._generation_validation_error(
+                    GenerationErrorCode.SCHEMA_VALIDATION_FAILED,
+                    reason="parser_contract_failed",
+                    message="sentiment_score must be integer-compatible",
+                ) from exc
 
     def _generation_validation_error(
         self,

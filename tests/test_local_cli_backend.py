@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import time
 from types import SimpleNamespace
@@ -233,6 +234,50 @@ def test_output_too_large(tmp_path: Path) -> None:
     assert exc_info.value.error_code is GenerationErrorCode.OUTPUT_TOO_LARGE
 
 
+def test_stdout_output_limit_is_not_double_counted(tmp_path: Path) -> None:
+    backend = _backend(
+        tmp_path,
+        "print('{\"sentiment_score\": 70}')",
+        generation_backend_max_output_bytes=30,
+    )
+
+    result = backend.generate("prompt", {}, response_validator=lambda text: json.loads(text))
+
+    assert json.loads(result.text)["sentiment_score"] == 70
+    assert result.diagnostics["output_source"] == "stdout"
+
+
+def test_output_too_large_kills_process_group(tmp_path: Path) -> None:
+    pid_file = tmp_path / "child-output-limit.pid"
+    backend = _backend(
+        tmp_path,
+        f"""
+import subprocess, sys, time
+child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+open({str(pid_file)!r}, "w", encoding="utf-8").write(str(child.pid))
+sys.stdout.write("x" * 100000)
+sys.stdout.flush()
+time.sleep(30)
+""",
+        generation_backend_max_output_bytes=20,
+    )
+
+    with pytest.raises(GenerationError) as exc_info:
+        backend.generate("prompt", {})
+
+    assert exc_info.value.error_code is GenerationErrorCode.OUTPUT_TOO_LARGE
+    child_pid = int(pid_file.read_text(encoding="utf-8"))
+    deadline = time.time() + 3
+    while time.time() < deadline:
+        try:
+            os.kill(child_pid, 0)
+        except OSError:
+            break
+        time.sleep(0.05)
+    else:
+        pytest.fail("child process was not terminated with the process group")
+
+
 def test_output_last_message_too_large(tmp_path: Path) -> None:
     script = _script(
         tmp_path,
@@ -242,6 +287,33 @@ args = sys.argv[1:]
 output_path = args[args.index("--output-last-message") + 1]
 with open(output_path, "w", encoding="utf-8") as handle:
     handle.write("x" * 100)
+""",
+    )
+    preset = LocalCliPreset(
+        "codex_cli",
+        sys.executable,
+        (script,),
+        "Mock CLI",
+        output_last_message_arg="--output-last-message",
+    )
+    backend = LocalCliGenerationBackend(_config(generation_backend_max_output_bytes=20), preset=preset)
+
+    with pytest.raises(GenerationError) as exc_info:
+        backend.generate("prompt", {})
+
+    assert exc_info.value.error_code is GenerationErrorCode.OUTPUT_TOO_LARGE
+
+
+def test_output_last_message_total_limit_includes_stdio(tmp_path: Path) -> None:
+    script = _script(
+        tmp_path,
+        """
+import sys
+args = sys.argv[1:]
+output_path = args[args.index("--output-last-message") + 1]
+print("stdout bytes")
+with open(output_path, "w", encoding="utf-8") as handle:
+    handle.write("final bytes")
 """,
     )
     preset = LocalCliPreset(
@@ -351,6 +423,27 @@ def test_process_start_error_diagnostics_are_redacted(monkeypatch) -> None:
     assert "sk-secret" not in error
 
 
+def test_prompt_is_passed_as_stdin_file_not_pipe(tmp_path: Path, monkeypatch) -> None:
+    captured = {}
+
+    def _raise_os_error(*_args, **kwargs):
+        stdin = kwargs.get("stdin")
+        captured["stdin"] = stdin
+        captured["stdin_closed_at_popen"] = getattr(stdin, "closed", True)
+        raise OSError("mock start failure")
+
+    monkeypatch.setattr("src.llm.local_cli_backend.subprocess.Popen", _raise_os_error)
+    backend = _backend(tmp_path, "print('unused')")
+
+    with pytest.raises(GenerationError):
+        backend.generate("x" * 200000, {})
+
+    stdin = captured["stdin"]
+    assert stdin is not subprocess.PIPE
+    assert hasattr(stdin, "fileno")
+    assert not captured["stdin_closed_at_popen"]
+
+
 def test_timeout_kills_process_group(tmp_path: Path) -> None:
     pid_file = tmp_path / "child.pid"
     backend = _backend(
@@ -437,6 +530,9 @@ def test_effective_local_cli_concurrency_uses_minimum() -> None:
     assert effective_local_cli_concurrency(
         _config(generation_backend_max_concurrency=1, local_cli_backend_max_concurrency=5)
     ) == 1
+    assert effective_local_cli_concurrency(
+        _config(generation_backend_max_concurrency=999, local_cli_backend_max_concurrency=999)
+    ) == 4
 
 
 def test_local_cli_concurrency_limit_serializes_subprocesses(tmp_path: Path) -> None:

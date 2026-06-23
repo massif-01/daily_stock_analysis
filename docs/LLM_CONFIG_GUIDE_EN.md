@@ -38,13 +38,15 @@ AGENT_GENERATION_BACKEND=auto
 - The current `codex_cli` preset reads the final response through `codex exec --output-last-message <temp-file> -`; stdout/stderr are diagnostics previews only and are not used for main-analysis JSON parsing. A real probe on 2026-06-23 with `codex-cli 0.142.0` showed stdout includes session metadata, while `--output-last-message` returns a clean final JSON payload.
 - `codex_cli` does not support streaming. Stream requests degrade to non-stream and do not return `capability_unsupported`.
 - Local CLI usage is normally unavailable. DSA does not persist fake 0-token, fake cost, or fake cache telemetry.
+- Local CLI execution has hard caps: `GENERATION_BACKEND_TIMEOUT_SECONDS` max `3600`, `GENERATION_BACKEND_MAX_OUTPUT_BYTES` max `33554432`, `GENERATION_BACKEND_MAX_CONCURRENCY` max `16`, and `LOCAL_CLI_BACKEND_MAX_CONCURRENCY` max `4`. stdout/stderr plus the `--output-last-message` final response are counted together; oversized output returns structured `output_too_large` without reading the full file into memory for parsing.
 - Local CLI default concurrency is 1. Effective local CLI concurrency is `min(LOCAL_CLI_BACKEND_MAX_CONCURRENCY, GENERATION_BACKEND_MAX_CONCURRENCY)` and does not inherit `MAX_WORKERS`.
-- `AGENT_GENERATION_BACKEND=auto` does not blindly inherit `GENERATION_BACKEND=codex_cli`; Agent tool calling remains on LiteLLM. Explicit `AGENT_GENERATION_BACKEND=codex_cli` does not enable Agent text-only mode in Phase 2.
+- `AGENT_GENERATION_BACKEND=auto` does not blindly inherit `GENERATION_BACKEND=codex_cli`; Agent tool calling remains on LiteLLM. The Web settings page only exposes `auto|litellm`; a hand-written `AGENT_GENERATION_BACKEND=codex_cli` does not enable Agent text-only mode in Phase 2 and returns an explicit unsupported tool-calling diagnostic.
 
 ### Codex CLI Privacy And Boundaries
 
 - A local CLI backend is not an offline model. The service behind Codex CLI may process stock symbols, news, position context, analysis prompts, and report drafts.
 - Docker, cloud servers, and CI do not automatically have your local CLI login state.
+- GitHub Actions only passes configuration values through; it does not install or log in Codex CLI. If you opt into `GENERATION_BACKEND=codex_cli` in Actions, a runner without the executable or login state should return a structured failure.
 - DSA does not read Codex credential files, but the subprocess may use the CLI's own login state.
 - The Web settings page only exposes safe presets; it does not accept arbitrary command, argv, or shell strings.
 - `codex_cli` remains experimental/limited. If your CLI version does not support stable non-interactive `--output-last-message` output, keep `GENERATION_BACKEND=litellm`.
@@ -349,7 +351,7 @@ P0.5a does not introduce PromptBlock IR, `block_id`, `stability_class`, `static_
 
 The bundled `00-daily-analysis.yml` explicitly passes the common LLM runtime fields to the job environment:
 
-- Runtime selection: `GENERATION_BACKEND`, `GENERATION_FALLBACK_BACKEND`, `GENERATION_BACKEND_TIMEOUT_SECONDS`, `GENERATION_BACKEND_MAX_OUTPUT_BYTES`, `GENERATION_BACKEND_MAX_CONCURRENCY`, `LOCAL_CLI_BACKEND_MAX_CONCURRENCY`, `LLM_CHANNELS`, `LITELLM_MODEL`, `LITELLM_FALLBACK_MODELS`, `AGENT_LITELLM_MODEL`, `VISION_MODEL`, `VISION_PROVIDER_PRIORITY`, `LLM_TEMPERATURE`, `LLM_USAGE_HMAC_SECRET`, `LLM_USAGE_HMAC_KEY_VERSION`, `LLM_PROMPT_CACHE_TELEMETRY_ENABLED`, `LLM_PROMPT_CACHE_HINTS_ENABLED`, `LLM_PROMPT_CACHE_DIAGNOSTICS_LEVEL`
+- Runtime selection: `GENERATION_BACKEND`, `GENERATION_FALLBACK_BACKEND`, `GENERATION_BACKEND_TIMEOUT_SECONDS`, `GENERATION_BACKEND_MAX_OUTPUT_BYTES`, `GENERATION_BACKEND_MAX_CONCURRENCY`, `LOCAL_CLI_BACKEND_MAX_CONCURRENCY`, `AGENT_GENERATION_BACKEND`, `LLM_CHANNELS`, `LITELLM_MODEL`, `LITELLM_FALLBACK_MODELS`, `AGENT_LITELLM_MODEL`, `VISION_MODEL`, `VISION_PROVIDER_PRIORITY`, `LLM_TEMPERATURE`, `LLM_USAGE_HMAC_SECRET`, `LLM_USAGE_HMAC_KEY_VERSION`, `LLM_PROMPT_CACHE_TELEMETRY_ENABLED`, `LLM_PROMPT_CACHE_HINTS_ENABLED`, `LLM_PROMPT_CACHE_DIAGNOSTICS_LEVEL`
 - Multiple keys: `GEMINI_API_KEYS`, `ANTHROPIC_API_KEYS`, `OPENAI_API_KEYS`, `DEEPSEEK_API_KEYS` (the current workflow imports these from repository Secrets only, not from same-named Variables)
 - Common channel names: `primary`, `secondary`, `aihubmix`, `deepseek`, `dashscope`, `zhipu`, `moonshot`, `minimax`, `volcengine`, `siliconflow`, `openrouter`, `gemini`, `anthropic`, `openai`, `ollama`
 

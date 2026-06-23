@@ -2740,14 +2740,24 @@ class SystemConfigService:
                         "configured",
                         "Agent 工具调用将继续使用 LiteLLM 渠道。",
                     )
+                if agent_backend == LITELLM_BACKEND_ID:
+                    return self._setup_check(
+                        "llm_agent",
+                        "Agent 渠道",
+                        "agent",
+                        True,
+                        "needs_action",
+                        "AGENT_GENERATION_BACKEND 已选择 litellm，但未检测到可用 LiteLLM 模型配置。",
+                        "如需使用 Ask-Stock Agent，请配置 AGENT_LITELLM_MODEL、LITELLM_MODEL、LLM_CHANNELS 或 LITELLM_CONFIG。",
+                    )
                 return self._setup_check(
                     "llm_agent",
                     "Agent 渠道",
                     "agent",
                     True,
                     "needs_action",
-                    "Agent 工具调用需要 LiteLLM backend；codex_cli 不会被自动继承。",
-                    "如需使用 Ask-Stock Agent，请配置 LiteLLM 模型或将 AGENT_GENERATION_BACKEND 设为 litellm。",
+                    "Agent 工具调用需要 LiteLLM 模型配置；codex_cli 主生成方式不会被自动继承。",
+                    "如需使用 Ask-Stock Agent，请配置 LiteLLM 模型，或将 AGENT_GENERATION_BACKEND 固定为 litellm 后补齐模型配置。",
                 )
             if primary_check["status"] == "configured":
                 return self._setup_check(

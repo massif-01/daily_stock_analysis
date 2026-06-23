@@ -48,6 +48,10 @@ from src.llm.local_cli_backend import (
     DEFAULT_LOCAL_CLI_BACKEND_MAX_CONCURRENCY,
     DEFAULT_LOCAL_CLI_MAX_OUTPUT_BYTES,
     DEFAULT_LOCAL_CLI_TIMEOUT_SECONDS,
+    MAX_GENERATION_BACKEND_MAX_CONCURRENCY,
+    MAX_LOCAL_CLI_BACKEND_MAX_CONCURRENCY,
+    MAX_LOCAL_CLI_OUTPUT_BYTES,
+    MAX_LOCAL_CLI_TIMEOUT_SECONDS,
 )
 from src.llm import generation_params as llm_generation_params
 from src.scheduler import normalize_schedule_times
@@ -1389,24 +1393,28 @@ class Config:
             DEFAULT_LOCAL_CLI_TIMEOUT_SECONDS,
             field_name='GENERATION_BACKEND_TIMEOUT_SECONDS',
             minimum=1,
+            maximum=MAX_LOCAL_CLI_TIMEOUT_SECONDS,
         )
         generation_backend_max_output_bytes = parse_env_int(
             os.getenv('GENERATION_BACKEND_MAX_OUTPUT_BYTES'),
             DEFAULT_LOCAL_CLI_MAX_OUTPUT_BYTES,
             field_name='GENERATION_BACKEND_MAX_OUTPUT_BYTES',
             minimum=1,
+            maximum=MAX_LOCAL_CLI_OUTPUT_BYTES,
         )
         generation_backend_max_concurrency = parse_env_int(
             os.getenv('GENERATION_BACKEND_MAX_CONCURRENCY'),
             DEFAULT_GENERATION_BACKEND_MAX_CONCURRENCY,
             field_name='GENERATION_BACKEND_MAX_CONCURRENCY',
             minimum=1,
+            maximum=MAX_GENERATION_BACKEND_MAX_CONCURRENCY,
         )
         local_cli_backend_max_concurrency = parse_env_int(
             os.getenv('LOCAL_CLI_BACKEND_MAX_CONCURRENCY'),
             DEFAULT_LOCAL_CLI_BACKEND_MAX_CONCURRENCY,
             field_name='LOCAL_CLI_BACKEND_MAX_CONCURRENCY',
             minimum=1,
+            maximum=MAX_LOCAL_CLI_BACKEND_MAX_CONCURRENCY,
         )
 
         agent_litellm_model = normalize_agent_litellm_model(
@@ -2656,7 +2664,8 @@ class Config:
             issues.append(ConfigIssue(
                 severity="error",
                 message=(
-                    "AGENT_GENERATION_BACKEND 当前支持 auto、litellm 或 codex_cli。"
+                    "AGENT_GENERATION_BACKEND 当前支持 auto、litellm；"
+                    "codex_cli 仅作为显式 unsupported diagnostic 保留，不支持 Agent 工具调用。"
                     f"已配置的值为：{agent_generation_backend}。"
                 ),
                 field="AGENT_GENERATION_BACKEND",

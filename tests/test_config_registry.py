@@ -207,17 +207,27 @@ class TestGenerationBackendFieldsRegistered(unittest.TestCase):
         self.assertEqual(field["category"], "agent")
         self.assertEqual(field["ui_control"], "select")
         self.assertEqual(field["default_value"], "auto")
-        self.assertEqual(field["validation"], {"enum": ["auto", "litellm", "codex_cli"]})
+        self.assertEqual(field["validation"], {"enum": ["auto", "litellm"]})
         self.assertEqual(
             field["options"],
             [
                 {"label": "Auto", "value": "auto"},
-                {"label": "Default model tool calling", "value": "litellm"},
-                {"label": "Codex CLI (unsupported for tools)", "value": "codex_cli"},
+                {"label": "Default model settings", "value": "litellm"},
             ],
         )
         self.assertEqual(field["help_key"], "settings.agent.AGENT_GENERATION_BACKEND")
         self.assertNotEqual(field["display_order"], 9000)
+
+    def test_generation_backend_numeric_fields_have_upper_bounds(self):
+        expected = {
+            "GENERATION_BACKEND_TIMEOUT_SECONDS": {"min": 1, "max": 3600},
+            "GENERATION_BACKEND_MAX_OUTPUT_BYTES": {"min": 1, "max": 33554432},
+            "GENERATION_BACKEND_MAX_CONCURRENCY": {"min": 1, "max": 16},
+            "LOCAL_CLI_BACKEND_MAX_CONCURRENCY": {"min": 1, "max": 4},
+        }
+
+        for key, validation in expected.items():
+            self.assertEqual(get_field_definition(key)["validation"], validation)
 
     def test_schema_response_groups_generation_backend_fields(self):
         schema = build_schema_response()

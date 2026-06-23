@@ -116,6 +116,23 @@ def test_daily_analysis_maps_prompt_cache_config() -> None:
         assert f"secrets.{key}" in env[key]
 
 
+def test_daily_analysis_maps_generation_backend_runtime_config() -> None:
+    env = _load_daily_analysis_env()
+
+    for key in (
+        "GENERATION_BACKEND",
+        "GENERATION_FALLBACK_BACKEND",
+        "GENERATION_BACKEND_TIMEOUT_SECONDS",
+        "GENERATION_BACKEND_MAX_OUTPUT_BYTES",
+        "GENERATION_BACKEND_MAX_CONCURRENCY",
+        "LOCAL_CLI_BACKEND_MAX_CONCURRENCY",
+        "AGENT_GENERATION_BACKEND",
+    ):
+        assert key in env
+        assert f"vars.{key}" in env[key]
+        assert f"secrets.{key}" in env[key]
+
+
 def test_env_example_includes_provider_template_channel_examples() -> None:
     templates = _extract_provider_templates()
     env_example = ENV_EXAMPLE_PATH.read_text(encoding="utf-8")

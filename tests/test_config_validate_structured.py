@@ -212,7 +212,8 @@ class TestValidateStructuredLLM:
 
         error = next(i for i in issues if i.field == "AGENT_GENERATION_BACKEND")
         assert error.severity == "error"
-        assert "auto、litellm 或 codex_cli" in error.message
+        assert "auto、litellm" in error.message
+        assert "不支持 Agent 工具调用" in error.message
         assert "hermes" in error.message
 
     def test_codex_cli_without_litellm_keys_is_not_llm_config_error(self):

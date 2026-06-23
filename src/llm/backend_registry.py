@@ -13,6 +13,7 @@ CODEX_CLI_BACKEND_ID = "codex_cli"
 AUTO_AGENT_BACKEND_ID = "auto"
 
 SUPPORTED_GENERATION_BACKENDS = frozenset({LITELLM_BACKEND_ID, CODEX_CLI_BACKEND_ID})
+SUPPORTED_GENERATION_FALLBACK_BACKENDS = frozenset({LITELLM_BACKEND_ID})
 SUPPORTED_AGENT_GENERATION_BACKENDS = frozenset({
     AUTO_AGENT_BACKEND_ID,
     LITELLM_BACKEND_ID,
@@ -44,11 +45,12 @@ def normalize_backend_id(value: Any, *, default: str) -> str:
 
 
 def _unsupported_backend_error(backend_id: str, *, field: str) -> GenerationError:
-    supported = (
-        SUPPORTED_AGENT_GENERATION_BACKENDS
-        if field == "AGENT_GENERATION_BACKEND"
-        else SUPPORTED_GENERATION_BACKENDS
-    )
+    if field == "AGENT_GENERATION_BACKEND":
+        supported = SUPPORTED_AGENT_GENERATION_BACKENDS
+    elif field == "GENERATION_FALLBACK_BACKEND":
+        supported = SUPPORTED_GENERATION_FALLBACK_BACKENDS
+    else:
+        supported = SUPPORTED_GENERATION_BACKENDS
     return GenerationError(
         error_code=GenerationErrorCode.BACKEND_NOT_CONFIGURED,
         stage="generation",
@@ -92,8 +94,6 @@ def resolve_generation_fallback_backend_id(config: Any) -> Optional[str]:
     if fallback == primary:
         return None
     if fallback != LITELLM_BACKEND_ID:
-        raise _unsupported_backend_error(fallback, field="GENERATION_FALLBACK_BACKEND")
-    if fallback not in SUPPORTED_GENERATION_BACKENDS:
         raise _unsupported_backend_error(fallback, field="GENERATION_FALLBACK_BACKEND")
     return fallback
 

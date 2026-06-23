@@ -20,6 +20,7 @@ import signal
 import subprocess
 import tempfile
 import threading
+import time
 from typing import Any, Callable, Dict, Mapping, Optional, Sequence
 from urllib.parse import parse_qsl, urlsplit
 
@@ -37,8 +38,13 @@ DEFAULT_LOCAL_CLI_TIMEOUT_SECONDS = 300
 DEFAULT_LOCAL_CLI_MAX_OUTPUT_BYTES = 1024 * 1024
 DEFAULT_GENERATION_BACKEND_MAX_CONCURRENCY = 1
 DEFAULT_LOCAL_CLI_BACKEND_MAX_CONCURRENCY = 1
+MAX_LOCAL_CLI_TIMEOUT_SECONDS = 3600
+MAX_LOCAL_CLI_OUTPUT_BYTES = 32 * 1024 * 1024
+MAX_GENERATION_BACKEND_MAX_CONCURRENCY = 16
+MAX_LOCAL_CLI_BACKEND_MAX_CONCURRENCY = 4
 
 _PREVIEW_LIMIT = 800
+_PROCESS_POLL_INTERVAL_SECONDS = 0.05
 _URL_PATTERN = re.compile(r"https?://[^\s,;)\]}]+", re.IGNORECASE)
 _SHELL_META_CHARS = ("|", ">", "<", ";", "`")
 _SHELL_META_STRINGS = ("&&", "||", "$(")
@@ -141,6 +147,8 @@ def effective_local_cli_concurrency(config: Any) -> int:
         getattr(config, "local_cli_backend_max_concurrency", None),
         DEFAULT_LOCAL_CLI_BACKEND_MAX_CONCURRENCY,
     )
+    backend_limit = min(backend_limit, MAX_GENERATION_BACKEND_MAX_CONCURRENCY)
+    local_limit = min(local_limit, MAX_LOCAL_CLI_BACKEND_MAX_CONCURRENCY)
     return max(1, min(local_limit, backend_limit))
 
 
@@ -306,13 +314,19 @@ class LocalCliGenerationBackend(GenerationBackend):
         audit_context: Optional[Dict[str, Any]] = None,
     ) -> GenerationResult:
         executable, argv, executable_summary = self._resolve_command()
-        timeout_seconds = _positive_int(
-            getattr(self._config, "generation_backend_timeout_seconds", None),
-            DEFAULT_LOCAL_CLI_TIMEOUT_SECONDS,
+        timeout_seconds = min(
+            _positive_int(
+                getattr(self._config, "generation_backend_timeout_seconds", None),
+                DEFAULT_LOCAL_CLI_TIMEOUT_SECONDS,
+            ),
+            MAX_LOCAL_CLI_TIMEOUT_SECONDS,
         )
-        max_output_bytes = _positive_int(
-            getattr(self._config, "generation_backend_max_output_bytes", None),
-            DEFAULT_LOCAL_CLI_MAX_OUTPUT_BYTES,
+        max_output_bytes = min(
+            _positive_int(
+                getattr(self._config, "generation_backend_max_output_bytes", None),
+                DEFAULT_LOCAL_CLI_MAX_OUTPUT_BYTES,
+            ),
+            MAX_LOCAL_CLI_OUTPUT_BYTES,
         )
         concurrency_limit = effective_local_cli_concurrency(self._config)
 
@@ -333,6 +347,8 @@ class LocalCliGenerationBackend(GenerationBackend):
         stderr = ""
         text = ""
         stdio_output_bytes = 0
+        final_output_bytes = 0
+        last_message_path: Optional[Path] = None
 
         with _local_cli_concurrency_slot(concurrency_limit):
             self._emit_progress(stream_progress_callback, 0)
@@ -341,45 +357,67 @@ class LocalCliGenerationBackend(GenerationBackend):
                 with tempfile.TemporaryDirectory(prefix="dsa-local-cli-") as cwd:
                     diagnostics["cwd_kind"] = "temporary"
                     command_argv, last_message_path = self._build_runtime_argv(argv, cwd)
-                    process = subprocess.Popen(
-                        [executable, *command_argv],
-                        stdin=subprocess.PIPE,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        cwd=cwd,
-                        env=child_env,
-                        text=True,
-                        shell=False,
-                        start_new_session=True,
-                    )
-                    self._emit_progress(stream_progress_callback, 1)
-                    try:
-                        stdout, stderr = process.communicate(
-                            prompt_text,
-                            timeout=timeout_seconds,
+                    prompt_path = Path(cwd) / "prompt.txt"
+                    stdout_path = Path(cwd) / "stdout.txt"
+                    stderr_path = Path(cwd) / "stderr.txt"
+                    prompt_path.write_text(prompt_text, encoding="utf-8")
+                    with (
+                        prompt_path.open("r", encoding="utf-8") as prompt_handle,
+                        stdout_path.open("wb") as stdout_handle,
+                        stderr_path.open("wb") as stderr_handle,
+                    ):
+                        process = subprocess.Popen(
+                            [executable, *command_argv],
+                            stdin=prompt_handle,
+                            stdout=stdout_handle,
+                            stderr=stderr_handle,
+                            cwd=cwd,
+                            env=child_env,
+                            text=True,
+                            shell=False,
+                            start_new_session=True,
                         )
-                    except subprocess.TimeoutExpired as exc:
-                        self._terminate_process_group(process)
-                        stdout, stderr = process.communicate()
-                        diagnostics.update(_preview_diagnostics(stdout, stderr))
-                        raise self._error(
-                            GenerationErrorCode.TIMEOUT,
-                            stage="execution",
-                            retryable=True,
-                            fallbackable=True,
-                            details={
-                                **diagnostics,
-                                "reason": "timeout",
-                                "timeout_seconds": timeout_seconds,
-                            },
-                        ) from exc
+                        self._emit_progress(stream_progress_callback, 1)
+                        deadline = time.monotonic() + timeout_seconds
+                        while True:
+                            stdout_handle.flush()
+                            stderr_handle.flush()
+                            stdio_output_bytes = _path_size(stdout_path) + _path_size(stderr_path)
+                            if stdio_output_bytes > max_output_bytes:
+                                self._terminate_process_group(process)
+                                diagnostics.update(_preview_diagnostics_from_files(stdout_path, stderr_path))
+                                raise self._error(
+                                    GenerationErrorCode.OUTPUT_TOO_LARGE,
+                                    stage="execution",
+                                    retryable=False,
+                                    fallbackable=True,
+                                    details={
+                                        **diagnostics,
+                                        "reason": "output_too_large",
+                                        "output_bytes": stdio_output_bytes,
+                                    },
+                                )
+                            if process.poll() is not None:
+                                break
+                            if time.monotonic() >= deadline:
+                                self._terminate_process_group(process)
+                                diagnostics.update(_preview_diagnostics_from_files(stdout_path, stderr_path))
+                                raise self._error(
+                                    GenerationErrorCode.TIMEOUT,
+                                    stage="execution",
+                                    retryable=True,
+                                    fallbackable=True,
+                                    details={
+                                        **diagnostics,
+                                        "reason": "timeout",
+                                        "timeout_seconds": timeout_seconds,
+                                    },
+                                )
+                            time.sleep(_PROCESS_POLL_INTERVAL_SECONDS)
 
-                    diagnostics.update(_preview_diagnostics(stdout, stderr))
-                    stdio_output_bytes = (
-                        len((stdout or "").encode("utf-8"))
-                        + len((stderr or "").encode("utf-8"))
-                    )
+                    stdio_output_bytes = _path_size(stdout_path) + _path_size(stderr_path)
                     if stdio_output_bytes > max_output_bytes:
+                        diagnostics.update(_preview_diagnostics_from_files(stdout_path, stderr_path))
                         raise self._error(
                             GenerationErrorCode.OUTPUT_TOO_LARGE,
                             stage="execution",
@@ -391,6 +429,9 @@ class LocalCliGenerationBackend(GenerationBackend):
                                 "output_bytes": stdio_output_bytes,
                             },
                         )
+                    stdout = _read_text_file(stdout_path)
+                    stderr = _read_text_file(stderr_path)
+                    diagnostics.update(_preview_diagnostics(stdout, stderr))
 
                     if process.returncode != 0:
                         raise self._non_zero_exit_error(
@@ -403,7 +444,7 @@ class LocalCliGenerationBackend(GenerationBackend):
                     if last_message_path is not None:
                         diagnostics["output_source"] = "output_last_message"
                         try:
-                            text = last_message_path.read_text(encoding="utf-8").strip()
+                            final_output_bytes = _path_size_required(last_message_path)
                         except OSError as exc:
                             raise self._error(
                                 GenerationErrorCode.EMPTY_OUTPUT,
@@ -416,6 +457,20 @@ class LocalCliGenerationBackend(GenerationBackend):
                                     "error": redact_diagnostic_text(str(exc), limit=200),
                                 },
                             ) from exc
+                        total_output_bytes = stdio_output_bytes + final_output_bytes
+                        if total_output_bytes > max_output_bytes:
+                            raise self._error(
+                                GenerationErrorCode.OUTPUT_TOO_LARGE,
+                                stage="execution",
+                                retryable=False,
+                                fallbackable=True,
+                                details={
+                                    **diagnostics,
+                                    "reason": "output_too_large",
+                                    "output_bytes": total_output_bytes,
+                                },
+                            )
+                        text = _read_text_file(last_message_path).strip()
                     else:
                         diagnostics["output_source"] = "stdout"
                         text = (stdout or "").strip()
@@ -432,7 +487,7 @@ class LocalCliGenerationBackend(GenerationBackend):
                     },
                 ) from exc
 
-        total_output_bytes = stdio_output_bytes + len(text.encode("utf-8"))
+        total_output_bytes = stdio_output_bytes + final_output_bytes
         if total_output_bytes > max_output_bytes:
             raise self._error(
                 GenerationErrorCode.OUTPUT_TOO_LARGE,
@@ -627,6 +682,10 @@ class LocalCliGenerationBackend(GenerationBackend):
                 os.killpg(process.pid, signal.SIGKILL)
             except Exception:
                 process.kill()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                return
 
 
 @contextmanager
@@ -679,3 +738,30 @@ def _preview_diagnostics(stdout: str, stderr: str) -> Dict[str, str]:
         "stdout_preview": redact_diagnostic_text(stdout or ""),
         "stderr_preview": redact_diagnostic_text(stderr or ""),
     }
+
+
+def _preview_diagnostics_from_files(stdout_path: Path, stderr_path: Path) -> Dict[str, str]:
+    return _preview_diagnostics(
+        _read_text_file(stdout_path, limit_bytes=_PREVIEW_LIMIT * 4),
+        _read_text_file(stderr_path, limit_bytes=_PREVIEW_LIMIT * 4),
+    )
+
+
+def _path_size(path: Path) -> int:
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0
+
+
+def _path_size_required(path: Path) -> int:
+    return path.stat().st_size
+
+
+def _read_text_file(path: Path, *, limit_bytes: Optional[int] = None) -> str:
+    try:
+        with path.open("rb") as handle:
+            raw = handle.read() if limit_bytes is None else handle.read(limit_bytes)
+    except OSError:
+        return ""
+    return raw.decode("utf-8", errors="replace")
