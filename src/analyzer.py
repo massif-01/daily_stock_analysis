@@ -3930,16 +3930,22 @@ class GeminiAnalyzer:
         if not stripped:
             raise ValueError("empty_response")
 
-        fenced_matches = list(re.finditer(r"```json\s*(.*?)```", text, flags=re.IGNORECASE | re.DOTALL))
-        all_fences = list(re.finditer(r"```.*?```", text, flags=re.DOTALL))
-        if len(fenced_matches) > 1 or len(all_fences) > 1:
+        fence_pattern = re.compile(
+            r"```[ \t]*(?P<lang>[A-Za-z0-9_-]*)[ \t]*\n?(?P<body>.*?)```",
+            flags=re.DOTALL,
+        )
+        fenced_matches = list(fence_pattern.finditer(text))
+        if len(fenced_matches) > 1:
             raise ValueError("ambiguous_json")
         if len(fenced_matches) == 1:
             match = fenced_matches[0]
             outside = (text[:match.start()] + text[match.end():]).strip()
             if outside:
                 raise ValueError("ambiguous_json")
-            json_str = match.group(1).strip()
+            fence_lang = (match.group("lang") or "").strip().lower()
+            if fence_lang not in {"", "json"}:
+                raise ValueError("ambiguous_json")
+            json_str = match.group("body").strip()
             data = self._load_analysis_json_candidate(json_str)
             return json_str, data
         if "```" in text:
@@ -4165,9 +4171,9 @@ class GeminiAnalyzer:
         as a model failure and triggers fallback to the next configured model.
 
         Raises:
-            ValueError: if no JSON object is found in *text*.
-            json.JSONDecodeError: if the extracted JSON cannot be parsed (after
-                :meth:`_fix_json_string` attempts repair).
+            GenerationError: if the response has no unique parser-compatible
+                JSON object, the selected JSON candidate cannot be parsed, or
+                the parsed object cannot satisfy the minimal parser contract.
         """
         try:
             _json_str, data = self._extract_analysis_json_object(text)

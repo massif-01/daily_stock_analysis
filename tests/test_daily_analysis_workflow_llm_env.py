@@ -133,6 +133,16 @@ def test_daily_analysis_maps_generation_backend_runtime_config() -> None:
         assert f"secrets.{key}" in env[key]
 
 
+def test_daily_analysis_generation_fallback_defaults_to_litellm() -> None:
+    env = _load_daily_analysis_env()
+    expression = env["GENERATION_FALLBACK_BACKEND"]
+
+    assert expression == (
+        "${{ vars.GENERATION_FALLBACK_BACKEND || "
+        "secrets.GENERATION_FALLBACK_BACKEND || 'litellm' }}"
+    )
+
+
 def test_env_example_includes_provider_template_channel_examples() -> None:
     templates = _extract_provider_templates()
     env_example = ENV_EXAMPLE_PATH.read_text(encoding="utf-8")

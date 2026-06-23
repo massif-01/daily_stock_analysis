@@ -443,6 +443,61 @@ raise SystemExit(2)
     assert exc_info.value.details["returncode"] == 2
 
 
+def test_non_zero_exit_maps_cli_contract_unsupported(tmp_path: Path) -> None:
+    preset = LocalCliPreset(
+        "codex_cli",
+        sys.executable,
+        (
+            _script(
+                tmp_path,
+                """
+import sys
+print("error: unexpected argument '--output-last-message' found", file=sys.stderr)
+raise SystemExit(2)
+""",
+            ),
+        ),
+        "Mock CLI",
+        output_last_message_arg="--output-last-message",
+    )
+    backend = LocalCliGenerationBackend(_config(), preset=preset)
+
+    with pytest.raises(GenerationError) as exc_info:
+        backend.generate("prompt", {})
+
+    assert exc_info.value.error_code is GenerationErrorCode.NON_ZERO_EXIT
+    assert exc_info.value.fallbackable is True
+    assert exc_info.value.details["reason"] == "cli_contract_unsupported"
+    assert exc_info.value.details["returncode"] == 2
+    assert "--output-last-message" in exc_info.value.details["stderr_preview"]
+
+
+def test_non_zero_exit_mentions_preset_arg_without_unknown_marker_stays_generic(tmp_path: Path) -> None:
+    preset = LocalCliPreset(
+        "codex_cli",
+        sys.executable,
+        (
+            _script(
+                tmp_path,
+                """
+import sys
+print("failed while writing --output-last-message file", file=sys.stderr)
+raise SystemExit(2)
+""",
+            ),
+        ),
+        "Mock CLI",
+        output_last_message_arg="--output-last-message",
+    )
+    backend = LocalCliGenerationBackend(_config(), preset=preset)
+
+    with pytest.raises(GenerationError) as exc_info:
+        backend.generate("prompt", {})
+
+    assert exc_info.value.error_code is GenerationErrorCode.NON_ZERO_EXIT
+    assert exc_info.value.details["reason"] == "non_zero_exit"
+
+
 def test_non_zero_exit_with_missing_last_message_still_maps_login_required(tmp_path: Path) -> None:
     preset = LocalCliPreset(
         "codex_cli",

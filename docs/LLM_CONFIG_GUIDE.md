@@ -40,9 +40,9 @@ AGENT_GENERATION_BACKEND=auto
 ```
 
 - `GENERATION_BACKEND=litellm|codex_cli`。`codex_cli` 是 generation backend，不是 LiteLLM provider；不要写 `LITELLM_MODEL=codex_cli/...`。
-- `GENERATION_FALLBACK_BACKEND` 未配置时默认 `litellm`；显式空值 `GENERATION_FALLBACK_BACKEND=` 表示禁用 backend-level fallback；primary 与 fallback 相同时解析为 no-op。
+- `GENERATION_FALLBACK_BACKEND` 未配置时默认 `litellm`；本地 `.env` 显式空值 `GENERATION_FALLBACK_BACKEND=` 表示禁用 backend-level fallback；primary 与 fallback 相同时解析为 no-op。仓库自带 GitHub Actions workflow 未配置该变量时会显式导出 `litellm`，如果要在 Actions 中禁用 backend fallback，请把 fallback 设为 primary backend，例如 `GENERATION_BACKEND=codex_cli` + `GENERATION_FALLBACK_BACKEND=codex_cli`。
 - `GENERATION_BACKEND=codex_cli` 且没有 Gemini/OpenAI/Anthropic/DeepSeek API Key 时，普通分析和大盘复盘仍会尝试本地 CLI backend；如果 `codex` executable 不存在，会返回结构化 `command_not_found`，不会报“API Key 未配置”。
-- 当前 `codex_cli` preset 使用 `codex exec --output-last-message <temp-file> -` 读取最终响应；stdout/stderr 只作为诊断预览，不参与主分析 JSON 解析。2026-06-23 对 `codex-cli 0.142.0` 的真机 probe 显示 stdout 会包含 session 元数据，而 `--output-last-message` 文件可返回干净的最终 JSON。
+- 当前 `codex_cli` preset 使用 `codex exec --output-last-message <temp-file> -` 读取最终响应；stdout/stderr 只作为诊断预览，不参与主分析 JSON 解析。官方依据见 [Codex non-interactive mode](https://developers.openai.com/codex/noninteractive) 与 [Codex CLI command line options](https://developers.openai.com/codex/cli/reference)。本仓库当前只验证 `codex-cli 0.142.0`，不声明更宽最低版本；如果 CLI 版本不支持 preset 参数，DSA 会返回结构化 `non_zero_exit` / `cli_contract_unsupported` 诊断，并在配置 backend fallback 时回退到 `litellm`。
 - `codex_cli` 不支持 streaming。请求 stream 时会自动降级为 non-stream，不会因此返回 `capability_unsupported`。
 - 本地 CLI usage 通常不可用，系统不会写入 fake 0 token、fake cost 或 fake cache telemetry。
 - 本地 CLI 执行上限有硬边界：`GENERATION_BACKEND_TIMEOUT_SECONDS` 最大 `3600`，`GENERATION_BACKEND_MAX_OUTPUT_BYTES` 最大 `33554432`，`GENERATION_BACKEND_MAX_CONCURRENCY` 最大 `16`，`LOCAL_CLI_BACKEND_MAX_CONCURRENCY` 最大 `4`。stdout/stderr 和 `--output-last-message` 最终响应合计超过输出上限时会返回结构化 `output_too_large`，不会整文件读入内存后再解析。

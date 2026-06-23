@@ -48,6 +48,24 @@ _PROCESS_POLL_INTERVAL_SECONDS = 0.05
 _URL_PATTERN = re.compile(r"https?://[^\s,;)\]}]+", re.IGNORECASE)
 _SHELL_META_CHARS = ("|", ">", "<", ";", "`")
 _SHELL_META_STRINGS = ("&&", "||", "$(")
+_PRESET_CONTRACT_ARGS = (
+    "--output-last-message",
+    "--skip-git-repo-check",
+    "--sandbox",
+    "--color",
+    "--ephemeral",
+)
+_UNSUPPORTED_ARG_MARKERS = (
+    "unknown option",
+    "unrecognized option",
+    "unknown argument",
+    "unrecognized argument",
+    "unexpected argument",
+    "unexpected option",
+    "no such option",
+    "unknown flag",
+    "unrecognized flag",
+)
 _SENSITIVE_URL_KEY_PARTS = {
     "access_token",
     "api_key",
@@ -244,6 +262,14 @@ def _has_sensitive_url_params(params_text: str) -> bool:
         if re.search(r"\b(sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{16,}|[A-Za-z0-9_-]{32,})\b", str(value or "")):
             return True
     return False
+
+
+def _is_cli_contract_unsupported(output_text: str) -> bool:
+    text = str(output_text or "").lower()
+    return (
+        any(arg in text for arg in _PRESET_CONTRACT_ARGS)
+        and any(marker in text for marker in _UNSUPPORTED_ARG_MARKERS)
+    )
 
 
 def resolve_local_cli_preset(preset_id: str) -> LocalCliPreset:
@@ -661,7 +687,9 @@ class LocalCliGenerationBackend(GenerationBackend):
         combined = f"{stdout}\n{stderr}".lower()
         code = GenerationErrorCode.NON_ZERO_EXIT
         reason = "non_zero_exit"
-        if "login" in combined or "authentication" in combined or "not authenticated" in combined:
+        if _is_cli_contract_unsupported(combined):
+            reason = "cli_contract_unsupported"
+        elif "login" in combined or "authentication" in combined or "not authenticated" in combined:
             code = GenerationErrorCode.LOGIN_REQUIRED
             reason = "login_required"
         elif "approval" in combined or "approve" in combined or "permission" in combined:
