@@ -44,7 +44,12 @@ from src.core.config_registry import (
     get_registered_field_keys,
 )
 from src.llm.errors import call_litellm_with_param_recovery
-from src.llm.backend_registry import CODEX_CLI_BACKEND_ID, LITELLM_BACKEND_ID
+from src.llm.backend_registry import (
+    AUTO_AGENT_BACKEND_ID,
+    CODEX_CLI_BACKEND_ID,
+    LITELLM_BACKEND_ID,
+    normalize_backend_id,
+)
 from src.llm.generation_params import apply_litellm_generation_params
 from src.notification_contracts import (
     FEISHU_APP_BOT_ENV_GROUP,
@@ -2656,9 +2661,10 @@ class SystemConfigService:
         return "", "尚未检测到主模型配置"
 
     def _build_setup_primary_llm_check(self, effective_map: Dict[str, str]) -> Dict[str, Any]:
-        generation_backend = (
-            effective_map.get("GENERATION_BACKEND") or LITELLM_BACKEND_ID
-        ).strip().lower()
+        generation_backend = normalize_backend_id(
+            effective_map.get("GENERATION_BACKEND"),
+            default=LITELLM_BACKEND_ID,
+        )
         if generation_backend == CODEX_CLI_BACKEND_ID:
             if shutil.which("codex"):
                 return self._setup_check(
@@ -2710,12 +2716,14 @@ class SystemConfigService:
         effective_map: Dict[str, str],
         primary_check: Dict[str, Any],
     ) -> Dict[str, Any]:
-        generation_backend = (
-            effective_map.get("GENERATION_BACKEND") or LITELLM_BACKEND_ID
-        ).strip().lower()
-        agent_backend = (
-            effective_map.get("AGENT_GENERATION_BACKEND") or "auto"
-        ).strip().lower() or "auto"
+        generation_backend = normalize_backend_id(
+            effective_map.get("GENERATION_BACKEND"),
+            default=LITELLM_BACKEND_ID,
+        )
+        agent_backend = normalize_backend_id(
+            effective_map.get("AGENT_GENERATION_BACKEND"),
+            default=AUTO_AGENT_BACKEND_ID,
+        )
         if agent_backend == CODEX_CLI_BACKEND_ID:
             return self._setup_check(
                 "llm_agent",

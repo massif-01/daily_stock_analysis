@@ -234,6 +234,73 @@ def test_output_too_large(tmp_path: Path) -> None:
     assert exc_info.value.error_code is GenerationErrorCode.OUTPUT_TOO_LARGE
 
 
+def test_output_stat_error_is_structured_and_kills_process_group(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    pid_file = tmp_path / "child-stat-error.pid"
+    backend = _backend(
+        tmp_path,
+        f"""
+import subprocess, sys, time
+child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+open({str(pid_file)!r}, "w", encoding="utf-8").write(str(child.pid))
+sys.stdout.write("started")
+sys.stdout.flush()
+time.sleep(30)
+""",
+    )
+
+    def _raise_stat_error(*_paths):
+        deadline = time.time() + 3
+        while not pid_file.exists() and time.time() < deadline:
+            time.sleep(0.01)
+        raise OSError("mock stat failure sk-secretsecretsecret")
+
+    monkeypatch.setattr(
+        "src.llm.local_cli_backend._combined_path_size_required",
+        _raise_stat_error,
+    )
+
+    with pytest.raises(GenerationError) as exc_info:
+        backend.generate("prompt", {})
+
+    assert exc_info.value.error_code is GenerationErrorCode.UNKNOWN_BACKEND_ERROR
+    assert exc_info.value.details["reason"] == "output_stat_failed"
+    assert "sk-secret" not in exc_info.value.details["error"]
+    child_pid = int(pid_file.read_text(encoding="utf-8"))
+    deadline = time.time() + 3
+    while time.time() < deadline:
+        try:
+            os.kill(child_pid, 0)
+        except OSError:
+            break
+        time.sleep(0.05)
+    else:
+        pytest.fail("child process was not terminated after output stat failure")
+
+
+def test_output_read_error_is_structured_unknown_not_empty(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    backend = _backend(tmp_path, "print('{\"sentiment_score\": 70}')")
+
+    def _raise_read_error(_path):
+        raise OSError("mock read failure")
+
+    monkeypatch.setattr(
+        "src.llm.local_cli_backend._read_text_file_required",
+        _raise_read_error,
+    )
+
+    with pytest.raises(GenerationError) as exc_info:
+        backend.generate("prompt", {})
+
+    assert exc_info.value.error_code is GenerationErrorCode.UNKNOWN_BACKEND_ERROR
+    assert exc_info.value.details["reason"] == "output_read_failed"
+
+
 def test_stdout_output_limit_is_not_double_counted(tmp_path: Path) -> None:
     backend = _backend(
         tmp_path,

@@ -183,6 +183,7 @@ def redact_diagnostic_text(text: str, *, home: Optional[str] = None, limit: int 
     redacted = re.sub(r"\b(sk-[A-Za-z0-9_-]{12,})\b", "<redacted-api-key>", redacted)
     redacted = re.sub(r"\b(AIza[A-Za-z0-9_-]{16,})\b", "<redacted-api-key>", redacted)
     redacted = re.sub(r"\b(gh[pousr]_[A-Za-z0-9_]{16,})\b", "<redacted-token>", redacted)
+    # Conservative by design: local CLI diagnostics may contain opaque long-lived credentials.
     redacted = re.sub(r"\b([A-Za-z0-9_-]{32,})\b", "<redacted-token>", redacted)
     if len(redacted) > limit:
         return redacted[:limit] + "...<truncated>"
@@ -382,7 +383,16 @@ class LocalCliGenerationBackend(GenerationBackend):
                         while True:
                             stdout_handle.flush()
                             stderr_handle.flush()
-                            stdio_output_bytes = _path_size(stdout_path) + _path_size(stderr_path)
+                            try:
+                                stdio_output_bytes = _combined_path_size_required(stdout_path, stderr_path)
+                            except OSError as exc:
+                                self._terminate_process_group(process)
+                                diagnostics.update(_preview_diagnostics_from_files(stdout_path, stderr_path))
+                                raise self._output_file_error(
+                                    diagnostics,
+                                    reason="output_stat_failed",
+                                    exc=exc,
+                                ) from exc
                             if stdio_output_bytes > max_output_bytes:
                                 self._terminate_process_group(process)
                                 diagnostics.update(_preview_diagnostics_from_files(stdout_path, stderr_path))
@@ -415,7 +425,15 @@ class LocalCliGenerationBackend(GenerationBackend):
                                 )
                             time.sleep(_PROCESS_POLL_INTERVAL_SECONDS)
 
-                    stdio_output_bytes = _path_size(stdout_path) + _path_size(stderr_path)
+                    try:
+                        stdio_output_bytes = _combined_path_size_required(stdout_path, stderr_path)
+                    except OSError as exc:
+                        diagnostics.update(_preview_diagnostics_from_files(stdout_path, stderr_path))
+                        raise self._output_file_error(
+                            diagnostics,
+                            reason="output_stat_failed",
+                            exc=exc,
+                        ) from exc
                     if stdio_output_bytes > max_output_bytes:
                         diagnostics.update(_preview_diagnostics_from_files(stdout_path, stderr_path))
                         raise self._error(
@@ -429,8 +447,16 @@ class LocalCliGenerationBackend(GenerationBackend):
                                 "output_bytes": stdio_output_bytes,
                             },
                         )
-                    stdout = _read_text_file(stdout_path)
-                    stderr = _read_text_file(stderr_path)
+                    try:
+                        stdout = _read_text_file_required(stdout_path)
+                        stderr = _read_text_file_required(stderr_path)
+                    except OSError as exc:
+                        diagnostics.update(_preview_diagnostics_from_files(stdout_path, stderr_path))
+                        raise self._output_file_error(
+                            diagnostics,
+                            reason="output_read_failed",
+                            exc=exc,
+                        ) from exc
                     diagnostics.update(_preview_diagnostics(stdout, stderr))
 
                     if process.returncode != 0:
@@ -445,7 +471,7 @@ class LocalCliGenerationBackend(GenerationBackend):
                         diagnostics["output_source"] = "output_last_message"
                         try:
                             final_output_bytes = _path_size_required(last_message_path)
-                        except OSError as exc:
+                        except FileNotFoundError as exc:
                             raise self._error(
                                 GenerationErrorCode.EMPTY_OUTPUT,
                                 stage="execution",
@@ -456,6 +482,12 @@ class LocalCliGenerationBackend(GenerationBackend):
                                     "reason": "missing_last_message_output",
                                     "error": redact_diagnostic_text(str(exc), limit=200),
                                 },
+                            ) from exc
+                        except OSError as exc:
+                            raise self._output_file_error(
+                                diagnostics,
+                                reason="output_stat_failed",
+                                exc=exc,
                             ) from exc
                         total_output_bytes = stdio_output_bytes + final_output_bytes
                         if total_output_bytes > max_output_bytes:
@@ -470,7 +502,14 @@ class LocalCliGenerationBackend(GenerationBackend):
                                     "output_bytes": total_output_bytes,
                                 },
                             )
-                        text = _read_text_file(last_message_path).strip()
+                        try:
+                            text = _read_text_file_required(last_message_path).strip()
+                        except OSError as exc:
+                            raise self._output_file_error(
+                                diagnostics,
+                                reason="output_read_failed",
+                                exc=exc,
+                            ) from exc
                     else:
                         diagnostics["output_source"] = "stdout"
                         text = (stdout or "").strip()
@@ -639,6 +678,25 @@ class LocalCliGenerationBackend(GenerationBackend):
             details={**diagnostics, "reason": reason, "returncode": returncode},
         )
 
+    def _output_file_error(
+        self,
+        diagnostics: Dict[str, Any],
+        *,
+        reason: str,
+        exc: OSError,
+    ) -> GenerationError:
+        return self._error(
+            GenerationErrorCode.UNKNOWN_BACKEND_ERROR,
+            stage="execution",
+            retryable=True,
+            fallbackable=True,
+            details={
+                **diagnostics,
+                "reason": reason,
+                "error": redact_diagnostic_text(str(exc), limit=200),
+            },
+        )
+
     def _error(
         self,
         error_code: GenerationErrorCode,
@@ -747,11 +805,8 @@ def _preview_diagnostics_from_files(stdout_path: Path, stderr_path: Path) -> Dic
     )
 
 
-def _path_size(path: Path) -> int:
-    try:
-        return path.stat().st_size
-    except OSError:
-        return 0
+def _combined_path_size_required(*paths: Path) -> int:
+    return sum(_path_size_required(path) for path in paths)
 
 
 def _path_size_required(path: Path) -> int:
@@ -764,4 +819,10 @@ def _read_text_file(path: Path, *, limit_bytes: Optional[int] = None) -> str:
             raw = handle.read() if limit_bytes is None else handle.read(limit_bytes)
     except OSError:
         return ""
+    return raw.decode("utf-8", errors="replace")
+
+
+def _read_text_file_required(path: Path) -> str:
+    with path.open("rb") as handle:
+        raw = handle.read()
     return raw.decode("utf-8", errors="replace")
