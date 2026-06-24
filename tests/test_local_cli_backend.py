@@ -86,18 +86,19 @@ print(json.dumps({"prompt": prompt, "cwd": os.getcwd(), "sentiment_score": 70}, 
 
 
 def test_codex_preset_reads_output_last_message_instead_of_stdout(tmp_path: Path) -> None:
+    final_payload = json.dumps({"prompt": "hello", "sentiment_score": 88, "source": "last_message"})
     script = _script(
         tmp_path,
-        """
+        f"""
 import json, sys
 args = sys.argv[1:]
 output_path = args[args.index("--output-last-message") + 1]
 prompt = sys.stdin.read()
 with open(output_path, "w", encoding="utf-8") as handle:
-    handle.write(json.dumps({"prompt": prompt, "sentiment_score": 88, "source": "last_message"}))
+    handle.write(json.dumps({{"prompt": prompt, "sentiment_score": 88, "source": "last_message"}}))
 print("OpenAI Codex v0.142.0")
 print("23,011")
-print('{"sentiment_score": 1, "source": "stdout_metadata"}')
+print({final_payload!r})
 """,
     )
     preset = LocalCliPreset(
@@ -119,6 +120,86 @@ print('{"sentiment_score": 1, "source": "stdout_metadata"}')
     }
     assert result.diagnostics["output_source"] == "output_last_message"
     assert "OpenAI Codex" in result.diagnostics["stdout_preview"]
+    assert "final-message omitted" in result.diagnostics["stdout_preview"]
+    assert "last_message" not in result.diagnostics["stdout_preview"]
+
+
+def test_output_last_message_stdout_duplicate_is_not_double_counted(tmp_path: Path) -> None:
+    final_payload = json.dumps(
+        {
+            "sentiment_score": 70,
+            "source": "last_message",
+            "details": "x" * 40,
+        }
+    )
+    script = _script(
+        tmp_path,
+        f"""
+import sys
+args = sys.argv[1:]
+output_path = args[args.index("--output-last-message") + 1]
+with open(output_path, "w", encoding="utf-8") as handle:
+    handle.write({final_payload!r})
+print({final_payload!r})
+""",
+    )
+    preset = LocalCliPreset(
+        "codex_cli",
+        sys.executable,
+        (script,),
+        "Mock CLI",
+        output_last_message_arg="--output-last-message",
+    )
+    backend = LocalCliGenerationBackend(
+        _config(generation_backend_max_output_bytes=len(final_payload.encode("utf-8")) + 2),
+        preset=preset,
+    )
+
+    result = backend.generate("prompt", {}, response_validator=lambda text: json.loads(text))
+
+    assert json.loads(result.text)["sentiment_score"] == 70
+    assert result.diagnostics["stdout_final_message_omitted"] is True
+    assert "last_message" not in result.diagnostics["stdout_preview"]
+
+
+def test_output_last_message_nonzero_exit_omits_duplicate_final_stdout_preview(
+    tmp_path: Path,
+) -> None:
+    final_payload = json.dumps(
+        {
+            "sentiment_score": 70,
+            "source": "secret_final_payload",
+        }
+    )
+    script = _script(
+        tmp_path,
+        f"""
+import sys
+args = sys.argv[1:]
+output_path = args[args.index("--output-last-message") + 1]
+with open(output_path, "w", encoding="utf-8") as handle:
+    handle.write({final_payload!r})
+print("diagnostic: before final")
+print({final_payload!r})
+sys.exit(2)
+""",
+    )
+    preset = LocalCliPreset(
+        "codex_cli",
+        sys.executable,
+        (script,),
+        "Mock CLI",
+        output_last_message_arg="--output-last-message",
+    )
+    backend = LocalCliGenerationBackend(_config(), preset=preset)
+
+    with pytest.raises(GenerationError) as exc_info:
+        backend.generate("prompt", {})
+
+    assert exc_info.value.error_code is GenerationErrorCode.NON_ZERO_EXIT
+    assert "diagnostic: before final" in exc_info.value.details["stdout_preview"]
+    assert "final-message omitted" in exc_info.value.details["stdout_preview"]
+    assert "secret_final_payload" not in exc_info.value.details["stdout_preview"]
 
 
 def test_stream_request_degrades_to_non_stream(tmp_path: Path) -> None:

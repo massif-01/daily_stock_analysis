@@ -193,7 +193,10 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
     },
     "GENERATION_BACKEND_MAX_OUTPUT_BYTES": {
         "title": "Generation Backend Max Output Bytes",
-        "description": "Maximum captured stdout/stderr and final-response bytes for one local CLI backend call.",
+        "description": (
+            "Maximum captured diagnostic stdout/stderr and final-response bytes "
+            "for one local CLI backend call."
+        ),
         "category": "ai_model",
         "data_type": "integer",
         "ui_control": "number",

@@ -198,7 +198,7 @@ Default schedule: Every weekday at **18:00 (Beijing Time)** automatic execution.
 | `GENERATION_BACKEND` | Generation backend for regular analysis. Supports `litellm` or explicit opt-in `codex_cli` (experimental/limited) | `litellm` | No |
 | `GENERATION_FALLBACK_BACKEND` | Backend-level fallback. Unset defaults to `litellm`; an empty value disables fallback; self fallback resolves to no-op | `litellm` | No |
 | `GENERATION_BACKEND_TIMEOUT_SECONDS` | Per-call generation backend timeout in seconds, mainly for local CLI backends; range `1-3600` | `300` | No |
-| `GENERATION_BACKEND_MAX_OUTPUT_BYTES` | Total captured stdout/stderr plus final-response size limit for one local CLI backend call; range `1-33554432` | `1048576` | No |
+| `GENERATION_BACKEND_MAX_OUTPUT_BYTES` | Total captured diagnostic stdout/stderr plus final-response size limit for one local CLI backend call; final responses duplicated to stdout by `--output-last-message` are not counted twice; range `1-33554432` | `1048576` | No |
 | `GENERATION_BACKEND_MAX_CONCURRENCY` | Global generation backend concurrency cap; range `1-16`, does not change LiteLLM Router or `MAX_WORKERS` behavior | `1` | No |
 | `LOCAL_CLI_BACKEND_MAX_CONCURRENCY` | Local CLI backend concurrency cap; range `1-4`, effective concurrency is the lower of this value and `GENERATION_BACKEND_MAX_CONCURRENCY` | `1` | No |
 | `AGENT_GENERATION_BACKEND` | Agent Chat generation backend. Web settings only expose `auto|litellm`; hand-written `codex_cli` returns an unsupported tool-calling diagnostic | `auto` | No |

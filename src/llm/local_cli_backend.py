@@ -44,6 +44,8 @@ MAX_GENERATION_BACKEND_MAX_CONCURRENCY = 16
 MAX_LOCAL_CLI_BACKEND_MAX_CONCURRENCY = 4
 
 _PREVIEW_LIMIT = 800
+_FINAL_MESSAGE_OMITTED_PREVIEW = "<final-message omitted from stdout preview>"
+_STDOUT_PREVIEW_OMITTED = "<stdout preview omitted because output-last-message was too large>"
 _PROCESS_POLL_INTERVAL_SECONDS = 0.05
 _URL_PATTERN = re.compile(r"https?://[^\s,;)\]}]+", re.IGNORECASE)
 _SHELL_META_CHARS = ("|", ">", "<", ";", "`")
@@ -501,21 +503,28 @@ class LocalCliGenerationBackend(GenerationBackend):
                             reason="output_read_failed",
                             exc=exc,
                         ) from exc
-                    diagnostics.update(_preview_diagnostics(stdout, stderr))
-
-                    if process.returncode != 0:
-                        raise self._non_zero_exit_error(
-                            process.returncode,
-                            stdout,
-                            stderr,
-                            diagnostics,
-                        )
-
                     if last_message_path is not None:
                         diagnostics["output_source"] = "output_last_message"
+                        if process.returncode != 0:
+                            preview_stdout, omitted = _stdout_preview_without_repeated_final_message(
+                                stdout,
+                                last_message_path,
+                                max_output_bytes,
+                            )
+                            diagnostics.update(_preview_diagnostics(preview_stdout, stderr))
+                            if omitted:
+                                diagnostics["stdout_final_message_omitted"] = True
+                            raise self._non_zero_exit_error(
+                                process.returncode,
+                                stdout,
+                                stderr,
+                                diagnostics,
+                            )
+
                         try:
                             final_output_bytes = _path_size_required(last_message_path)
                         except FileNotFoundError as exc:
+                            diagnostics.update(_preview_diagnostics(stdout, stderr))
                             raise self._error(
                                 GenerationErrorCode.EMPTY_OUTPUT,
                                 stage="execution",
@@ -528,13 +537,16 @@ class LocalCliGenerationBackend(GenerationBackend):
                                 },
                             ) from exc
                         except OSError as exc:
+                            diagnostics.update(_preview_diagnostics(stdout, stderr))
                             raise self._output_file_error(
                                 diagnostics,
                                 reason="output_stat_failed",
                                 exc=exc,
                             ) from exc
-                        total_output_bytes = stdio_output_bytes + final_output_bytes
-                        if total_output_bytes > max_output_bytes:
+                        if final_output_bytes > max_output_bytes:
+                            diagnostics.update(
+                                _preview_diagnostics(_STDOUT_PREVIEW_OMITTED, stderr)
+                            )
                             raise self._error(
                                 GenerationErrorCode.OUTPUT_TOO_LARGE,
                                 stage="execution",
@@ -543,18 +555,43 @@ class LocalCliGenerationBackend(GenerationBackend):
                                 details={
                                     **diagnostics,
                                     "reason": "output_too_large",
-                                    "output_bytes": total_output_bytes,
+                                    "output_bytes": final_output_bytes,
                                 },
                             )
                         try:
                             text = _read_text_file_required(last_message_path).strip()
                         except OSError as exc:
+                            diagnostics.update(_preview_diagnostics(stdout, stderr))
                             raise self._output_file_error(
                                 diagnostics,
                                 reason="output_read_failed",
                                 exc=exc,
                             ) from exc
+                        diagnostic_stdout, omitted = _strip_repeated_final_message_from_stdout(
+                            stdout,
+                            text,
+                            replacement="",
+                        )
+                        preview_stdout, _ = _strip_repeated_final_message_from_stdout(
+                            stdout,
+                            text,
+                            replacement=_FINAL_MESSAGE_OMITTED_PREVIEW,
+                        )
+                        stdio_output_bytes = _text_size_bytes(diagnostic_stdout) + _text_size_bytes(
+                            stderr
+                        )
+                        diagnostics.update(_preview_diagnostics(preview_stdout, stderr))
+                        if omitted:
+                            diagnostics["stdout_final_message_omitted"] = True
                     else:
+                        diagnostics.update(_preview_diagnostics(stdout, stderr))
+                        if process.returncode != 0:
+                            raise self._non_zero_exit_error(
+                                process.returncode,
+                                stdout,
+                                stderr,
+                                diagnostics,
+                            )
                         diagnostics["output_source"] = "stdout"
                         text = (stdout or "").strip()
             except OSError as exc:
@@ -894,6 +931,40 @@ def _preview_diagnostics_from_files(stdout_path: Path, stderr_path: Path) -> Dic
         _read_text_file(stdout_path, limit_bytes=_PREVIEW_LIMIT * 4),
         _read_text_file(stderr_path, limit_bytes=_PREVIEW_LIMIT * 4),
     )
+
+
+def _stdout_preview_without_repeated_final_message(
+    stdout: str,
+    final_message_path: Path,
+    max_output_bytes: int,
+) -> tuple[str, bool]:
+    try:
+        if _path_size_required(final_message_path) > max_output_bytes:
+            return _STDOUT_PREVIEW_OMITTED, True
+        final_message = _read_text_file_required(final_message_path).strip()
+    except OSError:
+        return stdout, False
+    return _strip_repeated_final_message_from_stdout(
+        stdout,
+        final_message,
+        replacement=_FINAL_MESSAGE_OMITTED_PREVIEW,
+    )
+
+
+def _strip_repeated_final_message_from_stdout(
+    stdout: str,
+    final_message: str,
+    *,
+    replacement: str,
+) -> tuple[str, bool]:
+    final = (final_message or "").strip()
+    if not final or final not in stdout:
+        return stdout, False
+    return stdout.replace(final, replacement), True
+
+
+def _text_size_bytes(text: str) -> int:
+    return len((text or "").encode("utf-8", errors="replace"))
 
 
 def _combined_path_size_required(*paths: Path) -> int:
