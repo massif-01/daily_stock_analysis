@@ -19,6 +19,7 @@ from tests.litellm_stub import ensure_litellm_stub
 ensure_litellm_stub()
 
 from src.analyzer import GeminiAnalyzer  # noqa: E402
+from src.llm import local_cli_backend as local_cli_backend_module  # noqa: E402
 from src.llm.generation_backend import GenerationError, GenerationErrorCode  # noqa: E402
 from src.llm.local_cli_backend import (  # noqa: E402
     LocalCliGenerationBackend,
@@ -611,6 +612,193 @@ def test_env_allowlist_and_denylist(monkeypatch) -> None:
     assert "OPENAI_API_KEY" not in child_env
     assert "WEBHOOK_TOKEN" not in child_env
     assert "AUTHORIZATION" not in child_env
+
+
+def test_env_allowlist_preserves_windows_runtime_context() -> None:
+    source = {
+        "Path": r"C:\Users\tester\AppData\Local\Microsoft\WindowsApps",
+        "SystemRoot": r"C:\Windows",
+        "WINDIR": r"C:\Windows",
+        "PATHEXT": ".COM;.EXE;.BAT;.CMD",
+        "ComSpec": r"C:\Windows\System32\cmd.exe",
+        "USERPROFILE": r"C:\Users\tester",
+        "APPDATA": r"C:\Users\tester\AppData\Roaming",
+        "LOCALAPPDATA": r"C:\Users\tester\AppData\Local",
+        "HOMEDRIVE": "C:",
+        "HOMEPATH": r"\Users\tester",
+        "OPENAI_API_KEY": "sk-secret",
+        "UNRELATED_VALUE": "leak",
+    }
+
+    child_env = build_local_cli_env(source)
+
+    for key in (
+        "Path",
+        "SystemRoot",
+        "WINDIR",
+        "PATHEXT",
+        "ComSpec",
+        "USERPROFILE",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "HOMEDRIVE",
+        "HOMEPATH",
+    ):
+        assert child_env[key] == source[key]
+    assert "OPENAI_API_KEY" not in child_env
+    assert "UNRELATED_VALUE" not in child_env
+
+
+def test_generate_passes_allowlisted_windows_context_to_child_env(monkeypatch, tmp_path: Path) -> None:
+    windows_context = {
+        "SystemRoot": r"C:\Windows",
+        "WINDIR": r"C:\Windows",
+        "PATHEXT": ".COM;.EXE;.BAT;.CMD",
+        "ComSpec": r"C:\Windows\System32\cmd.exe",
+        "USERPROFILE": r"C:\Users\tester",
+        "APPDATA": r"C:\Users\tester\AppData\Roaming",
+        "LOCALAPPDATA": r"C:\Users\tester\AppData\Local",
+        "HOMEDRIVE": "C:",
+        "HOMEPATH": r"\Users\tester",
+    }
+    for key, value in windows_context.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-secret")
+    monkeypatch.setenv("UNRELATED_VALUE", "leak")
+
+    backend = _backend(
+        tmp_path,
+        """
+import json, os
+keys = [
+    "SystemRoot",
+    "WINDIR",
+    "PATHEXT",
+    "ComSpec",
+    "USERPROFILE",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "OPENAI_API_KEY",
+    "UNRELATED_VALUE",
+]
+print(json.dumps({key: os.environ.get(key) for key in keys}, ensure_ascii=False))
+""",
+    )
+
+    result = backend.generate("prompt", {})
+    payload = json.loads(result.text)
+
+    for key, value in windows_context.items():
+        assert payload[key] == value
+    assert payload["OPENAI_API_KEY"] is None
+    assert payload["UNRELATED_VALUE"] is None
+
+
+def test_popen_session_kwargs_are_platform_specific(monkeypatch) -> None:
+    monkeypatch.setattr(local_cli_backend_module.os, "name", "nt")
+    monkeypatch.setattr(
+        local_cli_backend_module.subprocess,
+        "CREATE_NEW_PROCESS_GROUP",
+        0x00000200,
+        raising=False,
+    )
+
+    assert local_cli_backend_module._popen_session_kwargs() == {
+        "creationflags": 0x00000200,
+    }
+
+    monkeypatch.setattr(local_cli_backend_module.os, "name", "posix")
+
+    assert local_cli_backend_module._popen_session_kwargs() == {
+        "start_new_session": True,
+    }
+
+
+def test_windows_terminate_process_group_prefers_ctrl_break(monkeypatch) -> None:
+    class FakeProcess:
+        pid = 1234
+
+        def __init__(self) -> None:
+            self.signals = []
+            self.terminated = False
+            self.killed = False
+
+        def poll(self):
+            return None
+
+        def send_signal(self, sig):
+            self.signals.append(sig)
+
+        def wait(self, timeout=None):
+            return 0
+
+        def terminate(self):
+            self.terminated = True
+
+        def kill(self):
+            self.killed = True
+
+    monkeypatch.setattr(local_cli_backend_module.os, "name", "nt")
+    monkeypatch.setattr(
+        local_cli_backend_module.signal,
+        "CTRL_BREAK_EVENT",
+        1,
+        raising=False,
+    )
+    process = FakeProcess()
+
+    LocalCliGenerationBackend._terminate_process_group(process)
+
+    assert process.signals == [1]
+    assert process.terminated is False
+    assert process.killed is False
+
+
+def test_windows_terminate_process_group_falls_back_to_kill(monkeypatch) -> None:
+    class FakeProcess:
+        pid = 1234
+
+        def __init__(self) -> None:
+            self.signals = []
+            self.terminated = False
+            self.killed = False
+            self._wait_calls = 0
+
+        def poll(self):
+            return None
+
+        def send_signal(self, sig):
+            self.signals.append(sig)
+            raise OSError("no console")
+
+        def wait(self, timeout=None):
+            self._wait_calls += 1
+            if self._wait_calls == 1:
+                raise subprocess.TimeoutExpired(cmd="mock", timeout=timeout)
+            return 0
+
+        def terminate(self):
+            self.terminated = True
+
+        def kill(self):
+            self.killed = True
+
+    monkeypatch.setattr(local_cli_backend_module.os, "name", "nt")
+    monkeypatch.setattr(
+        local_cli_backend_module.signal,
+        "CTRL_BREAK_EVENT",
+        1,
+        raising=False,
+    )
+    process = FakeProcess()
+
+    LocalCliGenerationBackend._terminate_process_group(process)
+
+    assert process.signals == [1]
+    assert process.terminated is True
+    assert process.killed is True
 
 
 def test_diagnostics_redaction_and_truncation() -> None:

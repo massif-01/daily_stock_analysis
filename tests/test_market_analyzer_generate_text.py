@@ -205,7 +205,8 @@ class TestAnalyzerGenerateText:
             assert analyzer.is_available() is True
 
     def test_analyze_uses_litellm_fallback_when_codex_cli_config_error_is_fallbackable(self):
-        from src.llm.generation_backend import GenerationError, GenerationErrorCode
+        from src.llm.generation_backend import GenerationBackend, GenerationError, GenerationErrorCode
+        from src.llm.local_cli_backend import LocalCliGenerationBackend
 
         analyzer = self._make_analyzer()
         analyzer._litellm_available = True
@@ -230,10 +231,10 @@ class TestAnalyzerGenerateText:
             provider="codex_cli",
             details={"reason": "executable_not_found"},
         )
-        primary_backend = MagicMock()
+        primary_backend = MagicMock(spec=LocalCliGenerationBackend)
         primary_backend.get_config_error.return_value = codex_error
         primary_backend.generate.side_effect = codex_error
-        fallback_backend = MagicMock()
+        fallback_backend = MagicMock(spec=GenerationBackend)
         fallback_backend.generate.return_value = SimpleNamespace(
             text=json.dumps({
                 "sentiment_score": 70,
@@ -264,6 +265,85 @@ class TestAnalyzerGenerateText:
         assert result.analysis_summary == "fallback ok"
         primary_backend.generate.assert_called()
         fallback_backend.generate.assert_called()
+
+    def test_analyze_preserves_litellm_text_fallback_after_codex_cli_primary_failure(self):
+        from src.analyzer import AnalysisResult, _AllModelsFailedError
+        from src.llm.generation_backend import GenerationBackend, GenerationError, GenerationErrorCode
+
+        analyzer = self._make_analyzer()
+        analyzer._litellm_available = True
+        analyzer._config_override = SimpleNamespace(
+            generation_backend="codex_cli",
+            generation_fallback_backend="litellm",
+            litellm_model="provider/primary-model",
+            litellm_fallback_models=["provider/fallback-model"],
+            llm_model_list=[],
+            report_language="zh",
+            gemini_request_delay=0,
+            llm_temperature=0.7,
+            report_integrity_enabled=False,
+            report_integrity_retry=0,
+        )
+        primary_error = GenerationError(
+            error_code=GenerationErrorCode.COMMAND_NOT_FOUND,
+            stage="configuration",
+            retryable=False,
+            fallbackable=True,
+            backend="codex_cli",
+            provider="codex_cli",
+            details={"reason": "executable_not_found"},
+        )
+        all_models_error = _AllModelsFailedError(
+            "all fallback models returned invalid JSON",
+            last_response_text="这不是 JSON，而是 fallback 模型返回的纯文本分析",
+            last_model="provider/fallback-model",
+            last_usage={"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
+        )
+        text_fallback_result = AnalysisResult(
+            code="600519",
+            name="贵州茅台",
+            sentiment_score=50,
+            trend_prediction="震荡",
+            operation_advice="持有",
+            analysis_summary="纯文本兜底摘要",
+            success=False,
+            error_message="LLM response is not valid JSON; analysis result will not be persisted",
+        )
+        primary_backend = MagicMock(spec=GenerationBackend)
+        primary_backend.generate.side_effect = primary_error
+        fallback_backend = MagicMock(spec=GenerationBackend)
+        fallback_backend.generate.side_effect = all_models_error
+
+        def _backend_for(backend_id):
+            return primary_backend if backend_id == "codex_cli" else fallback_backend
+
+        with patch.object(analyzer, "get_generation_backend_config_error", return_value=None), \
+             patch.object(analyzer, "is_available", return_value=True), \
+             patch.object(analyzer, "_get_generation_backend", side_effect=_backend_for), \
+             patch.object(analyzer, "_get_analysis_system_prompt", return_value="system"), \
+             patch.object(analyzer, "_get_skill_prompt_sections", return_value=(None, None, True)), \
+             patch.object(analyzer, "_format_prompt", return_value="prompt"), \
+             patch.object(analyzer, "_parse_response", return_value=text_fallback_result) as mock_parse, \
+             patch.object(analyzer, "_build_market_snapshot", return_value={}), \
+             patch("src.analyzer.persist_llm_usage") as mock_persist:
+            result = analyzer.analyze({"code": "600519", "stock_name": "贵州茅台"})
+
+        assert result.analysis_summary == "纯文本兜底摘要"
+        assert result.raw_response == "这不是 JSON，而是 fallback 模型返回的纯文本分析"
+        assert result.model_used == "provider/fallback-model"
+        mock_parse.assert_called_once_with(
+            "这不是 JSON，而是 fallback 模型返回的纯文本分析",
+            "600519",
+            "贵州茅台",
+        )
+        mock_persist.assert_called_once_with(
+            {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
+            "provider/fallback-model",
+            call_type="analysis",
+            stock_code="600519",
+        )
+        primary_backend.generate.assert_called_once()
+        fallback_backend.generate.assert_called_once()
 
     def test_analyze_does_not_persist_unavailable_usage(self):
         analyzer = self._make_analyzer()
@@ -337,8 +417,10 @@ class TestAnalyzerGenerateText:
             assert gen_cfg["temperature"] == 0.7
 
     def test_call_litellm_wrapper_uses_generation_backend_tuple_contract(self):
+        from src.llm.generation_backend import GenerationBackend
+
         analyzer = self._make_analyzer()
-        backend = MagicMock()
+        backend = MagicMock(spec=GenerationBackend)
         backend.generate.return_value = SimpleNamespace(
             text="backend response",
             model="gemini/gemini-3.1-pro-preview",
@@ -371,7 +453,7 @@ class TestAnalyzerGenerateText:
         assert backend.generate.call_args.kwargs["audit_context"] == {"call_type": "analysis"}
 
     def test_call_litellm_wraps_fallback_generation_error_with_primary_context(self):
-        from src.llm.generation_backend import GenerationError, GenerationErrorCode
+        from src.llm.generation_backend import GenerationBackend, GenerationError, GenerationErrorCode
 
         analyzer = self._make_analyzer()
         analyzer._config_override.generation_backend = "codex_cli"
@@ -394,9 +476,9 @@ class TestAnalyzerGenerateText:
             provider="gemini",
             details={"reason": "invalid_json"},
         )
-        primary_backend = MagicMock()
+        primary_backend = MagicMock(spec=GenerationBackend)
         primary_backend.generate.side_effect = primary_error
-        fallback_backend = MagicMock()
+        fallback_backend = MagicMock(spec=GenerationBackend)
         fallback_backend.generate.side_effect = fallback_error
 
         def _backend_for(backend_id):

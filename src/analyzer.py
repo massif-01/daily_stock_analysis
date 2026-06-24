@@ -2683,6 +2683,8 @@ class GeminiAnalyzer:
                     response_validator=response_validator,
                     audit_context=audit_context,
                 )
+            except _AllModelsFailedError:
+                raise
             except GenerationError as fallback_exc:
                 raise GenerationError(
                     error_code=fallback_exc.error_code,

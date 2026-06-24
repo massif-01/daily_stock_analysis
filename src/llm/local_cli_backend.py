@@ -82,6 +82,8 @@ _SENSITIVE_URL_KEY_PARTS = {
 _SAFE_ENV_EXACT = {
     "PATH",
     "HOME",
+    "HOMEDRIVE",
+    "HOMEPATH",
     "XDG_CONFIG_HOME",
     "XDG_CACHE_HOME",
     "XDG_DATA_HOME",
@@ -94,6 +96,13 @@ _SAFE_ENV_EXACT = {
     "NO_COLOR",
     "TERM",
     "CODEX_HOME",
+    "SYSTEMROOT",
+    "WINDIR",
+    "PATHEXT",
+    "COMSPEC",
+    "USERPROFILE",
+    "APPDATA",
+    "LOCALAPPDATA",
 }
 _SAFE_ENV_PREFIXES = ("CODEX_CLI_",)
 _SENSITIVE_ENV_PATTERNS = (
@@ -184,6 +193,15 @@ def build_local_cli_env(source: Optional[Mapping[str, str]] = None) -> Dict[str,
             continue
         child_env[key] = value
     return child_env
+
+
+def _popen_session_kwargs() -> Dict[str, Any]:
+    """Return platform-specific subprocess isolation kwargs."""
+
+    if os.name == "nt":
+        creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        return {"creationflags": creationflags} if creationflags else {}
+    return {"start_new_session": True}
 
 
 def redact_diagnostic_text(text: str, *, home: Optional[str] = None, limit: int = _PREVIEW_LIMIT) -> str:
@@ -402,7 +420,7 @@ class LocalCliGenerationBackend(GenerationBackend):
                             env=child_env,
                             text=True,
                             shell=False,
-                            start_new_session=True,
+                            **_popen_session_kwargs(),
                         )
                         self._emit_progress(stream_progress_callback, 1)
                         deadline = time.monotonic() + timeout_seconds
@@ -756,6 +774,31 @@ class LocalCliGenerationBackend(GenerationBackend):
     @staticmethod
     def _terminate_process_group(process: subprocess.Popen[str]) -> None:
         if process.poll() is not None:
+            return
+        if os.name == "nt":
+            ctrl_break = getattr(signal, "CTRL_BREAK_EVENT", None)
+            if ctrl_break is not None:
+                try:
+                    process.send_signal(ctrl_break)
+                    process.wait(timeout=2)
+                    return
+                except Exception:
+                    pass
+            try:
+                process.terminate()
+            except Exception:
+                return
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                try:
+                    process.kill()
+                except Exception:
+                    return
+                try:
+                    process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    return
             return
         try:
             os.killpg(process.pid, signal.SIGTERM)
