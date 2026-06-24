@@ -558,6 +558,18 @@ class LocalCliGenerationBackend(GenerationBackend):
                         diagnostics["output_source"] = "stdout"
                         text = (stdout or "").strip()
             except OSError as exc:
+                if _is_command_not_executable_error(exc):
+                    raise self._error(
+                        GenerationErrorCode.COMMAND_NOT_EXECUTABLE,
+                        stage="execution",
+                        retryable=False,
+                        fallbackable=True,
+                        details={
+                            **diagnostics,
+                            "reason": "process_start_failed",
+                            "error": redact_diagnostic_text(str(exc), limit=200),
+                        },
+                    ) from exc
                 raise self._error(
                     GenerationErrorCode.UNKNOWN_BACKEND_ERROR,
                     stage="execution",
@@ -838,6 +850,14 @@ def _positive_int(value: Any, default: int) -> int:
     except (TypeError, ValueError):
         return default
     return parsed if parsed > 0 else default
+
+
+def _is_command_not_executable_error(exc: OSError) -> bool:
+    if not isinstance(exc, OSError):
+        return False
+    if os.name == "nt" and getattr(exc, "winerror", None) == 193:
+        return True
+    return False
 
 
 def _is_sensitive_env_name(upper_name: str) -> bool:

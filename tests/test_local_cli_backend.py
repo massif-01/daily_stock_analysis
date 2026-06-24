@@ -846,30 +846,21 @@ def test_effective_local_cli_concurrency_uses_minimum() -> None:
 
 
 def test_local_cli_concurrency_limit_serializes_subprocesses(tmp_path: Path) -> None:
-    lock_path = tmp_path / "counter.lock"
-    active_path = tmp_path / "active.txt"
-    max_path = tmp_path / "max.txt"
+    events_dir = tmp_path / "events"
+    events_dir.mkdir()
     backend = _backend(
         tmp_path,
         f"""
-import fcntl, json, pathlib, time
-lock_path = pathlib.Path({str(lock_path)!r})
-active_path = pathlib.Path({str(active_path)!r})
-max_path = pathlib.Path({str(max_path)!r})
-with lock_path.open("w", encoding="utf-8") as lock:
-    fcntl.flock(lock, fcntl.LOCK_EX)
-    active = int(active_path.read_text(encoding="utf-8") or "0") if active_path.exists() else 0
-    active += 1
-    active_path.write_text(str(active), encoding="utf-8")
-    current_max = int(max_path.read_text(encoding="utf-8") or "0") if max_path.exists() else 0
-    max_path.write_text(str(max(current_max, active)), encoding="utf-8")
-    fcntl.flock(lock, fcntl.LOCK_UN)
+import json, os, pathlib, time
+events_dir = pathlib.Path({str(events_dir)!r})
+pid = os.getpid()
+start = time.time()
 time.sleep(0.25)
-with lock_path.open("w", encoding="utf-8") as lock:
-    fcntl.flock(lock, fcntl.LOCK_EX)
-    active = int(active_path.read_text(encoding="utf-8") or "0") - 1
-    active_path.write_text(str(active), encoding="utf-8")
-    fcntl.flock(lock, fcntl.LOCK_UN)
+end = time.time()
+(events_dir / f"{{pid}}.json").write_text(
+    json.dumps({{"start": start, "end": end}}),
+    encoding="utf-8",
+)
 print(json.dumps({{"sentiment_score": 60}}))
 """,
         generation_backend_max_concurrency=4,
@@ -880,4 +871,10 @@ print(json.dumps({{"sentiment_score": 60}}))
         results = list(executor.map(lambda _: backend.generate("prompt", {}), range(2)))
 
     assert [json.loads(result.text)["sentiment_score"] for result in results] == [60, 60]
-    assert max_path.read_text(encoding="utf-8") == "1"
+    intervals = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in events_dir.glob("*.json")
+    ]
+    assert len(intervals) == 2
+    intervals.sort(key=lambda item: item["start"])
+    assert intervals[1]["start"] >= intervals[0]["end"]
