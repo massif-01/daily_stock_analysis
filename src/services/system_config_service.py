@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
-from urllib.parse import urljoin, urlparse, urlunparse
+from urllib.parse import urlparse, urlunparse
 
 import requests
 
@@ -49,6 +49,16 @@ from src.llm.backend_registry import (
     CODEX_CLI_BACKEND_ID,
     LITELLM_BACKEND_ID,
     normalize_backend_id,
+)
+from src.llm.hermes import (
+    HERMES_DEFAULT_BASE_URL,
+    HERMES_DEFAULT_MODEL,
+    hermes_issue_for_field,
+    hermes_model_issues_for_field,
+    hermes_protocol_issue_for_field,
+    is_hermes_channel_name,
+    normalize_hermes_models,
+    normalize_hermes_protocol,
 )
 from src.llm.generation_params import apply_litellm_generation_params
 from src.notification_contracts import (
@@ -107,6 +117,7 @@ class SystemConfigService:
     _WEB_SETTINGS_LLM_CHANNEL_SUPPORT_KEY_RE = re.compile(
         r"^LLM_([A-Z0-9_]+)_(PROTOCOL|BASE_URL|API_KEY|API_KEYS|MODELS|EXTRA_HEADERS|ENABLED)$"
     )
+    _HERMES_API_KEY_RE = re.compile(r"^LLM_HERMES_API_KEYS?$")
     _LLM_CAPABILITY_PROBE_IMAGE = (
         "data:image/png;base64,"
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
@@ -390,7 +401,7 @@ class SystemConfigService:
             field_schema = schema_by_key[key]
             display_value = self._resolve_display_value(raw_value, field_schema, raw_value_exists)
             is_masked = False
-            if key in self._SERVER_MASKED_CONFIG_KEYS and display_value:
+            if self._should_server_mask_config_key(key) and display_value:
                 display_value = mask_token
                 is_masked = True
             item: Dict[str, Any] = {
@@ -417,6 +428,12 @@ class SystemConfigService:
             "items": items,
             "updated_at": self._manager.get_updated_at(),
         }
+
+    @classmethod
+    def _should_server_mask_config_key(cls, key: str) -> bool:
+        """Server-mask secrets whose raw values should not be echoed by Settings API."""
+        key_upper = str(key or "").upper()
+        return key_upper in cls._SERVER_MASKED_CONFIG_KEYS or bool(cls._HERMES_API_KEY_RE.match(key_upper))
 
     def validate(self, items: Sequence[Dict[str, str]], mask_token: str = "******") -> Dict[str, Any]:
         """Validate submitted items without writing to `.env`."""
@@ -592,10 +609,16 @@ class SystemConfigService:
         api_key: str,
         models: Sequence[str] = (),
         timeout_seconds: float = 20.0,
-        ) -> Dict[str, Any]:
+    ) -> Dict[str, Any]:
         """Discover available models from an OpenAI-compatible `/models` endpoint."""
         channel_name = name.strip() or "channel"
         existing_models = [str(m).strip() for m in models if str(m).strip()]
+        if is_hermes_channel_name(channel_name) and not existing_models:
+            existing_models = [HERMES_DEFAULT_MODEL]
+        if is_hermes_channel_name(channel_name) and not protocol.strip():
+            protocol = "openai"
+        if is_hermes_channel_name(channel_name) and not base_url.strip():
+            base_url = HERMES_DEFAULT_BASE_URL
         validation_issues, resolved_protocol = self._validate_llm_channel_connection(
             channel_name=channel_name,
             protocol_value=protocol,
@@ -605,7 +628,7 @@ class SystemConfigService:
             field_prefix="discover_channel",
             require_base_url=True,
         )
-        if not resolved_protocol and existing_models:
+        if not resolved_protocol and existing_models and not is_hermes_channel_name(channel_name):
             resolved_protocol = resolve_llm_channel_protocol(
                 protocol,
                 base_url=base_url,
@@ -795,6 +818,12 @@ class SystemConfigService:
         requested_capabilities = self._normalize_llm_capability_checks(capability_checks)
         raw_models = [str(model).strip() for model in models if str(model).strip()]
         channel_name = name.strip() or "channel"
+        if is_hermes_channel_name(channel_name) and not raw_models:
+            raw_models = [HERMES_DEFAULT_MODEL]
+        if is_hermes_channel_name(channel_name) and not protocol.strip():
+            protocol = "openai"
+        if is_hermes_channel_name(channel_name) and not base_url.strip():
+            base_url = HERMES_DEFAULT_BASE_URL
         validation_issues = self._validate_llm_channel_definition(
             channel_name=channel_name,
             protocol_value=protocol,
@@ -829,8 +858,12 @@ class SystemConfigService:
                 ),
             )
 
-        resolved_protocol = resolve_llm_channel_protocol(protocol, base_url=base_url, models=raw_models, channel_name=name)
-        resolved_models = [normalize_llm_channel_model(model, resolved_protocol, base_url) for model in raw_models]
+        if is_hermes_channel_name(channel_name):
+            resolved_protocol, _protocol_issue = normalize_hermes_protocol(protocol)
+            resolved_models, _model_issues = normalize_hermes_models(raw_models)
+        else:
+            resolved_protocol = resolve_llm_channel_protocol(protocol, base_url=base_url, models=raw_models, channel_name=name)
+            resolved_models = [normalize_llm_channel_model(model, resolved_protocol, base_url) for model in raw_models]
         resolved_model = resolved_models[0]
         api_keys = [segment.strip() for segment in api_key.split(",") if segment.strip()]
         selected_api_key = api_keys[0] if api_keys else ""
@@ -2374,15 +2407,17 @@ class SystemConfigService:
                 safe_segments.append(segment)
                 continue
             lower = segment.lower()
-            looks_secret = (
-                (source_key_upper == "NTFY_URL" and index == last_non_empty_index)
-                or
-                len(segment) >= 16
-                or lower.startswith("bot")
-                or "token" in lower
-                or "sendkey" in lower
-                or "secret" in lower
-                or re.search(r"[a-zA-Z].*\d|\d.*[a-zA-Z]", segment) is not None and len(segment) >= 10
+            is_ntfy_secret_path = source_key_upper == "NTFY_URL" and index == last_non_empty_index
+            looks_secret = any(
+                (
+                    is_ntfy_secret_path,
+                    len(segment) >= 16,
+                    lower.startswith("bot"),
+                    "token" in lower,
+                    "sendkey" in lower,
+                    "secret" in lower,
+                    re.search(r"[a-zA-Z].*\d|\d.*[a-zA-Z]", segment) is not None and len(segment) >= 10,
+                )
             )
             if looks_secret:
                 safe_segments.append("***")
@@ -2548,12 +2583,19 @@ class SystemConfigService:
         return cls._provider_has_setup_credentials(provider, effective_map)
 
     @classmethod
-    def _collect_setup_channel_models(cls, effective_map: Dict[str, str]) -> List[str]:
+    def _collect_setup_channel_models(
+        cls,
+        effective_map: Dict[str, str],
+        *,
+        include_hermes: bool = True,
+    ) -> List[str]:
         models: List[str] = []
         seen: Set[str] = set()
         for raw_name in cls._split_csv(effective_map.get("LLM_CHANNELS") or ""):
             name = raw_name.strip()
             if not name:
+                continue
+            if is_hermes_channel_name(name) and not include_hermes:
                 continue
             prefix = f"LLM_{name.upper()}"
             enabled_raw = effective_map.get(f"{prefix}_ENABLED")
@@ -2564,12 +2606,16 @@ class SystemConfigService:
                 continue
 
             base_url = (effective_map.get(f"{prefix}_BASE_URL") or "").strip()
+            if is_hermes_channel_name(name) and not base_url:
+                base_url = HERMES_DEFAULT_BASE_URL
             if name.lower() == "anspire" and not base_url:
                 base_url = (
                     effective_map.get("ANSPIRE_LLM_BASE_URL")
                     or ANSPIRE_LLM_BASE_URL_DEFAULT
                 ).strip()
             protocol = (effective_map.get(f"{prefix}_PROTOCOL") or "").strip()
+            if is_hermes_channel_name(name) and not protocol:
+                protocol = "openai"
             if name.lower() == "anspire" and not protocol:
                 protocol = "openai"
             api_key = (
@@ -2579,6 +2625,8 @@ class SystemConfigService:
             if name.lower() == "anspire" and not api_key:
                 api_key = (effective_map.get("ANSPIRE_API_KEYS") or "").strip()
             raw_models = cls._split_csv(effective_map.get(f"{prefix}_MODELS") or "")
+            if is_hermes_channel_name(name) and not raw_models:
+                raw_models = [HERMES_DEFAULT_MODEL]
             if name.lower() == "anspire" and not raw_models:
                 raw_models = [
                     (
@@ -2592,17 +2640,106 @@ class SystemConfigService:
                 models=raw_models,
                 channel_name=name,
             )
+            if is_hermes_channel_name(name):
+                protocol_issue = hermes_protocol_issue_for_field(protocol, f"{prefix}_PROTOCOL")
+                model_issues = hermes_model_issues_for_field(raw_models, f"{prefix}_MODELS")
+                if protocol_issue or model_issues:
+                    continue
+                resolved_protocol, _ = normalize_hermes_protocol(protocol)
             if not raw_models or not resolved_protocol:
+                continue
+            if is_hermes_channel_name(name) and hermes_issue_for_field(base_url, f"{prefix}_BASE_URL"):
                 continue
             if not api_key and not channel_allows_empty_api_key(resolved_protocol, base_url):
                 continue
 
-            for raw_model in raw_models:
-                normalized_model = normalize_llm_channel_model(raw_model, resolved_protocol, base_url)
+            if is_hermes_channel_name(name):
+                normalized_channel_models, _ = normalize_hermes_models(raw_models)
+            else:
+                normalized_channel_models = [
+                    normalize_llm_channel_model(raw_model, resolved_protocol, base_url)
+                    for raw_model in raw_models
+                ]
+            for normalized_model in normalized_channel_models:
                 if normalized_model and normalized_model not in seen:
                     seen.add(normalized_model)
                     models.append(normalized_model)
         return models
+
+    @classmethod
+    def _collect_setup_hermes_models(cls, effective_map: Dict[str, str]) -> Set[str]:
+        models: Set[str] = set()
+        for raw_name in cls._split_csv(effective_map.get("LLM_CHANNELS") or ""):
+            name = raw_name.strip()
+            if not is_hermes_channel_name(name):
+                continue
+            enabled_raw = effective_map.get(f"LLM_{name.upper()}_ENABLED")
+            if not parse_env_bool(enabled_raw, default=True):
+                continue
+            raw_models = cls._split_csv(effective_map.get(f"LLM_{name.upper()}_MODELS") or "")
+            if not raw_models:
+                raw_models = [HERMES_DEFAULT_MODEL]
+            normalized_models, _issues = normalize_hermes_models(raw_models)
+            models.update(normalized_model for normalized_model in normalized_models if normalized_model)
+        return models
+
+    @classmethod
+    def _has_setup_blocking_hermes_channel_issue(cls, effective_map: Dict[str, str]) -> bool:
+        if cls._uses_litellm_yaml(effective_map):
+            return False
+        for raw_name in cls._split_csv(effective_map.get("LLM_CHANNELS") or ""):
+            name = raw_name.strip()
+            if not is_hermes_channel_name(name):
+                continue
+            enabled_raw = effective_map.get(f"LLM_{name.upper()}_ENABLED")
+            if not parse_env_bool(enabled_raw, default=True):
+                continue
+            base_url = (
+                effective_map.get(f"LLM_{name.upper()}_BASE_URL")
+                or HERMES_DEFAULT_BASE_URL
+            ).strip()
+            if hermes_issue_for_field(base_url, f"LLM_{name.upper()}_BASE_URL"):
+                return True
+            protocol = (effective_map.get(f"LLM_{name.upper()}_PROTOCOL") or "").strip()
+            if hermes_protocol_issue_for_field(protocol, f"LLM_{name.upper()}_PROTOCOL"):
+                return True
+            raw_models = cls._split_csv(effective_map.get(f"LLM_{name.upper()}_MODELS") or "")
+            if hermes_model_issues_for_field(raw_models or [HERMES_DEFAULT_MODEL], f"LLM_{name.upper()}_MODELS"):
+                return True
+        return False
+
+    @classmethod
+    def _is_setup_hermes_only_route(cls, effective_map: Dict[str, str], model: str) -> bool:
+        candidate = (model or "").strip()
+        if not candidate:
+            return False
+        candidates = {candidate}
+        if "/" not in candidate:
+            candidates.add(f"openai/{candidate}")
+
+        non_hermes_models = set(cls._collect_yaml_models_from_map(effective_map))
+        non_hermes_models.update(
+            cls._collect_setup_channel_models(effective_map, include_hermes=False)
+        )
+        if candidates & non_hermes_models:
+            return False
+
+        return bool(candidates & cls._collect_setup_hermes_models(effective_map))
+
+    @classmethod
+    def _is_setup_invalid_hermes_only_route(cls, effective_map: Dict[str, str], model: str) -> bool:
+        candidate = (model or "").strip()
+        if not candidate:
+            return False
+        candidates = {candidate}
+        if "/" not in candidate:
+            candidates.add(f"openai/{candidate}")
+
+        available_models = set(cls._collect_yaml_models_from_map(effective_map))
+        available_models.update(cls._collect_setup_channel_models(effective_map))
+        if candidates & available_models:
+            return False
+        return bool(candidates & cls._collect_setup_hermes_models(effective_map))
 
     @classmethod
     def _infer_setup_legacy_primary_model(cls, effective_map: Dict[str, str]) -> str:
@@ -2636,8 +2773,13 @@ class SystemConfigService:
         explicit_model = (effective_map.get("LITELLM_MODEL") or "").strip()
         yaml_models = self._collect_yaml_models_from_map(effective_map)
         channel_models = self._collect_setup_channel_models(effective_map)
+        has_blocking_channel_issue = self._has_setup_blocking_hermes_channel_issue(effective_map)
 
         if explicit_model:
+            if self._is_setup_invalid_hermes_only_route(effective_map, explicit_model):
+                return "", "Hermes 渠道仅允许 127.0.0.1、localhost 或 ::1 loopback URL"
+            if has_blocking_channel_issue and not yaml_models and not channel_models:
+                return "", "Hermes 渠道仅允许 127.0.0.1、localhost 或 ::1 loopback URL"
             if _uses_direct_env_provider(explicit_model):
                 return explicit_model, "explicit"
             has_direct_source = self._has_setup_runtime_source_for_model(explicit_model, effective_map)
@@ -2654,8 +2796,13 @@ class SystemConfigService:
         if channel_models:
             return channel_models[0], "channel"
 
+        if has_blocking_channel_issue:
+            return "", "Hermes 渠道仅允许 127.0.0.1、localhost 或 ::1 loopback URL"
+
         legacy_model = self._infer_setup_legacy_primary_model(effective_map)
         if legacy_model:
+            if self._is_setup_invalid_hermes_only_route(effective_map, legacy_model):
+                return "", "Hermes 渠道仅允许 127.0.0.1、localhost 或 ::1 loopback URL"
             return legacy_model, "legacy"
 
         return "", "尚未检测到主模型配置"
@@ -2737,6 +2884,17 @@ class SystemConfigService:
 
         agent_model_raw = (effective_map.get("AGENT_LITELLM_MODEL") or "").strip()
         if not agent_model_raw:
+            primary_model, _primary_source = self._resolve_setup_primary_model(effective_map)
+            if primary_model and self._is_setup_hermes_only_route(effective_map, primary_model):
+                return self._setup_check(
+                    "llm_agent",
+                    "Agent 渠道",
+                    "agent",
+                    True,
+                    "needs_action",
+                    "Hermes P0 仅作为 generation channel，不会被 Agent 自动继承。",
+                    "如需使用 Ask-Stock Agent，请配置独立的 LiteLLM Agent 模型。",
+                )
             if generation_backend == CODEX_CLI_BACKEND_ID:
                 litellm_model, _source = self._resolve_setup_primary_model(effective_map)
                 if litellm_model:
@@ -2791,6 +2949,16 @@ class SystemConfigService:
             or self._collect_setup_channel_models(effective_map)
         )
         agent_model = normalize_agent_litellm_model(agent_model_raw, configured_models=configured_models)
+        if self._is_setup_hermes_only_route(effective_map, agent_model):
+            return self._setup_check(
+                "llm_agent",
+                "Agent 渠道",
+                "agent",
+                True,
+                "needs_action",
+                "Hermes P0 尚未验证 DSA tool result roundtrip，不能作为 Agent 工具调用模型。",
+                "请改用已验证的 LiteLLM Agent 模型。",
+            )
         if _uses_direct_env_provider(agent_model):
             return self._setup_check(
                 "llm_agent",
@@ -3547,11 +3715,10 @@ class SystemConfigService:
     def _validate_llm_channel_map(effective_map: Dict[str, str], updated_keys: Set[str]) -> List[Dict[str, Any]]:
         """Validate channel-style LLM configuration stored in `.env`."""
         issues: List[Dict[str, Any]] = []
-        if SystemConfigService._uses_litellm_yaml(effective_map):
-            return issues
-
         raw_channels = (effective_map.get("LLM_CHANNELS") or "").strip()
         if not raw_channels:
+            return issues
+        if SystemConfigService._uses_litellm_yaml(effective_map):
             return issues
 
         normalized_names: List[str] = []
@@ -3593,9 +3760,13 @@ class SystemConfigService:
         for name in normalized_names:
             prefix = f"LLM_{name.upper()}"
             protocol_value = (effective_map.get(f"{prefix}_PROTOCOL") or "").strip()
+            if is_hermes_channel_name(name) and not protocol_value:
+                protocol_value = "openai"
             if name.lower() == "anspire" and not protocol_value:
                 protocol_value = "openai"
             base_url_value = (effective_map.get(f"{prefix}_BASE_URL") or "").strip()
+            if is_hermes_channel_name(name) and not base_url_value:
+                base_url_value = HERMES_DEFAULT_BASE_URL
             if name.lower() == "anspire" and not base_url_value:
                 base_url_value = (
                     effective_map.get("ANSPIRE_LLM_BASE_URL")
@@ -3612,6 +3783,8 @@ class SystemConfigService:
                 for model in (effective_map.get(f"{prefix}_MODELS") or "").split(",")
                 if model.strip()
             ]
+            if is_hermes_channel_name(name) and not models_value:
+                models_value = [HERMES_DEFAULT_MODEL]
             if name.lower() == "anspire" and not models_value:
                 models_value = [
                     (
@@ -3666,7 +3839,13 @@ class SystemConfigService:
                     effective_map.get("ANSPIRE_LLM_BASE_URL")
                     or ANSPIRE_LLM_BASE_URL_DEFAULT
                 ).strip()
+            if is_hermes_channel_name(name) and not base_url_value:
+                base_url_value = HERMES_DEFAULT_BASE_URL
+            if is_hermes_channel_name(name) and hermes_issue_for_field(base_url_value, f"{prefix}_BASE_URL"):
+                continue
             protocol_value = (effective_map.get(f"{prefix}_PROTOCOL") or "").strip()
+            if is_hermes_channel_name(name) and not protocol_value:
+                protocol_value = "openai"
             if name.lower() == "anspire" and not protocol_value:
                 protocol_value = "openai"
             raw_models = [
@@ -3674,6 +3853,8 @@ class SystemConfigService:
                 for model in (effective_map.get(f"{prefix}_MODELS") or "").split(",")
                 if model.strip()
             ]
+            if is_hermes_channel_name(name) and not raw_models:
+                raw_models = [HERMES_DEFAULT_MODEL]
             if name.lower() == "anspire" and not raw_models:
                 raw_models = [
                     (
@@ -3681,9 +3862,24 @@ class SystemConfigService:
                         or ANSPIRE_LLM_MODEL_DEFAULT
                     ).strip()
                 ]
-            resolved_protocol = resolve_llm_channel_protocol(protocol_value, base_url=base_url_value, models=raw_models, channel_name=name)
-            for model in raw_models:
-                normalized_model = normalize_llm_channel_model(model, resolved_protocol, base_url_value)
+            if is_hermes_channel_name(name):
+                if hermes_protocol_issue_for_field(protocol_value, f"{prefix}_PROTOCOL"):
+                    continue
+                normalized_channel_models, model_issues = normalize_hermes_models(raw_models)
+                if model_issues:
+                    continue
+            else:
+                resolved_protocol = resolve_llm_channel_protocol(
+                    protocol_value,
+                    base_url=base_url_value,
+                    models=raw_models,
+                    channel_name=name,
+                )
+                normalized_channel_models = [
+                    normalize_llm_channel_model(model, resolved_protocol, base_url_value)
+                    for model in raw_models
+                ]
+            for normalized_model in normalized_channel_models:
                 if not normalized_model or normalized_model in seen:
                     continue
                 seen.add(normalized_model)
@@ -3948,6 +4144,8 @@ class SystemConfigService:
         """Validate one normalized LLM channel definition."""
         if not require_complete:
             return []
+        if is_hermes_channel_name(channel_name) and not model_values:
+            model_values = [HERMES_DEFAULT_MODEL]
 
         issues, resolved_protocol = SystemConfigService._validate_llm_channel_connection(
             channel_name=channel_name,
@@ -3959,6 +4157,9 @@ class SystemConfigService:
             require_base_url=False,
         )
         models_key = f"{field_prefix}_MODELS" if field_prefix != "test_channel" else "models"
+
+        if is_hermes_channel_name(channel_name):
+            return issues
 
         if not model_values:
             issues.append(
@@ -4006,9 +4207,33 @@ class SystemConfigService:
         protocol_key = f"{field_prefix}_PROTOCOL" if field_prefix != "test_channel" else "protocol"
         base_url_key = f"{field_prefix}_BASE_URL" if field_prefix != "test_channel" else "base_url"
         api_key_key = f"{field_prefix}_API_KEY" if field_prefix != "test_channel" else "api_key"
+        models_key = f"{field_prefix}_MODELS" if field_prefix != "test_channel" else "models"
+        is_hermes_channel = is_hermes_channel_name(channel_name)
+        hermes_protocol = ""
+        if is_hermes_channel:
+            if not base_url_value.strip():
+                base_url_value = HERMES_DEFAULT_BASE_URL
+            if not model_values:
+                model_values = [HERMES_DEFAULT_MODEL]
+            hermes_protocol, protocol_issue = normalize_hermes_protocol(protocol_value)
+            if protocol_issue:
+                issues.append(
+                    {
+                        "key": protocol_key,
+                        "code": protocol_issue["code"],
+                        "message": protocol_issue["message"],
+                        "severity": "error",
+                        "expected": protocol_issue["expected"],
+                        "actual": protocol_issue["actual"],
+                    }
+                )
+            issues.extend(hermes_model_issues_for_field(list(model_values), models_key))
 
-        normalized_protocol = canonicalize_llm_channel_protocol(protocol_value)
-        if normalized_protocol and normalized_protocol not in SUPPORTED_LLM_CHANNEL_PROTOCOLS:
+        if is_hermes_channel:
+            normalized_protocol = hermes_protocol if not protocol_issue else ""
+        else:
+            normalized_protocol = canonicalize_llm_channel_protocol(protocol_value)
+        if not is_hermes_channel and normalized_protocol and normalized_protocol not in SUPPORTED_LLM_CHANNEL_PROTOCOLS:
             issues.append(
                 {
                     "key": protocol_key,
@@ -4022,6 +4247,13 @@ class SystemConfigService:
                     "actual": protocol_value,
                 }
             )
+
+        if is_hermes_channel:
+            hermes_issue = hermes_issue_for_field(base_url_value, base_url_key)
+            if hermes_issue:
+                issues.append(hermes_issue)
+            if any(issue["severity"] == "error" for issue in issues):
+                return issues, normalized_protocol if normalized_protocol in SUPPORTED_LLM_CHANNEL_PROTOCOLS else ""
 
         if require_base_url and not base_url_value.strip():
             issues.append(

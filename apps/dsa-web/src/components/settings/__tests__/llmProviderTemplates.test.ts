@@ -25,6 +25,7 @@ describe('llmProviderTemplates', () => {
       'anthropic',
       'openai',
       'ollama',
+      'hermes',
       'custom',
     ]);
   });
@@ -79,6 +80,8 @@ describe('llmProviderTemplates', () => {
 
   it('keeps focused config hints on providers with common setup pitfalls', () => {
     expect(LLM_PROVIDER_TEMPLATE_BY_ID.ollama.configHint).toContain('Ollama 服务');
+    expect(LLM_PROVIDER_TEMPLATE_BY_ID.hermes.configHint).toContain('local runtime 不等于离线模型');
+    expect(LLM_PROVIDER_TEMPLATE_BY_ID.hermes.configHint).toContain('Agent tool roundtrip');
     expect(LLM_PROVIDER_TEMPLATE_BY_ID.siliconflow.configHint).toContain('API Key');
     expect(LLM_PROVIDER_TEMPLATE_BY_ID.openrouter.configHint).toContain('API Key');
     expect(LLM_PROVIDER_TEMPLATE_BY_ID.openai.configHint).toBeUndefined();

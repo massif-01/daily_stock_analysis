@@ -5,9 +5,17 @@ import asyncio
 import os
 import unittest
 from types import SimpleNamespace
+from typing import Any, Dict
 from unittest.mock import MagicMock, patch
 
 from api.v1.endpoints import agent
+from tests.litellm_stub import ensure_litellm_stub
+
+ensure_litellm_stub()
+
+import litellm
+
+from src.agent.llm_adapter import LLMToolAdapter
 from src.config import Config
 from src.services.agent_model_service import list_agent_model_deployments
 
@@ -84,6 +92,57 @@ class AgentModelsApiTestCase(unittest.TestCase):
         deployments = list_agent_model_deployments(config)
 
         self.assertEqual(deployments[0]["source"], "llm_channels")
+        self.assertEqual(deployments[0]["api_base"], "https://api.example.com/v1")
+
+    def test_models_endpoint_does_not_expose_hermes_channel_deployment(self) -> None:
+        config = _build_config(
+            litellm_model="openai/hermes-agent",
+            llm_channels=[{"name": "hermes", "models": ["openai/hermes-agent"]}],
+            llm_models_source="llm_channels",
+            llm_model_list=[
+                {
+                    "model_name": "openai/hermes-agent",
+                    "litellm_params": {
+                        "model": "openai/hermes-agent",
+                        "api_base": "http://127.0.0.1:8642/v1",
+                    },
+                    "model_info": {"dsa_channel": "hermes"},
+                }
+            ],
+        )
+
+        self.assertEqual(list_agent_model_deployments(config), [])
+
+    def test_models_endpoint_keeps_same_named_non_hermes_deployment(self) -> None:
+        config = _build_config(
+            litellm_model="openai/gpt-4o-mini",
+            agent_litellm_model="openai/gpt-4o-mini",
+            llm_declared_hermes_models=["openai/gpt-4o-mini"],
+            llm_models_source="llm_channels",
+            llm_model_list=[
+                {
+                    "model_name": "openai/gpt-4o-mini",
+                    "litellm_params": {
+                        "model": "openai/gpt-4o-mini",
+                        "api_base": "http://127.0.0.1:8642/v1",
+                    },
+                    "model_info": {"dsa_channel": "hermes"},
+                },
+                {
+                    "model_name": "openai/gpt-4o-mini",
+                    "litellm_params": {
+                        "model": "openai/gpt-4o-mini",
+                        "api_key": "shadow-key",
+                        "api_base": "https://api.example.com/v1",
+                    },
+                },
+            ],
+        )
+
+        deployments = list_agent_model_deployments(config)
+
+        self.assertEqual(len(deployments), 1)
+        self.assertEqual(deployments[0]["model"], "openai/gpt-4o-mini")
         self.assertEqual(deployments[0]["api_base"], "https://api.example.com/v1")
 
     def test_models_endpoint_uses_agent_primary_override_for_primary_marker(self) -> None:
@@ -251,6 +310,262 @@ class AgentModelsEndpointTestCase(unittest.TestCase):
         self.assertTrue(payload["models"][1]["is_fallback"])
         self.assertNotIn("api_key", str(payload))
 
+    def test_endpoint_does_not_expose_hermes_as_agent_runtime_model(self) -> None:
+        config = _build_config(
+            litellm_model="openai/hermes-agent",
+            llm_channels=[{"name": "hermes", "models": ["openai/hermes-agent"]}],
+            llm_models_source="llm_channels",
+            llm_model_list=[
+                {
+                    "model_name": "openai/hermes-agent",
+                    "litellm_params": {
+                        "model": "openai/hermes-agent",
+                        "api_base": "http://127.0.0.1:8642/v1",
+                    },
+                    "model_info": {"dsa_channel": "hermes"},
+                }
+            ],
+        )
+
+        with patch("api.v1.endpoints.agent.get_config", return_value=config):
+            payload = asyncio.run(agent.get_agent_models()).model_dump()
+
+        self.assertEqual(payload["models"], [])
+
+
+class AgentHermesBoundaryTestCase(unittest.TestCase):
+    def test_explicit_hermes_agent_model_returns_unsupported_tool_calling(self) -> None:
+        config = _build_config(
+            litellm_model="openai/hermes-agent",
+            agent_litellm_model="openai/hermes-agent",
+            llm_channels=[{"name": "hermes", "models": ["openai/hermes-agent"]}],
+            llm_declared_hermes_models=["openai/hermes-agent"],
+            llm_models_source="llm_channels",
+            llm_model_list=[
+                {
+                    "model_name": "openai/hermes-agent",
+                    "litellm_params": {
+                        "model": "openai/hermes-agent",
+                        "api_base": "http://127.0.0.1:8642/v1",
+                    },
+                    "model_info": {"dsa_channel": "hermes"},
+                }
+            ],
+        )
+
+        adapter = LLMToolAdapter(config=config)
+        response = adapter.call_completion(
+            [{"role": "user", "content": "Ping"}],
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_stock_quote",
+                        "description": "Test tool",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                }
+            ],
+        )
+
+        self.assertEqual(response.provider, "error")
+        self.assertIn("unsupported_tool_calling", response.content or "")
+        self.assertFalse(adapter.is_available)
+
+    def test_explicit_bare_hermes_agent_model_returns_unsupported_tool_calling(self) -> None:
+        config = _build_config(
+            litellm_model="openai/hermes-agent",
+            agent_litellm_model="hermes-agent",
+            llm_declared_hermes_models=["openai/hermes-agent"],
+        )
+
+        adapter = LLMToolAdapter(config=config)
+        response = adapter.call_completion([{"role": "user", "content": "Ping"}])
+
+        self.assertEqual(response.provider, "error")
+        self.assertIn("unsupported_tool_calling", response.content or "")
+        self.assertFalse(adapter.is_available)
+
+    def test_invalid_hermes_agent_model_returns_unsupported_without_openai_fallback(self) -> None:
+        config = _build_config(
+            litellm_model="openai/hermes-agent",
+            agent_litellm_model="openai/hermes-agent",
+            openai_api_keys=["sk-openai"],
+            openai_api_key="sk-openai",
+            llm_channel_names=["hermes"],
+            llm_channel_issues=[
+                {
+                    "key": "LLM_HERMES_BASE_URL",
+                    "code": "hermes_loopback_only",
+                    "message": "Hermes channel only allows loopback client URLs in Phase 3 P0",
+                    "severity": "error",
+                }
+            ],
+            llm_declared_hermes_models=["openai/hermes-agent"],
+            llm_channels=[],
+            llm_model_list=[],
+        )
+
+        with patch.object(litellm, "completion") as completion_mock:
+            adapter = LLMToolAdapter(config=config)
+            response = adapter.call_completion([{"role": "user", "content": "Ping"}])
+
+        completion_mock.assert_not_called()
+        self.assertEqual(response.provider, "error")
+        self.assertIn("unsupported_tool_calling", response.content or "")
+        self.assertFalse(adapter.is_available)
+
+    def test_hermes_fallback_does_not_block_verified_agent_primary_model(self) -> None:
+        config = _build_config(
+            litellm_model="openai/hermes-agent",
+            agent_litellm_model="gemini/gemini-2.5-flash",
+            litellm_fallback_models=["openai/hermes-agent"],
+            llm_channels=[
+                {"name": "hermes", "models": ["openai/hermes-agent"]},
+                {"name": "gemini", "models": ["gemini/gemini-2.5-flash"]},
+            ],
+            llm_declared_hermes_models=["openai/hermes-agent"],
+            llm_models_source="llm_channels",
+            llm_model_list=[
+                {
+                    "model_name": "openai/hermes-agent",
+                    "litellm_params": {
+                        "model": "openai/hermes-agent",
+                        "api_base": "http://127.0.0.1:8642/v1",
+                    },
+                    "model_info": {"dsa_channel": "hermes"},
+                },
+                {
+                    "model_name": "gemini/gemini-2.5-flash",
+                    "litellm_params": {
+                        "model": "gemini/gemini-2.5-flash",
+                        "api_key": "secret-gemini",
+                    },
+                },
+            ],
+        )
+
+        class FakeRouter:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def completion(self, **kwargs):
+                return litellm.completion(**kwargs)
+
+        response_payload = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="OK", tool_calls=[]))],
+            usage=None,
+        )
+        with (
+            patch("src.agent.llm_adapter.Router", FakeRouter),
+            patch.object(litellm, "completion", return_value=response_payload) as completion_mock,
+        ):
+            adapter = LLMToolAdapter(config=config)
+            response = adapter.call_completion([{"role": "user", "content": "Ping"}])
+
+        completion_mock.assert_called_once()
+        self.assertEqual(completion_mock.call_args.kwargs["model"], "gemini/gemini-2.5-flash")
+        self.assertNotEqual(response.provider, "error")
+        self.assertEqual(response.model, "gemini/gemini-2.5-flash")
+        deployments = list_agent_model_deployments(config)
+        self.assertEqual([item["model"] for item in deployments], ["gemini/gemini-2.5-flash"])
+
+    def test_non_hermes_agent_primary_with_legacy_key_stays_visible_without_channel_deployment(self) -> None:
+        config = _build_config(
+            litellm_model="openai/hermes-agent",
+            agent_litellm_model="gemini/gemini-2.5-flash",
+            gemini_api_keys=["secret-gemini"],
+            llm_models_source="llm_channels",
+            llm_model_list=[
+                {
+                    "model_name": "openai/hermes-agent",
+                    "litellm_params": {
+                        "model": "openai/hermes-agent",
+                        "api_base": "http://127.0.0.1:8642/v1",
+                    },
+                    "model_info": {"dsa_channel": "hermes"},
+                }
+            ],
+            llm_declared_hermes_models=["openai/hermes-agent"],
+        )
+
+        adapter = LLMToolAdapter(config=config)
+        deployments = list_agent_model_deployments(config)
+
+        self.assertTrue(adapter.is_available)
+        self.assertIsNone(adapter._backend_error)
+        self.assertEqual([item["model"] for item in deployments], ["gemini/gemini-2.5-flash"])
+        self.assertTrue(deployments[0]["is_primary"])
+
+    def test_hermes_generation_primary_does_not_expose_generation_fallback_as_agent_model(self) -> None:
+        config = _build_config(
+            litellm_model="openai/hermes-agent",
+            agent_litellm_model="",
+            litellm_fallback_models=["cohere/command-r-plus"],
+            llm_models_source="llm_channels",
+            llm_model_list=[
+                {
+                    "model_name": "openai/hermes-agent",
+                    "litellm_params": {
+                        "model": "openai/hermes-agent",
+                        "api_base": "http://127.0.0.1:8642/v1",
+                    },
+                    "model_info": {"dsa_channel": "hermes"},
+                }
+            ],
+            llm_declared_hermes_models=["openai/hermes-agent"],
+        )
+
+        adapter = LLMToolAdapter(config=config)
+
+        self.assertFalse(adapter.is_available)
+        self.assertEqual(list_agent_model_deployments(config), [])
+
+    def test_same_named_non_hermes_deployment_keeps_agent_router_available(self) -> None:
+        config = _build_config(
+            litellm_model="openai/gpt-4o-mini",
+            agent_litellm_model="openai/gpt-4o-mini",
+            llm_declared_hermes_models=["openai/gpt-4o-mini"],
+            llm_models_source="llm_channels",
+            llm_model_list=[
+                {
+                    "model_name": "openai/gpt-4o-mini",
+                    "litellm_params": {
+                        "model": "openai/gpt-4o-mini",
+                        "api_base": "http://127.0.0.1:8642/v1",
+                    },
+                    "model_info": {"dsa_channel": "hermes"},
+                },
+                {
+                    "model_name": "openai/gpt-4o-mini",
+                    "litellm_params": {
+                        "model": "openai/gpt-4o-mini",
+                        "api_key": "shadow-key",
+                        "api_base": "https://api.example.com/v1",
+                    },
+                },
+            ],
+        )
+        captured: Dict[str, Any] = {}
+
+        class FakeRouter:
+            def __init__(self, *args, **kwargs):
+                captured["model_list"] = kwargs.get("model_list")
+
+            def completion(self, **kwargs):
+                return litellm.completion(**kwargs)
+
+        with patch("src.agent.llm_adapter.Router", FakeRouter):
+            adapter = LLMToolAdapter(config=config)
+
+        self.assertIsNone(adapter._backend_error)
+        self.assertTrue(adapter.is_available)
+        self.assertEqual(len(captured["model_list"]), 1)
+        self.assertEqual(
+            captured["model_list"][0]["litellm_params"]["api_base"],
+            "https://api.example.com/v1",
+        )
+
 
 class AgentSkillsEndpointTestCase(unittest.TestCase):
     def test_skills_endpoint_returns_skill_metadata_shape(self) -> None:
@@ -348,6 +663,8 @@ class AgentSkillsEndpointTestCase(unittest.TestCase):
         executor.chat.assert_called_once()
         self.assertEqual(executor.chat.call_args.kwargs["context"]["skills"], [])
         self.assertEqual(payload["content"], "ok")
+
+
 class AgentModelsSourceDetectionTestCase(unittest.TestCase):
     @patch("src.config.setup_env")
     @patch.object(Config, "_parse_litellm_yaml", return_value=[])

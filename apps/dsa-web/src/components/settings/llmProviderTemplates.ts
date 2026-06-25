@@ -200,6 +200,22 @@ export const LLM_PROVIDER_TEMPLATES: LLMProviderTemplate[] = [
     officialSources: [{ label: 'Ollama API', url: 'https://github.com/ollama/ollama/blob/main/docs/api.md' }],
   },
   {
+    channelId: 'hermes',
+    label: 'Hermes（本地 HTTP）',
+    protocol: 'openai',
+    baseUrl: 'http://127.0.0.1:8642/v1',
+    placeholderModels: 'hermes-agent',
+    capabilities: ['local-runtime', 'openai-compatible'],
+    configHint:
+      '仅支持 127.0.0.1 / localhost / ::1 loopback。local runtime 不等于离线模型；tools 检测只是 tool-call shape diagnostic，不代表 Agent tool roundtrip。',
+    officialSources: [
+      {
+        label: 'LiteLLM OpenAI-compatible',
+        url: 'https://docs.litellm.ai/docs/providers/openai_compatible',
+      },
+    ],
+  },
+  {
     channelId: 'custom',
     label: '自定义渠道',
     protocol: 'openai',

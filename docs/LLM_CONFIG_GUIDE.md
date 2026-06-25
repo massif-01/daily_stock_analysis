@@ -218,6 +218,21 @@ LLM_OLLAMA_MODELS=qwen3:8b,llama3.2
 LITELLM_MODEL=ollama/qwen3:8b
 ```
 
+### 示例：Hermes 本地 HTTP（OpenAI-compatible，仅主生成）
+
+```env
+LLM_CHANNELS=hermes
+LLM_HERMES_PROTOCOL=openai
+LLM_HERMES_BASE_URL=http://127.0.0.1:8642/v1
+LLM_HERMES_API_KEY=
+LLM_HERMES_MODELS=hermes-agent
+LITELLM_MODEL=openai/hermes-agent
+```
+
+Hermes P0 只作为 OpenAI-compatible `LLM_CHANNELS` preset 进入普通分析与 `StockAnalyzer.generate_text()` 路径，不新增 `hermes_http` backend，也不接 runs、sessions、SSE、approval 或 session header。URL 必须是 `127.0.0.1`、`localhost` 或 `::1` loopback；`0.0.0.0`、私网、公网、metadata/link-local、带 userinfo 或 malformed URL 会作为结构化错误返回，不会静默降级到 legacy provider。Hermes local runtime 不等于离线模型；DSA 不读取 Hermes 本地凭证文件，实际数据处理边界以本机 Hermes runtime 及其上游模型为准。
+
+Web 设置页的 JSON / tools / stream / vision 能力检测会发起真实请求，但 tools 检测只验证 OpenAI tool-call shape，不代表 DSA tool result roundtrip。没有真实 roundtrip smoke 前，Hermes 不会作为 AgentBackend 或 Ask-Stock Agent tools-ready 模型暴露；如果需要 Agent，请单独配置已验证的 `AGENT_LITELLM_MODEL`。回滚方式是删除 `LLM_CHANNELS=hermes`，或恢复原 `LLM_CHANNELS` / `LITELLM_MODEL` 配置。
+
 ### MiniMax 渠道模型填写说明
 
 - 如果你通过 OpenAI Compatible 渠道接 MiniMax，请在渠道模型里直接填写 `minimax/<模型名>`，例如 `minimax/MiniMax-M1`。

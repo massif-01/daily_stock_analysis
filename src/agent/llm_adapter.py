@@ -21,9 +21,9 @@ from src.config import (
     get_api_keys_for_model,
     get_config,
     get_configured_llm_models,
-    get_effective_agent_models_to_try,
     get_effective_agent_primary_model,
 )
+from src.agent.litellm_route_resolution import resolve_agent_litellm_routes
 from src.agent.provider_trace import (
     TRACE_MODEL_KEY,
     TRACE_PROVIDER_KEY,
@@ -32,14 +32,9 @@ from src.agent.provider_trace import (
     trace_model_matches,
 )
 from src.llm.errors import call_litellm_with_param_recovery
-from src.llm.backend_registry import (
-    AUTO_AGENT_BACKEND_ID,
-    CODEX_CLI_BACKEND_ID,
-    LITELLM_BACKEND_ID,
-    resolve_agent_generation_backend_id,
-)
-from src.llm.generation_backend import GenerationError, GenerationErrorCode
+from src.llm.generation_backend import GenerationError
 from src.llm.generation_params import apply_litellm_generation_params, resolve_litellm_wire_model
+from src.llm.hermes import filter_agent_model_list
 from src.llm.usage import attach_message_hmacs, extract_usage_payload, normalize_litellm_usage
 from src.llm.provider_cache import (
     build_provider_cache_route_context,
@@ -343,6 +338,8 @@ class LLMToolAdapter:
         self._config = config
         self._router = None          # litellm Router (multi-key primary model)
         self._legacy_router_model_list: List[Dict[str, Any]] = []
+        self._route_resolution = resolve_agent_litellm_routes(config)
+        self._agent_model_list: List[Dict[str, Any]] = self._route_resolution.agent_model_list
         self._litellm_available = False
         self._backend_error: Optional[GenerationError] = None
         self._generation_backend_id = ""
@@ -365,72 +362,41 @@ class LLMToolAdapter:
                 logger.debug(f"Registered custom pricing for {model_name}")
             except Exception as e:
                 logger.debug(f"Model {model_name} may already be registered or pricing error: {e}")
+
+    def _get_agent_model_list(self) -> List[Dict[str, Any]]:
+        """Return the Agent-safe model_list, lazily initialized for test doubles."""
+        agent_model_list = getattr(self, "_agent_model_list", None)
+        if agent_model_list is not None:
+            return agent_model_list
+
+        route_resolution = getattr(self, "_route_resolution", None)
+        if route_resolution is not None:
+            agent_model_list = route_resolution.agent_model_list
+        else:
+            config = getattr(self, "_config", None)
+            agent_model_list = filter_agent_model_list(
+                getattr(config, "llm_model_list", []) or []
+            )
+        self._agent_model_list = agent_model_list
+        return agent_model_list
+
     def _has_channel_config(self) -> bool:
         """Check if multi-channel config (channels / YAML) is active."""
-        return bool(self._config.llm_model_list) and not all(
-            e.get('model_name', '').startswith('__legacy_') for e in self._config.llm_model_list
-        )
+        return bool(getattr(self, "_route_resolution", None) and self._route_resolution.has_channel_config)
 
     def _init_litellm(self) -> None:
         """Initialize litellm Router from channels / YAML / legacy keys."""
         config = self._config
         self._legacy_router_model_list = []
-        try:
-            self._generation_backend_id = resolve_agent_generation_backend_id(config)
-        except GenerationError as exc:
-            self._backend_error = exc
-            logger.error("Agent LLM backend configuration error: %s", exc.message)
-            return
-        if self._generation_backend_id != LITELLM_BACKEND_ID:
-            self._backend_error = GenerationError(
-                error_code=GenerationErrorCode.UNSUPPORTED_TOOL_CALLING,
-                stage="generation",
-                retryable=False,
-                fallbackable=False,
-                backend=self._generation_backend_id,
-                provider=self._generation_backend_id,
-                details={
-                    "field": "AGENT_GENERATION_BACKEND",
-                    "requested_backend": self._generation_backend_id,
-                    "supported_tool_backend": LITELLM_BACKEND_ID,
-                },
-            )
-            logger.error(
-                "Agent LLM backend %s does not support tool calling",
-                self._generation_backend_id,
-            )
+        resolution = self._route_resolution
+        self._generation_backend_id = resolution.generation_backend_id
+        if resolution.backend_error is not None:
+            self._backend_error = resolution.backend_error
+            logger.error("Agent LLM backend configuration error: %s", self._backend_error.message)
             return
 
-        litellm_model = get_effective_agent_primary_model(config)
+        litellm_model = resolution.primary_model
         if not litellm_model:
-            generation_backend = str(
-                getattr(config, "generation_backend", LITELLM_BACKEND_ID) or LITELLM_BACKEND_ID
-            ).strip().lower()
-            agent_backend = str(
-                getattr(config, "agent_generation_backend", AUTO_AGENT_BACKEND_ID)
-                or AUTO_AGENT_BACKEND_ID
-            ).strip().lower()
-            if generation_backend == CODEX_CLI_BACKEND_ID and agent_backend == AUTO_AGENT_BACKEND_ID:
-                self._backend_error = GenerationError(
-                    error_code=GenerationErrorCode.UNSUPPORTED_TOOL_CALLING,
-                    stage="generation",
-                    retryable=False,
-                    fallbackable=False,
-                    backend=CODEX_CLI_BACKEND_ID,
-                    provider=CODEX_CLI_BACKEND_ID,
-                    details={
-                        "field": "AGENT_GENERATION_BACKEND",
-                        "requested_backend": AUTO_AGENT_BACKEND_ID,
-                        "generation_backend": CODEX_CLI_BACKEND_ID,
-                        "supported_tool_backend": LITELLM_BACKEND_ID,
-                        "reason": "litellm_agent_backend_unavailable",
-                    },
-                )
-                logger.error(
-                    "Agent auto backend cannot inherit %s because it does not support tool calling",
-                    CODEX_CLI_BACKEND_ID,
-                )
-                return
             logger.warning("Agent LLM: no effective primary model configured")
             return
 
@@ -438,7 +404,7 @@ class LLMToolAdapter:
 
         # --- Channel / YAML path ---
         if self._has_channel_config():
-            model_list = config.llm_model_list
+            model_list = self._get_agent_model_list()
             self._router = Router(
                 model_list=model_list,
                 routing_strategy="simple-shuffle",
@@ -557,7 +523,6 @@ class LLMToolAdapter:
         timeout: Optional[float] = None,
     ) -> LLMResponse:
         """Shared completion path for both tool and text-only calls."""
-        config = self._config
         if self._backend_error is not None:
             error_msg = (
                 "Agent generation backend configuration error: "
@@ -565,7 +530,7 @@ class LLMToolAdapter:
             )
             logger.error(error_msg)
             return LLMResponse(content=error_msg, provider="error")
-        models_to_try = get_effective_agent_models_to_try(config)
+        models_to_try = list(self._route_resolution.models_to_try)
         if not models_to_try:
             error_msg = (
                 "No LLM configured. Please set LITELLM_MODEL, LLM_CHANNELS, "
@@ -671,13 +636,14 @@ class LLMToolAdapter:
 
         # Use Router for primary model (multi-key), direct litellm for others
         use_channel_router = self._has_channel_config()
-        _router_model_names = set(get_configured_llm_models(self._config.llm_model_list))
+        agent_model_list = self._get_agent_model_list()
+        _router_model_names = set(get_configured_llm_models(agent_model_list))
         agent_primary_model = get_effective_agent_primary_model(self._config)
         uses_router = (
             bool(use_channel_router and self._router and model in _router_model_names)
             or bool(self._router and model == agent_primary_model and not use_channel_router)
         )
-        recovery_model_list = self._config.llm_model_list
+        recovery_model_list = agent_model_list
         if self._router and model == agent_primary_model and not use_channel_router:
             recovery_model_list = self._legacy_router_model_list or self._config.llm_model_list
         if not uses_router:
@@ -710,7 +676,7 @@ class LLMToolAdapter:
                 caps.cache_activation,
             )
         register_fallback_model_pricing(
-            resolve_fallback_litellm_wire_models(model, self._config.llm_model_list)
+            resolve_fallback_litellm_wire_models(model, agent_model_list)
         )
         if use_channel_router and self._router and model in _router_model_names:
             # Channel / YAML path: Router manages all models in its model_list
@@ -738,7 +704,7 @@ class LLMToolAdapter:
                 lambda kwargs: litellm.completion(**kwargs),
                 model=model,
                 call_kwargs=call_kwargs,
-                model_list=self._config.llm_model_list,
+                model_list=recovery_model_list,
                 logger=logger,
             )
 
@@ -817,8 +783,7 @@ class LLMToolAdapter:
     def _trace_provider_for_target(self, target_model: Optional[str]) -> str:
         if not target_model:
             return ""
-        model_list = getattr(getattr(self, "_config", None), "llm_model_list", []) or []
-        return resolved_provider_namespace(target_model, model_list)
+        return resolved_provider_namespace(target_model, self._get_agent_model_list())
 
     def _parse_litellm_response(
         self,

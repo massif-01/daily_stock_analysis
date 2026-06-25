@@ -53,6 +53,17 @@ from src.llm.local_cli_backend import (
     MAX_LOCAL_CLI_OUTPUT_BYTES,
     MAX_LOCAL_CLI_TIMEOUT_SECONDS,
 )
+from src.llm.hermes import (
+    HERMES_DEFAULT_BASE_URL,
+    HERMES_DEFAULT_MODEL,
+    hermes_issue_for_field,
+    hermes_model_issues_for_field,
+    hermes_protocol_issue_for_field,
+    is_hermes_channel_name,
+    normalize_hermes_models,
+    normalize_hermes_protocol,
+    validate_hermes_base_url,
+)
 from src.llm import generation_params as llm_generation_params
 from src.scheduler import normalize_schedule_times
 
@@ -397,7 +408,7 @@ def channel_allows_empty_api_key(protocol: Optional[str], base_url: Optional[str
     if resolved_protocol == "ollama":
         return True
     parsed = urlparse(base_url or "")
-    return parsed.hostname in {"127.0.0.1", "localhost", "0.0.0.0"}
+    return parsed.hostname in {"127.0.0.1", "localhost", "::1", "0.0.0.0"}
 
 
 def normalize_llm_channel_model(model: str, protocol: Optional[str], base_url: Optional[str] = None) -> str:
@@ -720,6 +731,11 @@ class Config:
     # Raw channel names requested through LLM_CHANNELS, including channels that
     # were skipped during parsing because required channel fields were missing.
     llm_channel_names: List[str] = field(default_factory=list)
+    # Structured issues found while parsing explicit LLM_CHANNELS values.
+    llm_channel_issues: List[Dict[str, Any]] = field(default_factory=list)
+    # Hermes models declared in LLM_CHANNELS, including enabled Hermes channels
+    # later skipped because their base URL failed P0 loopback validation.
+    llm_declared_hermes_models: List[str] = field(default_factory=list)
     # Pre-built LiteLLM Router model_list (populated from channels, YAML, or legacy keys)
     llm_model_list: List[Dict[str, Any]] = field(default_factory=list)
 
@@ -1166,7 +1182,8 @@ class Config:
                 'csindex.com.cn',  # 中证指数
                 'cninfo.com.cn',   # 巨潮资讯
                 'localhost',
-                '127.0.0.1'
+                '127.0.0.1',
+                '::1',
             ]
 
             # 获取现有的 no_proxy
@@ -1314,7 +1331,16 @@ class Config:
         llm_models_source = "legacy_env"
         llm_channels: List[Dict[str, Any]] = []
         llm_channel_names: List[str] = []
+        llm_channel_issues: List[Dict[str, Any]] = []
+        llm_declared_hermes_models: List[str] = []
         llm_model_list: List[Dict[str, Any]] = []
+        _channels_str = os.getenv('LLM_CHANNELS', '').strip()
+        if _channels_str:
+            llm_channel_names = [
+                ch.strip().lower()
+                for ch in _channels_str.split(',')
+                if ch.strip()
+            ]
 
         # Priority 1: LITELLM_CONFIG (standard LiteLLM YAML config file)
         if litellm_config_path:
@@ -1324,20 +1350,23 @@ class Config:
 
         # Priority 2: LLM_CHANNELS (env var based channel config)
         if not llm_model_list:
-            _channels_str = os.getenv('LLM_CHANNELS', '').strip()
             if _channels_str:
-                llm_channel_names = [
-                    ch.strip().lower()
-                    for ch in _channels_str.split(',')
-                    if ch.strip()
-                ]
+                llm_channel_issues = cls._collect_llm_channel_env_issues(_channels_str)
+                llm_declared_hermes_models = cls._collect_declared_hermes_models(_channels_str)
                 llm_channels = cls._parse_llm_channels(_channels_str)
                 llm_model_list = cls._channels_to_model_list(llm_channels)
                 if llm_model_list:
                     llm_models_source = "llm_channels"
 
         # Priority 3: Legacy env vars → auto-build model_list (backward compatible)
-        if not llm_model_list:
+        has_blocking_channel_issue = any(
+            str(issue.get("severity", "error")).lower() == "error"
+            for issue in llm_channel_issues
+        )
+        if has_blocking_channel_issue and not llm_model_list:
+            litellm_model = ""
+            litellm_fallback_models = []
+        if not llm_model_list and not has_blocking_channel_issue:
             llm_model_list = cls._legacy_keys_to_model_list(
                 gemini_api_keys, anthropic_api_keys, openai_api_keys,
                 openai_base_url,
@@ -1573,6 +1602,8 @@ class Config:
             llm_models_source=llm_models_source,
             llm_channels=llm_channels,
             llm_channel_names=llm_channel_names,
+            llm_channel_issues=llm_channel_issues,
+            llm_declared_hermes_models=llm_declared_hermes_models,
             llm_model_list=llm_model_list,
             llm_prompt_cache_telemetry_enabled=parse_env_bool(
                 os.getenv("LLM_PROMPT_CACHE_TELEMETRY_ENABLED"),
@@ -2050,11 +2081,15 @@ class Config:
             ch_upper = ch_name.upper()
 
             base_url = os.getenv(f'LLM_{ch_upper}_BASE_URL', '').strip() or None
+            if is_hermes_channel_name(ch_name) and not base_url:
+                base_url = HERMES_DEFAULT_BASE_URL
             if ch_lower == "anspire" and not base_url:
                 base_url = (
                     os.getenv('ANSPIRE_LLM_BASE_URL') or ANSPIRE_LLM_BASE_URL_DEFAULT
                 ).strip() or None
             protocol_raw = os.getenv(f'LLM_{ch_upper}_PROTOCOL', '').strip()
+            if is_hermes_channel_name(ch_name) and not protocol_raw:
+                protocol_raw = "openai"
             if ch_lower == "anspire" and not protocol_raw:
                 protocol_raw = "openai"
             enabled_raw = os.getenv(f'LLM_{ch_upper}_ENABLED')
@@ -2076,14 +2111,46 @@ class Config:
             # Models
             models_raw = os.getenv(f'LLM_{ch_upper}_MODELS', '')
             raw_models = [m.strip() for m in models_raw.split(',') if m.strip()]
+            if is_hermes_channel_name(ch_name) and not raw_models:
+                raw_models = [HERMES_DEFAULT_MODEL]
             if not raw_models and ch_lower == "anspire":
                 anspire_model = (
                     os.getenv('ANSPIRE_LLM_MODEL') or ANSPIRE_LLM_MODEL_DEFAULT
                 ).strip()
                 if anspire_model:
                     raw_models = [anspire_model]
-            protocol = resolve_llm_channel_protocol(protocol_raw, base_url=base_url, models=raw_models, channel_name=ch_name)
-            models = [normalize_llm_channel_model(m, protocol, base_url) for m in raw_models]
+
+            if not enabled:
+                _logger.info(f"LLM channel '{ch_name}': disabled, skipped")
+                continue
+            if is_hermes_channel_name(ch_name):
+                hermes_issue = validate_hermes_base_url(base_url or "")
+                if hermes_issue:
+                    _logger.warning(
+                        "LLM channel '%s': invalid Hermes base URL skipped: %s",
+                        ch_name,
+                        hermes_issue["code"],
+                    )
+                    continue
+
+            if is_hermes_channel_name(ch_name):
+                protocol, protocol_issue = normalize_hermes_protocol(protocol_raw)
+                models, model_issues = normalize_hermes_models(raw_models)
+                if protocol_issue or model_issues:
+                    _logger.warning(
+                        "LLM channel '%s': invalid Hermes protocol/model skipped: %s",
+                        ch_name,
+                        (protocol_issue or model_issues[0])["code"],
+                    )
+                    continue
+            else:
+                protocol = resolve_llm_channel_protocol(
+                    protocol_raw,
+                    base_url=base_url,
+                    models=raw_models,
+                    channel_name=ch_name,
+                )
+                models = [normalize_llm_channel_model(m, protocol, base_url) for m in raw_models]
 
             # Extra headers (JSON string, optional)
             extra_headers_raw = os.getenv(f'LLM_{ch_upper}_EXTRA_HEADERS', '').strip()
@@ -2094,11 +2161,11 @@ class Config:
                 except json.JSONDecodeError:
                     _logger.warning(f"LLM_{ch_upper}_EXTRA_HEADERS: invalid JSON, ignored")
 
-            if not enabled:
-                _logger.info(f"LLM channel '{ch_name}': disabled, skipped")
-                continue
-
-            if protocol_raw and canonicalize_llm_channel_protocol(protocol_raw) not in SUPPORTED_LLM_CHANNEL_PROTOCOLS:
+            if (
+                not is_hermes_channel_name(ch_name)
+                and protocol_raw
+                and canonicalize_llm_channel_protocol(protocol_raw) not in SUPPORTED_LLM_CHANNEL_PROTOCOLS
+            ):
                 _logger.warning(
                     "LLM_%s_PROTOCOL=%s is unsupported; auto-detected protocol=%s",
                     ch_upper,
@@ -2130,6 +2197,66 @@ class Config:
         return channels
 
     @classmethod
+    def _collect_llm_channel_env_issues(cls, channels_str: str) -> List[Dict[str, Any]]:
+        issues: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+        for raw_name in channels_str.split(','):
+            ch_name = raw_name.strip()
+            if not ch_name or not is_hermes_channel_name(ch_name):
+                continue
+            normalized = ch_name.lower()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            ch_upper = ch_name.upper()
+            enabled = parse_env_bool(os.getenv(f'LLM_{ch_upper}_ENABLED'), default=True)
+            if not enabled:
+                continue
+            base_url = os.getenv(f'LLM_{ch_upper}_BASE_URL', '').strip() or HERMES_DEFAULT_BASE_URL
+            issue = hermes_issue_for_field(base_url, f"LLM_{ch_upper}_BASE_URL")
+            if issue:
+                issues.append(issue)
+            protocol_issue = hermes_protocol_issue_for_field(
+                os.getenv(f'LLM_{ch_upper}_PROTOCOL', '').strip(),
+                f"LLM_{ch_upper}_PROTOCOL",
+            )
+            if protocol_issue:
+                issues.append(protocol_issue)
+            raw_models = [
+                model.strip()
+                for model in os.getenv(f'LLM_{ch_upper}_MODELS', '').split(',')
+                if model.strip()
+            ]
+            issues.extend(
+                hermes_model_issues_for_field(raw_models or [HERMES_DEFAULT_MODEL], f"LLM_{ch_upper}_MODELS")
+            )
+        return issues
+
+    @classmethod
+    def _collect_declared_hermes_models(cls, channels_str: str) -> List[str]:
+        models: List[str] = []
+        seen: set[str] = set()
+        for raw_name in channels_str.split(','):
+            ch_name = raw_name.strip()
+            if not ch_name or not is_hermes_channel_name(ch_name):
+                continue
+            ch_upper = ch_name.upper()
+            enabled = parse_env_bool(os.getenv(f'LLM_{ch_upper}_ENABLED'), default=True)
+            if not enabled:
+                continue
+            raw_models = [
+                model.strip()
+                for model in os.getenv(f'LLM_{ch_upper}_MODELS', '').split(',')
+                if model.strip()
+            ] or [HERMES_DEFAULT_MODEL]
+            normalized_models, _issues = normalize_hermes_models(raw_models)
+            for normalized_model in normalized_models:
+                if normalized_model not in seen:
+                    seen.add(normalized_model)
+                    models.append(normalized_model)
+        return models
+
+    @classmethod
     def _channels_to_model_list(cls, channels: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Convert parsed LLM channels to LiteLLM Router model_list format.
 
@@ -2155,10 +2282,13 @@ class Config:
                     if headers:
                         litellm_params['extra_headers'] = headers
 
-                    model_list.append({
+                    entry: Dict[str, Any] = {
                         'model_name': model_name,
                         'litellm_params': litellm_params,
-                    })
+                    }
+                    if is_hermes_channel_name(str(ch.get('name') or "")):
+                        entry['model_info'] = {'dsa_channel': 'hermes'}
+                    model_list.append(entry)
         return model_list
 
     @classmethod
@@ -2678,6 +2808,12 @@ class Config:
                     "请不要使用 LITELLM_MODEL=codex_cli/...。"
                 ),
                 field="LITELLM_MODEL",
+            ))
+        for channel_issue in self.llm_channel_issues:
+            issues.append(ConfigIssue(
+                severity=str(channel_issue.get("severity") or "error"),  # type: ignore[arg-type]
+                message=str(channel_issue.get("message") or "LLM channel configuration is invalid"),
+                field=str(channel_issue.get("key") or "LLM_CHANNELS"),
             ))
 
         # --- LLM availability ---

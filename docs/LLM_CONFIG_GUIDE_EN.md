@@ -211,6 +211,21 @@ LLM_OLLAMA_MODELS=qwen3:8b,llama3.2
 LITELLM_MODEL=ollama/qwen3:8b
 ```
 
+### Example: Hermes Local HTTP (OpenAI-compatible, Generation Only)
+
+```env
+LLM_CHANNELS=hermes
+LLM_HERMES_PROTOCOL=openai
+LLM_HERMES_BASE_URL=http://127.0.0.1:8642/v1
+LLM_HERMES_API_KEY=
+LLM_HERMES_MODELS=hermes-agent
+LITELLM_MODEL=openai/hermes-agent
+```
+
+Hermes P0 is only an OpenAI-compatible `LLM_CHANNELS` preset for regular analysis and `StockAnalyzer.generate_text()`. It does not add a `hermes_http` backend and does not wire runs, sessions, SSE, approval, or session headers. The base URL must be loopback: `127.0.0.1`, `localhost`, or `::1`. `0.0.0.0`, private/public hosts, metadata/link-local hosts, userinfo URLs, and malformed URLs return structured validation errors instead of silently falling back to legacy providers. A Hermes local runtime is not the same thing as an offline model; DSA does not read Hermes local credential files, and the real data boundary depends on the local Hermes runtime and its upstream model.
+
+The Web JSON / tools / stream / vision probes send real requests, but the tools probe only checks the OpenAI tool-call shape. It is not a DSA tool result roundtrip. Until such a roundtrip smoke exists, Hermes is not exposed as an AgentBackend or an Ask-Stock Agent tools-ready model. Configure a separate verified `AGENT_LITELLM_MODEL` for Agent use. To roll back, remove `LLM_CHANNELS=hermes` or restore the previous `LLM_CHANNELS` / `LITELLM_MODEL` values.
+
 ### MiniMax Model Naming in Channel Mode
 
 - If you access MiniMax through an OpenAI-compatible channel, enter the model as `minimax/<model-name>` in the channel model list, for example `minimax/MiniMax-M1`.

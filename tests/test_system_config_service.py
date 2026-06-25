@@ -462,6 +462,143 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         self.assertEqual(checks["llm_agent"]["status"], "needs_action")
         self.assertIn("暂不支持 codex_cli", checks["llm_agent"]["message"])
 
+    def test_get_setup_status_does_not_inherit_hermes_as_agent_ready(self) -> None:
+        self._rewrite_env(
+            "LLM_CHANNELS=hermes",
+            "LLM_HERMES_PROTOCOL=openai",
+            "LLM_HERMES_BASE_URL=http://127.0.0.1:8642/v1",
+            "LLM_HERMES_API_KEY=",
+            "LLM_HERMES_MODELS=hermes-agent",
+            "STOCK_LIST=600519",
+        )
+
+        with patch.dict(os.environ, {}, clear=True):
+            status = self.service.get_setup_status()
+
+        checks = {check["key"]: check for check in status["checks"]}
+        self.assertEqual(checks["llm_primary"]["status"], "configured")
+        self.assertEqual(checks["llm_agent"]["status"], "needs_action")
+        self.assertIn("不会被 Agent 自动继承", checks["llm_agent"]["message"])
+
+    def test_get_setup_status_rejects_explicit_hermes_agent_model(self) -> None:
+        self._rewrite_env(
+            "LLM_CHANNELS=hermes",
+            "LLM_HERMES_PROTOCOL=openai",
+            "LLM_HERMES_BASE_URL=http://127.0.0.1:8642/v1",
+            "LLM_HERMES_MODELS=hermes-agent",
+            "AGENT_LITELLM_MODEL=openai/hermes-agent",
+            "STOCK_LIST=600519",
+        )
+
+        with patch.dict(os.environ, {}, clear=True):
+            status = self.service.get_setup_status()
+
+        checks = {check["key"]: check for check in status["checks"]}
+        self.assertEqual(checks["llm_agent"]["status"], "needs_action")
+        self.assertIn("尚未验证 DSA tool result roundtrip", checks["llm_agent"]["message"])
+
+    def test_get_setup_status_rejects_explicit_hermes_agent_model_when_url_invalid(self) -> None:
+        self._rewrite_env(
+            "LLM_CHANNELS=hermes",
+            "LLM_HERMES_PROTOCOL=openai",
+            "LLM_HERMES_BASE_URL=http://192.168.1.10:8642/v1",
+            "LLM_HERMES_MODELS=hermes-agent",
+            "LITELLM_MODEL=openai/hermes-agent",
+            "AGENT_LITELLM_MODEL=openai/hermes-agent",
+            "OPENAI_API_KEY=sk-openai",
+            "STOCK_LIST=600519",
+        )
+
+        with patch.dict(os.environ, {}, clear=True):
+            status = self.service.get_setup_status()
+
+        checks = {check["key"]: check for check in status["checks"]}
+        self.assertEqual(checks["llm_primary"]["status"], "needs_action")
+        self.assertIn("Hermes 渠道仅允许", checks["llm_primary"]["message"])
+        self.assertEqual(checks["llm_agent"]["status"], "needs_action")
+        self.assertIn("尚未验证 DSA tool result roundtrip", checks["llm_agent"]["message"])
+
+    def test_get_setup_status_rejects_invalid_hermes_before_legacy_openai_fallback(self) -> None:
+        self._rewrite_env(
+            "LLM_CHANNELS=hermes",
+            "LLM_HERMES_PROTOCOL=openai",
+            "LLM_HERMES_BASE_URL=http://192.168.1.10:8642/v1",
+            "LLM_HERMES_MODELS=hermes-agent",
+            "OPENAI_API_KEY=sk-openai",
+            "STOCK_LIST=600519",
+        )
+
+        with patch.dict(os.environ, {}, clear=True):
+            status = self.service.get_setup_status()
+
+        checks = {check["key"]: check for check in status["checks"]}
+        self.assertEqual(checks["llm_primary"]["status"], "needs_action")
+        self.assertIn("Hermes 渠道仅允许", checks["llm_primary"]["message"])
+        self.assertEqual(checks["llm_agent"]["status"], "needs_action")
+        self.assertIn("LLM 主渠道尚不可用", checks["llm_agent"]["message"])
+
+    def test_get_setup_status_keeps_valid_same_named_channel_when_hermes_url_invalid(self) -> None:
+        self._rewrite_env(
+            "LLM_CHANNELS=hermes,shadow",
+            "LLM_HERMES_PROTOCOL=openai",
+            "LLM_HERMES_BASE_URL=http://192.168.1.10:8642/v1",
+            "LLM_HERMES_API_KEY=secret-hermes",
+            "LLM_HERMES_MODELS=gpt-4o-mini",
+            "LLM_SHADOW_PROTOCOL=openai",
+            "LLM_SHADOW_BASE_URL=https://api.example.com/v1",
+            "LLM_SHADOW_API_KEY=shadow-key",
+            "LLM_SHADOW_MODELS=gpt-4o-mini",
+            "LITELLM_MODEL=openai/gpt-4o-mini",
+            "AGENT_LITELLM_MODEL=openai/gpt-4o-mini",
+            "STOCK_LIST=600519",
+        )
+
+        with patch.dict(os.environ, {}, clear=True):
+            status = self.service.get_setup_status()
+
+        checks = {check["key"]: check for check in status["checks"]}
+        self.assertEqual(checks["llm_primary"]["status"], "configured")
+        self.assertEqual(checks["llm_agent"]["status"], "configured")
+
+        validation = self.service.validate(
+            items=[
+                {"key": "LLM_CHANNELS", "value": "hermes,shadow"},
+                {"key": "LLM_HERMES_PROTOCOL", "value": "openai"},
+                {"key": "LLM_HERMES_BASE_URL", "value": "http://192.168.1.10:8642/v1"},
+                {"key": "LLM_HERMES_API_KEY", "value": "secret-hermes"},
+                {"key": "LLM_HERMES_MODELS", "value": "gpt-4o-mini"},
+                {"key": "LLM_SHADOW_PROTOCOL", "value": "openai"},
+                {"key": "LLM_SHADOW_BASE_URL", "value": "https://api.example.com/v1"},
+                {"key": "LLM_SHADOW_API_KEY", "value": "shadow-key"},
+                {"key": "LLM_SHADOW_MODELS", "value": "gpt-4o-mini"},
+                {"key": "LITELLM_MODEL", "value": "openai/gpt-4o-mini"},
+                {"key": "AGENT_LITELLM_MODEL", "value": "openai/gpt-4o-mini"},
+            ]
+        )
+        self.assertTrue(
+            any(issue["key"] == "LLM_HERMES_BASE_URL" for issue in validation["issues"]),
+            validation["issues"],
+        )
+
+    def test_get_setup_status_ignores_disabled_hermes_for_agent_boundary(self) -> None:
+        self._rewrite_env(
+            "LLM_CHANNELS=hermes",
+            "LLM_HERMES_ENABLED=false",
+            "LLM_HERMES_PROTOCOL=openai",
+            "LLM_HERMES_BASE_URL=http://127.0.0.1:8642/v1",
+            "LLM_HERMES_MODELS=hermes-agent",
+            "AGENT_LITELLM_MODEL=openai/hermes-agent",
+            "STOCK_LIST=600519",
+        )
+
+        with patch.dict(os.environ, {}, clear=True):
+            status = self.service.get_setup_status()
+
+        checks = {check["key"]: check for check in status["checks"]}
+        self.assertEqual(checks["llm_agent"]["status"], "needs_action")
+        self.assertNotIn("DSA tool result roundtrip", checks["llm_agent"]["message"])
+        self.assertIn("缺少可用渠道或匹配的 API Key", checks["llm_agent"]["message"])
+
     def test_get_setup_status_agent_litellm_without_model_reports_missing_model(self) -> None:
         self._rewrite_env(
             "GENERATION_BACKEND=codex_cli",
@@ -639,16 +776,19 @@ class SystemConfigServiceTestCase(unittest.TestCase):
     def test_get_setup_status_uses_runtime_env_without_reloading_singletons(self) -> None:
         self._rewrite_env("")
 
-        with patch.dict(
-            os.environ,
-            {
-                "LITELLM_MODEL": "gemini/gemini-3-flash-preview",
-                "GEMINI_API_KEY": "runtime-secret",
-                "STOCK_LIST": "600519",
-            },
-            clear=True,
-        ), patch("src.services.system_config_service.Config.reset_instance") as mock_reset, \
-             patch("src.services.system_config_service.setup_env") as mock_setup_env:
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "LITELLM_MODEL": "gemini/gemini-3-flash-preview",
+                    "GEMINI_API_KEY": "runtime-secret",
+                    "STOCK_LIST": "600519",
+                },
+                clear=True,
+            ),
+            patch("src.services.system_config_service.Config.reset_instance") as mock_reset,
+            patch("src.services.system_config_service.setup_env") as mock_setup_env,
+        ):
             status = self.service.get_setup_status()
 
         self.assertTrue(status["is_complete"])
@@ -1196,10 +1336,13 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         validation = self.service.validate(
             items=[
                 {"key": "LITELLM_CONFIG", "value": "/tmp/litellm.yaml"},
-                {"key": "LLM_CHANNELS", "value": "primary"},
+                {"key": "LLM_CHANNELS", "value": "primary,hermes"},
                 {"key": "LLM_PRIMARY_PROTOCOL", "value": "openai"},
                 {"key": "LLM_PRIMARY_MODELS", "value": "gpt-4o-mini"},
                 {"key": "LLM_PRIMARY_API_KEY", "value": ""},
+                {"key": "LLM_HERMES_PROTOCOL", "value": "openai"},
+                {"key": "LLM_HERMES_BASE_URL", "value": "http://192.168.1.10:8642/v1"},
+                {"key": "LLM_HERMES_MODELS", "value": "hermes-agent"},
                 {"key": "LITELLM_MODEL", "value": "gemini/gemini-2.5-flash"},
             ]
         )
@@ -2989,7 +3132,6 @@ class SystemConfigServiceTestCase(unittest.TestCase):
         self.assertEqual(restored_map["VISION_MODEL"], pre_clear_map["VISION_MODEL"])
         self.assertEqual(restored_map["LITELLM_FALLBACK_MODELS"], pre_clear_map["LITELLM_FALLBACK_MODELS"])
 
-
     def test_validate_rejects_comma_only_api_key(self) -> None:
         """Whitespace/comma-only api_key must fail validation (P2: parsed-segment check)."""
         for bad_key in (",", " , ", "  ,  ,  "):
@@ -3043,6 +3185,178 @@ class SystemConfigServiceTestCase(unittest.TestCase):
             ]
         )
         self.assertFalse(any(issue["code"] == "ssrf_blocked" for issue in validation["issues"]))
+
+    def test_validate_hermes_requires_loopback_url_even_with_api_key(self) -> None:
+        cases = [
+            "http://0.0.0.0:8642/v1",
+            "http://10.0.0.2:8642/v1",
+            "http://172.16.0.2:8642/v1",
+            "http://192.168.1.2:8642/v1",
+            "https://hermes.example.com/v1",
+            "http://169.254.169.254/v1",
+            "http://metadata.google.internal/v1",
+            "http://user:pass@127.0.0.1:8642/v1",
+            "http://2852039166/v1",
+            "http://127.0.0.1:8642/v1 models",
+        ]
+
+        for base_url in cases:
+            with self.subTest(base_url=base_url):
+                validation = self.service.validate(
+                    items=[
+                        {"key": "LLM_CHANNELS", "value": "hermes"},
+                        {"key": "LLM_HERMES_PROTOCOL", "value": "openai"},
+                        {"key": "LLM_HERMES_BASE_URL", "value": base_url},
+                        {"key": "LLM_HERMES_API_KEY", "value": "secret-key"},
+                        {"key": "LLM_HERMES_MODELS", "value": "hermes-agent"},
+                    ]
+                )
+                self.assertFalse(validation["valid"])
+                self.assertTrue(
+                    any(issue["key"] == "LLM_HERMES_BASE_URL" for issue in validation["issues"]),
+                    validation["issues"],
+                )
+
+    def test_validate_malformed_hermes_url_reports_field_error_without_legacy_fallback(self) -> None:
+        validation = self.service.validate(
+            items=[
+                {"key": "OPENAI_API_KEY", "value": "sk-openai"},
+                {"key": "LLM_CHANNELS", "value": "hermes"},
+                {"key": "LLM_HERMES_PROTOCOL", "value": "openai"},
+                {"key": "LLM_HERMES_BASE_URL", "value": "http://[::1"},
+                {"key": "LLM_HERMES_API_KEY", "value": "secret-key"},
+                {"key": "LLM_HERMES_MODELS", "value": "hermes-agent"},
+            ]
+        )
+
+        self.assertFalse(validation["valid"])
+        self.assertTrue(
+            any(
+                issue["key"] == "LLM_HERMES_BASE_URL" and issue["code"] == "invalid_url"
+                for issue in validation["issues"]
+            ),
+            validation["issues"],
+        )
+
+    def test_validate_hermes_accepts_only_loopback_with_empty_key(self) -> None:
+        for base_url in (
+            "http://127.0.0.1:8642/v1",
+            "http://localhost:8642/v1",
+            "http://[::1]:8642/v1",
+        ):
+            with self.subTest(base_url=base_url):
+                validation = self.service.validate(
+                    items=[
+                        {"key": "LLM_CHANNELS", "value": "hermes"},
+                        {"key": "LLM_HERMES_PROTOCOL", "value": "openai"},
+                        {"key": "LLM_HERMES_BASE_URL", "value": base_url},
+                        {"key": "LLM_HERMES_API_KEY", "value": ""},
+                        {"key": "LLM_HERMES_MODELS", "value": "hermes-agent"},
+                    ]
+                )
+                self.assertTrue(validation["valid"], validation["issues"])
+
+    def test_validate_rejects_hermes_non_openai_protocol(self) -> None:
+        validation = self.service.validate(
+            items=[
+                {"key": "LLM_CHANNELS", "value": "hermes"},
+                {"key": "LLM_HERMES_PROTOCOL", "value": "anthropic"},
+                {"key": "LLM_HERMES_BASE_URL", "value": "http://127.0.0.1:8642/v1"},
+                {"key": "LLM_HERMES_API_KEY", "value": ""},
+                {"key": "LLM_HERMES_MODELS", "value": "hermes-agent"},
+            ]
+        )
+
+        self.assertFalse(validation["valid"])
+        self.assertTrue(
+            any(
+                issue["key"] == "LLM_HERMES_PROTOCOL"
+                and issue["code"] == "invalid_hermes_protocol"
+                for issue in validation["issues"]
+            ),
+            validation["issues"],
+        )
+
+    def test_validate_rejects_provider_prefixed_hermes_model(self) -> None:
+        validation = self.service.validate(
+            items=[
+                {"key": "LLM_CHANNELS", "value": "hermes"},
+                {"key": "LLM_HERMES_PROTOCOL", "value": "openai"},
+                {"key": "LLM_HERMES_BASE_URL", "value": "http://127.0.0.1:8642/v1"},
+                {"key": "LLM_HERMES_API_KEY", "value": ""},
+                {"key": "LLM_HERMES_MODELS", "value": "deepseek/foo"},
+            ]
+        )
+
+        self.assertFalse(validation["valid"])
+        self.assertTrue(
+            any(
+                issue["key"] == "LLM_HERMES_MODELS"
+                and issue["code"] == "invalid_hermes_model"
+                and "openai/deepseek/foo" in issue["message"]
+                for issue in validation["issues"]
+            ),
+            validation["issues"],
+        )
+
+    def test_test_llm_channel_rejects_hermes_non_loopback_before_capability_probes(self) -> None:
+        payload = self.service.test_llm_channel(
+            name="hermes",
+            protocol="openai",
+            base_url="http://192.168.1.2:8642/v1",
+            api_key="secret-key",
+            models=["hermes-agent"],
+            capability_checks=["json", "tools", "stream", "vision"],
+        )
+
+        self.assertFalse(payload["success"])
+        self.assertEqual(payload["error_code"], "invalid_config")
+        self.assertEqual(payload["details"]["issue_key"], "base_url")
+        self.assertEqual(payload["capability_results"]["json"]["status"], "skipped")
+        self.assertEqual(payload["capability_results"]["tools"]["details"]["reason"], "base_test_failed")
+
+    def test_test_llm_channel_rejects_hermes_non_openai_protocol(self) -> None:
+        payload = self.service.test_llm_channel(
+            name="hermes",
+            protocol="anthropic",
+            base_url="http://127.0.0.1:8642/v1",
+            api_key="",
+            models=["hermes-agent"],
+            capability_checks=["json", "tools"],
+        )
+
+        self.assertFalse(payload["success"])
+        self.assertEqual(payload["error_code"], "invalid_config")
+        self.assertEqual(payload["details"]["issue_key"], "protocol")
+        self.assertEqual(payload["details"]["issue_code"], "invalid_hermes_protocol")
+        self.assertEqual(payload["capability_results"]["json"]["status"], "skipped")
+
+    def test_discover_llm_channel_models_rejects_hermes_non_loopback(self) -> None:
+        payload = self.service.discover_llm_channel_models(
+            name="hermes",
+            protocol="openai",
+            base_url="https://hermes.example.com/v1",
+            api_key="secret-key",
+            models=["hermes-agent"],
+        )
+
+        self.assertFalse(payload["success"])
+        self.assertEqual(payload["error_code"], "invalid_config")
+        self.assertEqual(payload["details"]["issue_key"], "discover_channel_BASE_URL")
+
+    def test_discover_llm_channel_models_rejects_hermes_non_openai_protocol(self) -> None:
+        payload = self.service.discover_llm_channel_models(
+            name="hermes",
+            protocol="anthropic",
+            base_url="http://127.0.0.1:8642/v1",
+            api_key="",
+            models=["hermes-agent"],
+        )
+
+        self.assertFalse(payload["success"])
+        self.assertEqual(payload["error_code"], "invalid_config")
+        self.assertEqual(payload["details"]["issue_key"], "discover_channel_PROTOCOL")
+        self.assertEqual(payload["details"]["issue_code"], "invalid_hermes_protocol")
 
 
 if __name__ == "__main__":

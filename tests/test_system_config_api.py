@@ -198,6 +198,92 @@ class SystemConfigApiTestCase(unittest.TestCase):
         self.assertEqual(check_map["llm_primary"]["status"], "configured")
         self.assertEqual(check_map["llm_agent"]["status"], "inherited")
 
+    def test_get_config_does_not_echo_hermes_api_key_value(self) -> None:
+        self._rewrite_env(
+            "STOCK_LIST=600519,000001",
+            "LLM_CHANNELS=hermes",
+            "LLM_HERMES_PROTOCOL=openai",
+            "LLM_HERMES_BASE_URL=http://127.0.0.1:8642/v1",
+            "LLM_HERMES_API_KEY=hermes-secret-value",
+            "LLM_HERMES_MODELS=hermes-agent",
+            "ADMIN_AUTH_ENABLED=true",
+        )
+
+        payload = system_config.get_system_config(include_schema=True, service=self.service).model_dump(by_alias=True)
+        item_map = {item["key"]: item for item in payload["items"]}
+
+        self.assertNotIn("hermes-secret-value", str(payload))
+        if "LLM_HERMES_API_KEY" in item_map:
+            self.assertEqual(item_map["LLM_HERMES_API_KEY"]["value"], payload["mask_token"])
+            self.assertTrue(item_map["LLM_HERMES_API_KEY"]["is_masked"])
+
+    def test_put_config_rejects_invalid_hermes_loopback_field(self) -> None:
+        current = system_config.get_system_config(include_schema=False, service=self.service).model_dump()
+
+        with self.assertRaises(HTTPException) as context:
+            system_config.update_system_config(
+                request=UpdateSystemConfigRequest(
+                    config_version=current["config_version"],
+                    mask_token="******",
+                    reload_now=False,
+                    items=[
+                        {"key": "LLM_CHANNELS", "value": "hermes"},
+                        {"key": "LLM_HERMES_PROTOCOL", "value": "openai"},
+                        {"key": "LLM_HERMES_BASE_URL", "value": "http://0.0.0.0:8642/v1"},
+                        {"key": "LLM_HERMES_API_KEY", "value": "secret-key"},
+                        {"key": "LLM_HERMES_MODELS", "value": "hermes-agent"},
+                    ],
+                ),
+                service=self.service,
+            )
+
+        self.assertEqual(context.exception.status_code, 400)
+        self.assertEqual(context.exception.detail["error"], "validation_failed")
+        self.assertTrue(
+            any(
+                issue["key"] == "LLM_HERMES_BASE_URL" and issue["code"] == "hermes_loopback_only"
+                for issue in context.exception.detail["issues"]
+            ),
+            context.exception.detail["issues"],
+        )
+
+    def test_test_llm_channel_endpoint_transmits_hermes_loopback_diagnostics(self) -> None:
+        payload = system_config.test_llm_channel(
+            request=TestLLMChannelRequest(
+                name="hermes",
+                protocol="openai",
+                base_url="https://hermes.example.com/v1",
+                api_key="secret-key",
+                models=["hermes-agent"],
+                capability_checks=["json", "tools"],
+            ),
+            service=self.service,
+        ).model_dump()
+
+        self.assertFalse(payload["success"])
+        self.assertEqual(payload["error_code"], "invalid_config")
+        self.assertEqual(payload["details"]["issue_key"], "base_url")
+        self.assertEqual(payload["details"]["issue_code"], "hermes_loopback_only")
+        self.assertEqual(payload["capability_results"]["json"]["status"], "skipped")
+        self.assertEqual(payload["capability_results"]["tools"]["details"]["reason"], "base_test_failed")
+
+    def test_discover_models_endpoint_rejects_non_loopback_hermes(self) -> None:
+        payload = system_config.discover_llm_channel_models(
+            request=DiscoverLLMChannelModelsRequest(
+                name="hermes",
+                protocol="openai",
+                base_url="https://hermes.example.com/v1",
+                api_key="secret-key",
+                models=["hermes-agent"],
+            ),
+            service=self.service,
+        ).model_dump()
+
+        self.assertFalse(payload["success"])
+        self.assertEqual(payload["error_code"], "invalid_config")
+        self.assertEqual(payload["details"]["issue_key"], "discover_channel_BASE_URL")
+        self.assertEqual(payload["details"]["issue_code"], "hermes_loopback_only")
+
     def test_put_config_updates_secret_and_plain_field(self) -> None:
         current = system_config.get_system_config(include_schema=False, service=self.service).model_dump()
         payload = system_config.update_system_config(
