@@ -38,6 +38,8 @@ def _build_config(**overrides):
 class AgentModelsApiTestCase(unittest.TestCase):
     def test_models_endpoint_returns_litellm_config_deployments(self) -> None:
         config = _build_config(
+            litellm_model="gemini-primary",
+            litellm_fallback_models=["openai-fallback"],
             litellm_config_path="config/litellm.yaml",
             llm_models_source="litellm_config",
             llm_model_list=[
@@ -171,6 +173,105 @@ class AgentModelsApiTestCase(unittest.TestCase):
         self.assertFalse(by_model["openai/gpt-4o-mini"]["is_fallback"])
         self.assertFalse(by_model["gemini/gemini-2.5-flash"]["is_primary"])
         self.assertFalse(by_model["gemini/gemini-2.5-flash"]["is_fallback"])
+
+    def test_models_endpoint_marks_yaml_alias_primary_by_route_model(self) -> None:
+        config = _build_config(
+            litellm_model="gpt4o",
+            litellm_fallback_models=[],
+            agent_litellm_model="gpt4o",
+            litellm_config_path="config/litellm.yaml",
+            llm_models_source="litellm_config",
+            llm_model_list=[
+                {
+                    "model_name": "gpt4o",
+                    "litellm_params": {"model": "openai/gpt-4o-mini", "api_key": "secret-o"},
+                }
+            ],
+        )
+
+        with patch("api.v1.endpoints.agent.get_config", return_value=config):
+            payload = asyncio.run(agent.get_agent_models()).model_dump()
+
+        self.assertEqual(len(payload["models"]), 1)
+        self.assertEqual(payload["models"][0]["model"], "gpt4o")
+        self.assertEqual(payload["models"][0]["provider"], "openai")
+        self.assertTrue(payload["models"][0]["is_primary"])
+        self.assertFalse(payload["models"][0]["is_fallback"])
+
+    def test_models_endpoint_marks_yaml_alias_fallback_by_route_model(self) -> None:
+        config = _build_config(
+            litellm_model="gemini-primary",
+            litellm_fallback_models=["gpt4o"],
+            agent_litellm_model="gemini-primary",
+            litellm_config_path="config/litellm.yaml",
+            llm_models_source="litellm_config",
+            llm_model_list=[
+                {
+                    "model_name": "gemini-primary",
+                    "litellm_params": {"model": "gemini/gemini-2.5-flash", "api_key": "secret-g"},
+                },
+                {
+                    "model_name": "gpt4o",
+                    "litellm_params": {"model": "openai/gpt-4o-mini", "api_key": "secret-o"},
+                },
+            ],
+        )
+
+        with patch("api.v1.endpoints.agent.get_config", return_value=config):
+            payload = asyncio.run(agent.get_agent_models()).model_dump()
+
+        by_model = {item["model"]: item for item in payload["models"]}
+        self.assertTrue(by_model["gemini-primary"]["is_primary"])
+        self.assertFalse(by_model["gemini-primary"]["is_fallback"])
+        self.assertFalse(by_model["gpt4o"]["is_primary"])
+        self.assertTrue(by_model["gpt4o"]["is_fallback"])
+        self.assertEqual(by_model["gpt4o"]["provider"], "openai")
+
+    def test_litellm_adapter_routes_yaml_alias_through_router(self) -> None:
+        config = _build_config(
+            litellm_model="gpt4o",
+            litellm_fallback_models=[],
+            agent_litellm_model="gpt4o",
+            litellm_config_path="config/litellm.yaml",
+            llm_models_source="litellm_config",
+            llm_model_list=[
+                {
+                    "model_name": "gpt4o",
+                    "litellm_params": {"model": "openai/gpt-4o-mini", "api_key": "secret-o"},
+                }
+            ],
+        )
+        captured: Dict[str, Any] = {}
+        response_payload = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="OK", tool_calls=[]))],
+            usage=None,
+        )
+
+        class FakeRouter:
+            def __init__(self, *args, **kwargs):
+                captured["model_list"] = kwargs.get("model_list")
+
+            def completion(self, **kwargs):
+                captured["completion_model"] = kwargs.get("model")
+                return response_payload
+
+        with (
+            patch("src.agent.llm_adapter.Router", FakeRouter),
+            patch.object(
+                litellm,
+                "completion",
+                side_effect=AssertionError("YAML alias must route through Router"),
+            ) as completion_mock,
+        ):
+            adapter = LLMToolAdapter(config=config)
+            response = adapter.call_completion([{"role": "user", "content": "Ping"}])
+
+        completion_mock.assert_not_called()
+        self.assertEqual(captured["model_list"][0]["model_name"], "gpt4o")
+        self.assertEqual(captured["model_list"][0]["litellm_params"]["model"], "openai/gpt-4o-mini")
+        self.assertEqual(captured["completion_model"], "gpt4o")
+        self.assertNotEqual(response.provider, "error")
+        self.assertEqual(response.model, "gpt4o")
 
     def test_models_endpoint_resolves_legacy_placeholders_to_real_models(self) -> None:
         config = _build_config(
@@ -520,6 +621,45 @@ class AgentHermesBoundaryTestCase(unittest.TestCase):
 
         self.assertFalse(adapter.is_available)
         self.assertEqual(list_agent_model_deployments(config), [])
+
+    def test_hermes_generation_primary_is_not_agent_available_or_chat_routable(self) -> None:
+        config = _build_config(
+            litellm_model="openai/hermes-agent",
+            agent_litellm_model="",
+            litellm_fallback_models=[],
+            llm_channels=[{"name": "hermes", "models": ["openai/hermes-agent"]}],
+            llm_declared_hermes_models=["openai/hermes-agent"],
+            llm_models_source="llm_channels",
+            llm_model_list=[
+                {
+                    "model_name": "openai/hermes-agent",
+                    "litellm_params": {
+                        "model": "openai/hermes-agent",
+                        "api_base": "http://127.0.0.1:8642/v1",
+                    },
+                    "model_info": {"dsa_channel": "hermes"},
+                }
+            ],
+        )
+
+        adapter = LLMToolAdapter(config=config)
+        with patch("api.v1.endpoints.agent.get_config", return_value=config):
+            models_payload = asyncio.run(agent.get_agent_models()).model_dump()
+
+        self.assertFalse(config.is_agent_available())
+        self.assertFalse(adapter.is_available)
+        self.assertEqual(models_payload["models"], [])
+        self.assertEqual(list_agent_model_deployments(config), [])
+
+        with (
+            patch("api.v1.endpoints.agent.get_config", return_value=config),
+            patch("api.v1.endpoints.agent._build_executor") as build_executor_mock,
+        ):
+            with self.assertRaises(agent.HTTPException) as context:
+                asyncio.run(agent.agent_chat(agent.ChatRequest(message="Ping")))
+
+        self.assertEqual(context.exception.status_code, 400)
+        build_executor_mock.assert_not_called()
 
     def test_same_named_non_hermes_deployment_keeps_agent_router_available(self) -> None:
         config = _build_config(

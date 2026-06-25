@@ -2652,25 +2652,27 @@ class Config:
 
         Decision table:
 
-        +-----------------------+----------------------------------+---------+
-        | AGENT_MODE env        | effective Agent primary model set| Result  |
-        +-----------------------+----------------------------------+---------+
-        | ``true``              | any                              | True    |
-        | ``false`` (explicit)  | any                              | False   |
-        | not set (default)     | yes                              | True    |
-        | not set (default)     | no                               | False   |
-        +-----------------------+----------------------------------+---------+
+        +-----------------------+---------------------------+---------+
+        | AGENT_MODE env        | Agent LiteLLM route usable| Result  |
+        +-----------------------+---------------------------+---------+
+        | ``false`` (explicit)  | any                       | False   |
+        | ``true``              | yes                       | True    |
+        | ``true``              | no                        | False   |
+        | not set (default)     | yes                       | True    |
+        | not set (default)     | no                        | False   |
+        +-----------------------+---------------------------+---------+
 
-        This keeps backward compatibility: users who never touch
-        ``AGENT_MODE`` get agent features automatically once they configure an
-        Agent-effective model, while ``AGENT_MODE=false`` acts as an explicit
-        kill-switch.
+        Agent execution availability is based on the same route resolution
+        contract used by the runtime adapter and ``/agent/models`` display.
+        ``AGENT_MODE=false`` remains an explicit kill-switch.
         """
-        # Explicit AGENT_MODE takes full precedence
-        if self._agent_mode_explicit:
-            return self.agent_mode
-        # Auto-detect: Agent inherits global model when AGENT_LITELLM_MODEL is empty.
-        return bool(get_effective_agent_primary_model(self))
+        if self._agent_mode_explicit and not self.agent_mode:
+            return False
+
+        from src.agent.litellm_route_resolution import resolve_agent_litellm_routes
+
+        resolution = resolve_agent_litellm_routes(self)
+        return resolution.backend_error is None and bool(resolution.models_to_try)
 
     def refresh_stock_list(self) -> None:
         """

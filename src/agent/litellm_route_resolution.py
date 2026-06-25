@@ -126,22 +126,23 @@ def _build_non_legacy_deployments(
 
     for index, entry in enumerate(resolution.agent_model_list):
         params = entry.get("litellm_params", {}) or {}
-        model_name = str(params.get("model") or "").strip()
-        if not model_name or model_name.startswith("__legacy_"):
+        route_model = str(entry.get("model_name") or "").strip()
+        wire_model = str(params.get("model") or "").strip()
+        display_model = route_model or wire_model
+        if not display_model or display_model.startswith("__legacy_"):
             continue
 
         api_base = params.get("api_base")
-        deployment_name = entry.get("model_name")
         deployments.append(
             {
                 "deployment_id": f"{source}:{index}",
-                "model": model_name,
-                "provider": _get_model_provider(model_name),
+                "model": display_model,
+                "provider": _get_model_provider(wire_model or display_model),
                 "source": source,
                 "api_base": str(api_base).strip() if api_base else None,
-                "deployment_name": str(deployment_name).strip() if deployment_name else None,
-                "is_primary": model_name == resolution.primary_model,
-                "is_fallback": model_name in fallback_models,
+                "deployment_name": route_model or None,
+                "is_primary": display_model == resolution.primary_model,
+                "is_fallback": display_model in fallback_models,
             }
         )
 
