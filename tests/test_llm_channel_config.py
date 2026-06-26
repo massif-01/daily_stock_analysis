@@ -22,6 +22,7 @@ from src.llm.generation_params import (
     apply_litellm_generation_params,
     resolve_litellm_temperature_directive,
 )
+from src.llm.hermes import HERMES_DUMMY_API_KEY
 from src.services.system_config_service import SystemConfigService
 
 
@@ -213,8 +214,29 @@ class LLMChannelConfigTestCase(unittest.TestCase):
         params = config.llm_model_list[0]["litellm_params"]
         self.assertEqual(params["model"], "openai/hermes-agent")
         self.assertEqual(params["api_base"], "http://127.0.0.1:8642/v1")
-        self.assertNotIn("api_key", params)
+        self.assertEqual(params["api_key"], HERMES_DUMMY_API_KEY)
         self.assertEqual(config.llm_model_list[0]["model_info"]["dsa_channel"], "hermes")
+
+    @patch("src.config.setup_env")
+    @patch.object(Config, "_parse_litellm_yaml", return_value=[])
+    def test_hermes_channel_preserves_real_api_key(
+        self,
+        _mock_parse_yaml,
+        _mock_setup_env,
+    ) -> None:
+        env = {
+            "LLM_CHANNELS": "hermes",
+            "LLM_HERMES_PROTOCOL": "openai",
+            "LLM_HERMES_BASE_URL": "http://127.0.0.1:8642/v1",
+            "LLM_HERMES_API_KEY": "real-hermes-key",
+            "LLM_HERMES_MODELS": "hermes-agent",
+        }
+
+        with patch.dict(os.environ, env, clear=True):
+            config = Config._load_from_env()
+
+        params = config.llm_model_list[0]["litellm_params"]
+        self.assertEqual(params["api_key"], "real-hermes-key")
 
     @patch("src.config.setup_env")
     @patch.object(Config, "_parse_litellm_yaml", return_value=[])
@@ -270,7 +292,13 @@ class LLMChannelConfigTestCase(unittest.TestCase):
         _mock_parse_yaml,
         _mock_setup_env,
     ) -> None:
-        for raw_model in ("anthropic/claude-sonnet-latest", "deepseek/foo"):
+        for raw_model in (
+            "anthropic/claude-sonnet-latest",
+            "deepseek/foo",
+            "xai/grok-4",
+            "mistral/ministral-8b",
+            "perplexity/sonar-pro",
+        ):
             with self.subTest(raw_model=raw_model):
                 env = {
                     "LLM_CHANNELS": "hermes",
@@ -290,6 +318,60 @@ class LLMChannelConfigTestCase(unittest.TestCase):
                 ]
                 self.assertTrue(errors)
                 self.assertIn(f"openai/{raw_model}", errors[0].message)
+
+    @patch("src.config.setup_env")
+    @patch.object(Config, "_parse_litellm_yaml", return_value=[])
+    def test_hermes_channel_accepts_explicit_openai_prefixed_provider_looking_wire_model(
+        self,
+        _mock_parse_yaml,
+        _mock_setup_env,
+    ) -> None:
+        env = {
+            "LLM_CHANNELS": "hermes",
+            "LLM_HERMES_PROTOCOL": "openai",
+            "LLM_HERMES_BASE_URL": "http://127.0.0.1:8642/v1",
+            "LLM_HERMES_MODELS": "openai/xai/grok-4",
+        }
+
+        with patch.dict(os.environ, env, clear=True):
+            config = Config._load_from_env()
+
+        self.assertEqual(config.llm_channels[0]["models"], ["openai/xai/grok-4"])
+        self.assertEqual(
+            config.llm_model_list[0]["litellm_params"]["model"],
+            "openai/xai/grok-4",
+        )
+
+    @patch("src.config.setup_env")
+    @patch.object(Config, "_parse_litellm_yaml", return_value=[])
+    def test_malformed_hermes_model_ids_do_not_create_deployment_and_keep_issue(
+        self,
+        _mock_parse_yaml,
+        _mock_setup_env,
+    ) -> None:
+        for raw_model in ("openai/", "/foo", "openai//foo"):
+            with self.subTest(raw_model=raw_model):
+                env = {
+                    "LLM_CHANNELS": "hermes",
+                    "LLM_HERMES_PROTOCOL": "openai",
+                    "LLM_HERMES_BASE_URL": "http://127.0.0.1:8642/v1",
+                    "LLM_HERMES_MODELS": raw_model,
+                }
+
+                with patch.dict(os.environ, env, clear=True):
+                    config = Config._load_from_env()
+
+                self.assertEqual(config.llm_channels, [])
+                self.assertEqual(config.llm_model_list, [])
+                self.assertFalse(any("openai/openai/" in str(entry) for entry in config.llm_model_list))
+                self.assertFalse(any("openai//foo" in str(entry) for entry in config.llm_model_list))
+                self.assertTrue(
+                    any(
+                        issue.get("key") == "LLM_HERMES_MODELS"
+                        and issue.get("code") == "invalid_hermes_model"
+                        for issue in config.llm_channel_issues
+                    )
+                )
 
     @patch("src.config.setup_env")
     @patch.object(Config, "_parse_litellm_yaml", return_value=[])

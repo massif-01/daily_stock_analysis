@@ -40,6 +40,15 @@ def _config(
         agent_context_compression_trigger_tokens=trigger,
         agent_context_protected_turns=protected,
         llm_model_list=[],
+        llm_declared_hermes_models=[],
+        llm_models_source="legacy_env",
+        gemini_api_keys=[],
+        anthropic_api_keys=[],
+        openai_api_keys=[],
+        deepseek_api_keys=[],
+        openai_base_url=None,
+        generation_backend="litellm",
+        agent_generation_backend="auto",
         agent_litellm_model="openai/test-model",
         litellm_model="openai/test-model",
         litellm_fallback_models=[],
@@ -249,6 +258,7 @@ def test_bundle_injects_trace_for_configured_fallback_model_with_trace_metadata(
     config.agent_litellm_model = "openai/test-model"
     config.litellm_model = "openai/test-model"
     config.litellm_fallback_models = ["deepseek/deepseek-chat"]
+    config.deepseek_api_keys = ["secret-deepseek"]
 
     bundle = build_agent_chat_context_bundle(session_id, MagicMock(), config)
 
@@ -295,6 +305,7 @@ def test_bundle_trace_is_replayed_only_for_matching_fallback_attempt() -> None:
     config.agent_litellm_model = "openai/test-model"
     config.litellm_model = "openai/test-model"
     config.litellm_fallback_models = ["deepseek/deepseek-chat"]
+    config.deepseek_api_keys = ["secret-deepseek"]
     adapter = LLMToolAdapter.__new__(LLMToolAdapter)
     adapter._config = config
 
@@ -357,6 +368,100 @@ def test_bundle_matches_slashless_router_alias_fallback_by_resolved_provider() -
     assistant_trace = bundle.context_messages[1]
     assert assistant_trace["_trace_provider"] == "openai"
     assert assistant_trace["_trace_model"] == "gpt4o"
+
+
+def test_bundle_drops_trace_for_hermes_fallback_filtered_by_route_resolution() -> None:
+    db = _reset_db()
+    session_id = "chat-trace-hermes-filtered"
+    user_id = db.save_conversation_message(session_id, "user", "u1")
+    assistant_id = db.save_conversation_message(session_id, "assistant", "a1-final")
+    db.save_agent_provider_turn(
+        session_id=session_id,
+        run_id="run-hermes-filtered",
+        provider="openai",
+        model="openai/hermes-agent",
+        anchor_user_message_id=user_id,
+        anchor_assistant_message_id=assistant_id,
+        messages=[
+            {
+                "role": "assistant",
+                "content": "checking",
+                "reasoning_content": "r",
+                "tool_calls": [{"id": "call_1", "name": "echo", "arguments": {}}],
+            },
+            {"role": "tool", "tool_call_id": "call_1", "content": "tool-result"},
+        ],
+        contains_reasoning=True,
+        contains_tool_calls=True,
+        contains_thinking_blocks=False,
+        must_roundtrip=True,
+        estimated_tokens=10,
+    )
+    config = _config(enabled=False)
+    config.agent_litellm_model = "openai/test-model"
+    config.litellm_model = "openai/test-model"
+    config.litellm_fallback_models = ["openai/hermes-agent"]
+    config.llm_declared_hermes_models = ["openai/hermes-agent"]
+    config.llm_model_list = [
+        {
+            "model_name": "openai/hermes-agent",
+            "litellm_params": {
+                "model": "openai/hermes-agent",
+                "api_base": "http://127.0.0.1:8642/v1",
+            },
+            "model_info": {"dsa_channel": "hermes"},
+        }
+    ]
+
+    bundle = build_agent_chat_context_bundle(session_id, MagicMock(), config)
+
+    assert bundle.diagnostics["trace_injected"] is False
+    assert bundle.diagnostics["model_mismatch"] == 1
+    assert bundle.diagnostics["trace_dropped_reason"] == "model_mismatch"
+    assert [msg["role"] for msg in bundle.context_messages] == ["user", "assistant"]
+    assert all("reasoning_content" not in msg for msg in bundle.context_messages)
+    assert all(msg.get("tool_call_id") != "call_1" for msg in bundle.context_messages)
+
+
+def test_bundle_injects_trace_for_direct_env_fallback_target() -> None:
+    db = _reset_db()
+    session_id = "chat-trace-direct-env-fallback"
+    user_id = db.save_conversation_message(session_id, "user", "u1")
+    assistant_id = db.save_conversation_message(session_id, "assistant", "a1-final")
+    db.save_agent_provider_turn(
+        session_id=session_id,
+        run_id="run-direct-env",
+        provider="cohere",
+        model="cohere/command-r-plus",
+        anchor_user_message_id=user_id,
+        anchor_assistant_message_id=assistant_id,
+        messages=[
+            {
+                "role": "assistant",
+                "content": "checking",
+                "reasoning_content": "r",
+                "tool_calls": [{"id": "call_1", "name": "echo", "arguments": {}}],
+            },
+            {"role": "tool", "tool_call_id": "call_1", "content": "tool-result"},
+        ],
+        contains_reasoning=True,
+        contains_tool_calls=True,
+        contains_thinking_blocks=False,
+        must_roundtrip=True,
+        estimated_tokens=10,
+    )
+    config = _config(enabled=False)
+    config.agent_litellm_model = "openai/test-model"
+    config.litellm_model = "openai/test-model"
+    config.litellm_fallback_models = ["cohere/command-r-plus"]
+
+    bundle = build_agent_chat_context_bundle(session_id, MagicMock(), config)
+
+    assert bundle.diagnostics["trace_injected"] is True
+    assert bundle.diagnostics["model_mismatch"] == 0
+    assistant_trace = bundle.context_messages[1]
+    assert assistant_trace["_trace_provider"] == "cohere"
+    assert assistant_trace["_trace_model"] == "cohere/command-r-plus"
 
 
 def test_over_trigger_generates_summary_and_updates_covered_message_id() -> None:

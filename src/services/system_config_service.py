@@ -59,6 +59,7 @@ from src.llm.hermes import (
     is_hermes_channel_name,
     normalize_hermes_models,
     normalize_hermes_protocol,
+    resolve_hermes_api_key,
 )
 from src.llm.generation_params import apply_litellm_generation_params
 from src.notification_contracts import (
@@ -673,6 +674,8 @@ class SystemConfigService:
 
         api_keys = [segment.strip() for segment in api_key.split(",") if segment.strip()]
         selected_api_key = api_keys[0] if api_keys else ""
+        if is_hermes_channel_name(channel_name):
+            selected_api_key = resolve_hermes_api_key(selected_api_key)
         request_headers = {"Accept": "application/json"}
         if selected_api_key:
             request_headers["Authorization"] = f"Bearer {selected_api_key}"
@@ -867,6 +870,8 @@ class SystemConfigService:
         resolved_model = resolved_models[0]
         api_keys = [segment.strip() for segment in api_key.split(",") if segment.strip()]
         selected_api_key = api_keys[0] if api_keys else ""
+        if is_hermes_channel_name(channel_name):
+            selected_api_key = resolve_hermes_api_key(selected_api_key)
 
         call_kwargs: Dict[str, Any] = {
             "model": resolved_model,
@@ -2684,9 +2689,9 @@ class SystemConfigService:
         return models
 
     @classmethod
-    def _has_setup_blocking_hermes_channel_issue(cls, effective_map: Dict[str, str]) -> bool:
+    def _get_setup_blocking_hermes_channel_issue(cls, effective_map: Dict[str, str]) -> Optional[Dict[str, Any]]:
         if cls._uses_litellm_yaml(effective_map):
-            return False
+            return None
         for raw_name in cls._split_csv(effective_map.get("LLM_CHANNELS") or ""):
             name = raw_name.strip()
             if not is_hermes_channel_name(name):
@@ -2698,15 +2703,36 @@ class SystemConfigService:
                 effective_map.get(f"LLM_{name.upper()}_BASE_URL")
                 or HERMES_DEFAULT_BASE_URL
             ).strip()
-            if hermes_issue_for_field(base_url, f"LLM_{name.upper()}_BASE_URL"):
-                return True
+            base_url_issue = hermes_issue_for_field(base_url, f"LLM_{name.upper()}_BASE_URL")
+            if base_url_issue:
+                return base_url_issue
             protocol = (effective_map.get(f"LLM_{name.upper()}_PROTOCOL") or "").strip()
-            if hermes_protocol_issue_for_field(protocol, f"LLM_{name.upper()}_PROTOCOL"):
-                return True
+            protocol_issue = hermes_protocol_issue_for_field(protocol, f"LLM_{name.upper()}_PROTOCOL")
+            if protocol_issue:
+                return protocol_issue
             raw_models = cls._split_csv(effective_map.get(f"LLM_{name.upper()}_MODELS") or "")
-            if hermes_model_issues_for_field(raw_models or [HERMES_DEFAULT_MODEL], f"LLM_{name.upper()}_MODELS"):
-                return True
-        return False
+            model_issues = hermes_model_issues_for_field(
+                raw_models or [HERMES_DEFAULT_MODEL],
+                f"LLM_{name.upper()}_MODELS",
+            )
+            if model_issues:
+                return model_issues[0]
+        return None
+
+    @staticmethod
+    def _format_setup_hermes_channel_issue(issue: Optional[Dict[str, Any]]) -> str:
+        if not issue:
+            return "Hermes 渠道配置无效"
+        key = str(issue.get("key") or "")
+        code = str(issue.get("code") or "")
+        if key.endswith("_BASE_URL") or code in {"hermes_loopback_only", "invalid_url"}:
+            return "LLM_HERMES_BASE_URL 无效：Hermes 渠道仅允许 127.0.0.1、localhost 或 ::1 loopback URL"
+        if key.endswith("_PROTOCOL") or code == "invalid_hermes_protocol":
+            return "LLM_HERMES_PROTOCOL 无效：Hermes 渠道仅支持 OpenAI-compatible protocol"
+        if key.endswith("_MODELS") or code in {"invalid_hermes_model", "missing_models"}:
+            return "LLM_HERMES_MODELS 无效：Hermes 模型必须是非空 wire model id 或 openai/<wire-model-id>"
+        message = str(issue.get("message") or "").strip()
+        return f"{key} 无效：{message}" if key and message else "Hermes 渠道配置无效"
 
     @classmethod
     def _is_setup_hermes_only_route(cls, effective_map: Dict[str, str], model: str) -> bool:
@@ -2773,13 +2799,14 @@ class SystemConfigService:
         explicit_model = (effective_map.get("LITELLM_MODEL") or "").strip()
         yaml_models = self._collect_yaml_models_from_map(effective_map)
         channel_models = self._collect_setup_channel_models(effective_map)
-        has_blocking_channel_issue = self._has_setup_blocking_hermes_channel_issue(effective_map)
+        blocking_channel_issue = self._get_setup_blocking_hermes_channel_issue(effective_map)
+        blocking_channel_message = self._format_setup_hermes_channel_issue(blocking_channel_issue)
 
         if explicit_model:
             if self._is_setup_invalid_hermes_only_route(effective_map, explicit_model):
-                return "", "Hermes 渠道仅允许 127.0.0.1、localhost 或 ::1 loopback URL"
-            if has_blocking_channel_issue and not yaml_models and not channel_models:
-                return "", "Hermes 渠道仅允许 127.0.0.1、localhost 或 ::1 loopback URL"
+                return "", blocking_channel_message
+            if blocking_channel_issue and not yaml_models and not channel_models:
+                return "", blocking_channel_message
             if _uses_direct_env_provider(explicit_model):
                 return explicit_model, "explicit"
             has_direct_source = self._has_setup_runtime_source_for_model(explicit_model, effective_map)
@@ -2796,13 +2823,13 @@ class SystemConfigService:
         if channel_models:
             return channel_models[0], "channel"
 
-        if has_blocking_channel_issue:
-            return "", "Hermes 渠道仅允许 127.0.0.1、localhost 或 ::1 loopback URL"
+        if blocking_channel_issue:
+            return "", blocking_channel_message
 
         legacy_model = self._infer_setup_legacy_primary_model(effective_map)
         if legacy_model:
             if self._is_setup_invalid_hermes_only_route(effective_map, legacy_model):
-                return "", "Hermes 渠道仅允许 127.0.0.1、localhost 或 ::1 loopback URL"
+                return "", blocking_channel_message
             return legacy_model, "legacy"
 
         return "", "尚未检测到主模型配置"

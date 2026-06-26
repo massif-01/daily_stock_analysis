@@ -62,6 +62,7 @@ from src.llm.hermes import (
     is_hermes_channel_name,
     normalize_hermes_models,
     normalize_hermes_protocol,
+    resolve_hermes_api_key,
     validate_hermes_base_url,
 )
 from src.llm import generation_params as llm_generation_params
@@ -2271,7 +2272,9 @@ class Config:
                     litellm_params: Dict[str, Any] = {
                         'model': model_name,
                     }
-                    if api_key:
+                    if is_hermes_channel_name(str(ch.get('name') or "")):
+                        litellm_params['api_key'] = resolve_hermes_api_key(api_key)
+                    elif api_key:
                         litellm_params['api_key'] = api_key
                     if ch['base_url']:
                         litellm_params['api_base'] = ch['base_url']

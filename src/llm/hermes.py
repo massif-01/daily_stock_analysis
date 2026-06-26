@@ -16,6 +16,7 @@ HERMES_DEFAULT_MODEL = "hermes-agent"
 HERMES_ALLOWED_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 HERMES_MODEL_INFO_CHANNEL_KEY = "dsa_channel"
 HERMES_PROTOCOL = "openai"
+HERMES_DUMMY_API_KEY = "dummy-hermes-local"
 HERMES_ALLOWED_PROTOCOL_ALIASES = frozenset(
     {
         "",
@@ -26,7 +27,7 @@ HERMES_ALLOWED_PROTOCOL_ALIASES = frozenset(
         "openai_compat",
     }
 )
-HERMES_PROVIDER_LIKE_PREFIXES = frozenset(
+KNOWN_LITELLM_PROVIDER_PREFIXES = frozenset(
     {
         "anthropic",
         "azure",
@@ -36,24 +37,40 @@ HERMES_PROVIDER_LIKE_PREFIXES = frozenset(
         "command-r",
         "deepseek",
         "fireworks_ai",
+        "friendliai",
         "gemini",
+        "google",
         "groq",
         "huggingface",
+        "mistral",
+        "mistral_ai",
+        "moonshot",
         "minimax",
         "ollama",
         "openrouter",
         "palm",
+        "perplexity",
         "replicate",
         "sagemaker",
         "text-completion-openai",
         "together_ai",
         "vertex_ai",
+        "volcengine",
+        "watsonx",
+        "xai",
+        "zhipu",
     }
 )
+HERMES_PROVIDER_LIKE_PREFIXES = KNOWN_LITELLM_PROVIDER_PREFIXES
 
 
 def is_hermes_channel_name(name: str) -> bool:
     return (name or "").strip().lower() == HERMES_CHANNEL_ID
+
+
+def resolve_hermes_api_key(api_key: str) -> str:
+    """Return the explicit or local dummy key required by OpenAI-compatible clients."""
+    return (api_key or "").strip() or HERMES_DUMMY_API_KEY
 
 
 def _issue(code: str, message: str, expected: str, actual: str) -> Dict[str, str]:
@@ -79,6 +96,24 @@ def normalize_hermes_protocol(value: str) -> tuple[str, Optional[Dict[str, str]]
     )
 
 
+def _invalid_hermes_model_issue(raw_model: str, expected: str = "openai/<wire-model-id>") -> Dict[str, str]:
+    return _issue(
+        "invalid_hermes_model",
+        (
+            "Hermes transport is fixed to OpenAI-compatible. Model ids must not "
+            "start or end with '/', contain empty path segments, or use a "
+            "LiteLLM provider prefix unless written explicitly as "
+            f"openai/<wire-model-id>. Expected: {expected}."
+        ),
+        expected,
+        raw_model,
+    )
+
+
+def _has_invalid_model_path_shape(model: str) -> bool:
+    return model.startswith("/") or model.endswith("/") or "//" in model
+
+
 def normalize_hermes_model(model: str) -> tuple[str, Optional[Dict[str, str]]]:
     """Normalize a Hermes wire model id into the OpenAI-compatible LiteLLM route."""
     raw_model = (model or "").strip()
@@ -89,24 +124,20 @@ def normalize_hermes_model(model: str) -> tuple[str, Optional[Dict[str, str]]]:
             HERMES_DEFAULT_MODEL,
             "",
         )
+    if _has_invalid_model_path_shape(raw_model):
+        return "", _invalid_hermes_model_issue(raw_model)
     if "/" not in raw_model:
         return f"{HERMES_PROTOCOL}/{raw_model}", None
 
     prefix, remainder = raw_model.split("/", 1)
     normalized_prefix = prefix.strip().lower()
-    if normalized_prefix == HERMES_PROTOCOL and remainder.strip():
-        return f"{HERMES_PROTOCOL}/{remainder.strip()}", None
+    if normalized_prefix == HERMES_PROTOCOL:
+        wire_model = remainder.strip()
+        if not wire_model or _has_invalid_model_path_shape(wire_model):
+            return "", _invalid_hermes_model_issue(raw_model)
+        return f"{HERMES_PROTOCOL}/{wire_model}", None
     if normalized_prefix in HERMES_PROVIDER_LIKE_PREFIXES:
-        return "", _issue(
-            "invalid_hermes_model",
-            (
-                "Hermes transport is fixed to OpenAI-compatible. If this is the "
-                "Hermes runtime wire model id, write it as openai/<wire-model-id>, "
-                f"e.g. openai/{raw_model}."
-            ),
-            f"openai/{raw_model}",
-            raw_model,
-        )
+        return "", _invalid_hermes_model_issue(raw_model, f"openai/{raw_model}")
     return f"{HERMES_PROTOCOL}/{raw_model}", None
 
 

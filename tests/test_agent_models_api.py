@@ -15,6 +15,7 @@ ensure_litellm_stub()
 
 import litellm
 
+from src.agent.litellm_route_resolution import resolve_agent_litellm_routes
 from src.agent.llm_adapter import LLMToolAdapter
 from src.config import Config
 from src.services.agent_model_service import list_agent_model_deployments
@@ -169,10 +170,9 @@ class AgentModelsApiTestCase(unittest.TestCase):
         deployments = list_agent_model_deployments(config)
         by_model = {item["model"]: item for item in deployments}
 
+        self.assertEqual(set(by_model), {"openai/gpt-4o-mini"})
         self.assertTrue(by_model["openai/gpt-4o-mini"]["is_primary"])
         self.assertFalse(by_model["openai/gpt-4o-mini"]["is_fallback"])
-        self.assertFalse(by_model["gemini/gemini-2.5-flash"]["is_primary"])
-        self.assertFalse(by_model["gemini/gemini-2.5-flash"]["is_fallback"])
 
     def test_models_endpoint_marks_yaml_alias_primary_by_route_model(self) -> None:
         config = _build_config(
@@ -345,7 +345,7 @@ class AgentModelsApiTestCase(unittest.TestCase):
         self.assertEqual(len(deployments), 1)
         self.assertEqual(deployments[0]["model"], "cohere/command-r-plus")
         self.assertEqual(deployments[0]["provider"], "cohere")
-        self.assertEqual(deployments[0]["source"], "legacy_env")
+        self.assertEqual(deployments[0]["source"], "direct_env")
         self.assertTrue(deployments[0]["is_primary"])
         self.assertFalse(deployments[0]["is_fallback"])
 
@@ -365,8 +365,65 @@ class AgentModelsApiTestCase(unittest.TestCase):
         self.assertEqual(len(fallback), 1)
         self.assertEqual(fallback[0]["model"], "cohere/command-r-plus")
         self.assertEqual(fallback[0]["provider"], "cohere")
-        self.assertEqual(fallback[0]["deployment_id"], "legacy:cohere:0:cohere/command-r-plus")
-        self.assertEqual(fallback[0]["deployment_name"], "legacy_cohere_1")
+        self.assertEqual(fallback[0]["source"], "direct_env")
+        self.assertEqual(fallback[0]["deployment_id"], "direct_env:cohere:0:cohere/command-r-plus")
+        self.assertEqual(fallback[0]["deployment_name"], "direct_env_cohere_1")
+
+    def test_models_endpoint_includes_direct_env_fallback_when_primary_is_channel(self) -> None:
+        config = _build_config(
+            litellm_model="openai/gpt-4o-mini",
+            agent_litellm_model="openai/gpt-4o-mini",
+            litellm_fallback_models=["cohere/command-r-plus"],
+            llm_channels=[{"name": "primary"}],
+            llm_models_source="llm_channels",
+            llm_model_list=[
+                {
+                    "model_name": "openai/gpt-4o-mini",
+                    "litellm_params": {
+                        "model": "openai/gpt-4o-mini",
+                        "api_key": "secret-openai",
+                    },
+                }
+            ],
+        )
+
+        resolution = resolve_agent_litellm_routes(config)
+        deployments = list_agent_model_deployments(config)
+        by_model = {item["model"]: item for item in deployments}
+
+        self.assertEqual(resolution.models_to_try, ["openai/gpt-4o-mini", "cohere/command-r-plus"])
+        self.assertEqual(set(by_model), {"openai/gpt-4o-mini", "cohere/command-r-plus"})
+        self.assertTrue(by_model["openai/gpt-4o-mini"]["is_primary"])
+        self.assertFalse(by_model["openai/gpt-4o-mini"]["is_fallback"])
+        self.assertFalse(by_model["cohere/command-r-plus"]["is_primary"])
+        self.assertTrue(by_model["cohere/command-r-plus"]["is_fallback"])
+        self.assertEqual(by_model["cohere/command-r-plus"]["source"], "direct_env")
+        self.assertNotIn("api_key", str(deployments))
+
+    def test_resolver_drops_unavailable_managed_fallback_without_key_or_deployment(self) -> None:
+        config = _build_config(
+            litellm_model="gemini/gemini-2.5-flash",
+            agent_litellm_model="gemini/gemini-2.5-flash",
+            litellm_fallback_models=["openai/gpt-4o-mini"],
+            llm_channels=[{"name": "gemini"}],
+            llm_models_source="llm_channels",
+            llm_model_list=[
+                {
+                    "model_name": "gemini/gemini-2.5-flash",
+                    "litellm_params": {
+                        "model": "gemini/gemini-2.5-flash",
+                        "api_key": "secret-gemini",
+                    },
+                }
+            ],
+            openai_api_keys=[],
+        )
+
+        resolution = resolve_agent_litellm_routes(config)
+        deployments = list_agent_model_deployments(config)
+
+        self.assertEqual(resolution.models_to_try, ["gemini/gemini-2.5-flash"])
+        self.assertEqual([item["model"] for item in deployments], ["gemini/gemini-2.5-flash"])
 
     def test_models_endpoint_returns_empty_list_when_no_model_is_configured(self) -> None:
         config = _build_config(
@@ -432,6 +489,51 @@ class AgentModelsEndpointTestCase(unittest.TestCase):
             payload = asyncio.run(agent.get_agent_models()).model_dump()
 
         self.assertEqual(payload["models"], [])
+
+    def test_litellm_adapter_tries_direct_env_fallback_after_channel_primary_failure(self) -> None:
+        config = _build_config(
+            litellm_model="openai/gpt-4o-mini",
+            agent_litellm_model="openai/gpt-4o-mini",
+            litellm_fallback_models=["cohere/command-r-plus"],
+            llm_channels=[{"name": "primary"}],
+            llm_models_source="llm_channels",
+            llm_model_list=[
+                {
+                    "model_name": "openai/gpt-4o-mini",
+                    "litellm_params": {
+                        "model": "openai/gpt-4o-mini",
+                        "api_key": "secret-openai",
+                    },
+                }
+            ],
+        )
+        captured: Dict[str, Any] = {"router_calls": []}
+        response_payload = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="OK", tool_calls=[]))],
+            usage=None,
+        )
+
+        class FakeRouter:
+            def __init__(self, *args, **kwargs):
+                captured["model_list"] = kwargs.get("model_list")
+
+            def completion(self, **kwargs):
+                captured["router_calls"].append(kwargs)
+                raise RuntimeError("primary failed")
+
+        with (
+            patch("src.agent.llm_adapter.Router", FakeRouter),
+            patch.object(litellm, "completion", return_value=response_payload) as completion_mock,
+        ):
+            adapter = LLMToolAdapter(config=config)
+            response = adapter.call_completion([{"role": "user", "content": "Ping"}])
+
+        self.assertEqual([entry["model_name"] for entry in captured["model_list"]], ["openai/gpt-4o-mini"])
+        self.assertEqual(captured["router_calls"][0]["model"], "openai/gpt-4o-mini")
+        self.assertEqual(completion_mock.call_args.kwargs["model"], "cohere/command-r-plus")
+        self.assertEqual(response.model, "cohere/command-r-plus")
+        self.assertEqual(response.provider, "cohere")
+        self.assertNotEqual(response.provider, "error")
 
 
 class AgentHermesBoundaryTestCase(unittest.TestCase):
