@@ -3245,13 +3245,13 @@ def get_api_keys_for_model(model: str, config: Config) -> List[str]:
     """
     provider = _get_litellm_provider(model)
     if provider in {"gemini", "vertex_ai"}:
-        return [k for k in config.gemini_api_keys if k and len(k) >= 8]
+        return [k for k in getattr(config, "gemini_api_keys", []) if k and len(k) >= 8]
     if provider == "anthropic":
-        return [k for k in config.anthropic_api_keys if k and len(k) >= 8]
+        return [k for k in getattr(config, "anthropic_api_keys", []) if k and len(k) >= 8]
     if provider == "deepseek":
-        return [k for k in config.deepseek_api_keys if k and len(k) >= 8]
+        return [k for k in getattr(config, "deepseek_api_keys", []) if k and len(k) >= 8]
     if provider == "openai":
-        return [k for k in config.openai_api_keys if k and len(k) >= 8]
+        return [k for k in getattr(config, "openai_api_keys", []) if k and len(k) >= 8]
     # Other LiteLLM-native providers – API key resolved from env vars
     return []
 

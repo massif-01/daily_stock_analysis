@@ -1172,6 +1172,7 @@ class TestAgentExecutor(unittest.TestCase):
             agent_litellm_model="deepseek/deepseek-chat",
             litellm_model="deepseek/deepseek-chat",
             litellm_fallback_models=[],
+            deepseek_api_keys=["secret-deepseek"],
         )
         adapter.call_with_tools.side_effect = [
             LLMResponse(

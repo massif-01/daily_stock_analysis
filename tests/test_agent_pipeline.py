@@ -2165,7 +2165,7 @@ class TestAgentConstructionChain(unittest.TestCase):
         mock_cfg.llm_model_list = []
         mock_cfg.llm_temperature = 0.7
         mock_cfg.gemini_api_keys = []
-        mock_cfg.anthropic_api_keys = []
+        mock_cfg.anthropic_api_keys = ["anthropic-test-key"]
         mock_cfg.openai_api_keys = []
         mock_cfg.deepseek_api_keys = []
         mock_cfg.openai_base_url = None
@@ -2199,7 +2199,7 @@ class TestAgentConstructionChain(unittest.TestCase):
             llm_temperature=0.2,
             gemini_api_keys=[],
             anthropic_api_keys=[],
-            openai_api_keys=[],
+            openai_api_keys=["sk-test-value"],
             deepseek_api_keys=[],
             openai_base_url=None,
         )
@@ -2338,7 +2338,7 @@ class TestAgentConstructionChain(unittest.TestCase):
             llm_temperature=0.2,
             gemini_api_keys=[],
             anthropic_api_keys=[],
-            openai_api_keys=[],
+            openai_api_keys=["sk-test-value"],
             deepseek_api_keys=[],
             openai_base_url=None,
         )
@@ -2504,7 +2504,7 @@ class TestAgentConstructionChain(unittest.TestCase):
             llm_temperature=0.2,
             gemini_api_keys=[],
             anthropic_api_keys=[],
-            openai_api_keys=[],
+            openai_api_keys=["sk-test-value"],
             deepseek_api_keys=[],
             openai_base_url=None,
         )
@@ -2553,7 +2553,7 @@ class TestAgentConstructionChain(unittest.TestCase):
         mock_cfg.llm_model_list = []
         mock_cfg.llm_temperature = 0.7
         mock_cfg.gemini_api_keys = []
-        mock_cfg.anthropic_api_keys = []
+        mock_cfg.anthropic_api_keys = ["anthropic-test-key"]
         mock_cfg.openai_api_keys = []
         mock_cfg.deepseek_api_keys = []
         mock_cfg.openai_base_url = None
@@ -2593,7 +2593,7 @@ class TestAgentConstructionChain(unittest.TestCase):
         mock_cfg.llm_temperature = 0.7
         mock_cfg.gemini_api_keys = []
         mock_cfg.anthropic_api_keys = []
-        mock_cfg.openai_api_keys = []
+        mock_cfg.openai_api_keys = ["sk-test-value"]
         mock_cfg.deepseek_api_keys = []
         mock_cfg.openai_base_url = None
 
@@ -2654,7 +2654,7 @@ class TestAgentConstructionChain(unittest.TestCase):
         mock_cfg.llm_model_list = []
         mock_cfg.llm_temperature = 0.7
         mock_cfg.gemini_api_keys = []
-        mock_cfg.anthropic_api_keys = []
+        mock_cfg.anthropic_api_keys = ["anthropic-test-key"]
         mock_cfg.openai_api_keys = []
         mock_cfg.deepseek_api_keys = []
         mock_cfg.openai_base_url = None
@@ -2691,7 +2691,7 @@ class TestAgentConstructionChain(unittest.TestCase):
         mock_cfg.llm_model_list = []
         mock_cfg.llm_temperature = 0.7
         mock_cfg.gemini_api_keys = []
-        mock_cfg.anthropic_api_keys = []
+        mock_cfg.anthropic_api_keys = ["anthropic-test-key"]
         mock_cfg.openai_api_keys = []
         mock_cfg.deepseek_api_keys = []
         mock_cfg.openai_base_url = None
