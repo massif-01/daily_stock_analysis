@@ -489,6 +489,35 @@ describe('DecisionSignalsPage', () => {
     expect(within(dialog).getByText('Timeline risk')).toBeInTheDocument();
   });
 
+  it('returns to the timeline guide when stock code is cleared after a search', async () => {
+    const timelineSignal = makeSignal({
+      id: 8,
+      stockCode: 'AAPL',
+      stockName: 'Apple',
+      market: 'us',
+      riskSummary: 'Timeline stale risk',
+    });
+    vi.mocked(decisionSignalsApi.list)
+      .mockResolvedValueOnce(listResponse())
+      .mockResolvedValueOnce(listResponse([timelineSignal], 1));
+    renderPage();
+    await screen.findByText('贵州茅台');
+
+    const timelineStockInput = screen.getByLabelText('时间线股票代码');
+    fireEvent.change(timelineStockInput, { target: { value: 'AAPL' } });
+    fireEvent.click(screen.getByRole('button', { name: '查询时间线' }));
+    fireEvent.click(await screen.findByTestId('timeline-click-8'));
+    expect(within(await screen.findByRole('dialog')).getByText('Timeline stale risk')).toBeInTheDocument();
+
+    fireEvent.change(timelineStockInput, { target: { value: '' } });
+
+    expect(screen.getByText('输入股票代码查看时间线')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '查询时间线' })).toBeDisabled();
+    expect(screen.queryByTestId('timeline-click-8')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(decisionSignalsApi.list).toHaveBeenCalledTimes(2);
+  });
+
   it('closes a timeline-sourced drawer when an active timeline status update removes it', async () => {
     const timelineSignal = makeSignal({
       id: 8,

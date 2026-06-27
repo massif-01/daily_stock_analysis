@@ -75,6 +75,17 @@ def _result(**overrides) -> AnalysisResult:
     return result
 
 
+def test_build_payload_rejects_invalid_profile_source() -> None:
+    with pytest.raises(ValueError, match="profile_source"):
+        build_decision_signal_payload_from_report(
+            _result(),
+            trace_id="trace-invalid-profile-source",
+            query_source="api",
+            report_type="simple",
+            profile_source="typo",
+        )
+
+
 def test_build_payload_includes_tw_market() -> None:
     """A Taiwan (`tw`) stock is now first-class on the DecisionSignal write path
     (service VALID_MARKETS accepts tw, matching jp/kr).

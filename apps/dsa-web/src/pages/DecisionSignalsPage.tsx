@@ -425,6 +425,16 @@ const DecisionSignalsPage: React.FC = () => {
     }
   };
 
+  const resetTimelineView = useCallback(() => {
+    timelineRequestIdRef.current += 1;
+    setTimelineItems([]);
+    setTimelineSearched(false);
+    setTimelineLoading(false);
+    setTimelineError(null);
+    setTimelineTruncated(false);
+    setSelected((current) => (current?.source === 'timeline' ? null : current));
+  }, []);
+
   const handleTimelineSearch = async (event: React.FormEvent) => {
     event.preventDefault();
     const stockCode = timelineFilters.stockCode.trim();
@@ -720,7 +730,13 @@ const DecisionSignalsPage: React.FC = () => {
             <input
               className="input-surface input-focus-glow h-11 rounded-xl border bg-transparent px-3 text-sm md:col-span-2"
               value={timelineFilters.stockCode}
-              onChange={(event) => setTimelineFilters((current) => ({ ...current, stockCode: event.target.value }))}
+              onChange={(event) => {
+                const stockCode = event.target.value;
+                setTimelineFilters((current) => ({ ...current, stockCode }));
+                if (!stockCode.trim()) {
+                  resetTimelineView();
+                }
+              }}
               placeholder={t('decisionSignals.timelineStockPlaceholder')}
               aria-label={t('decisionSignals.timelineStockCode')}
             />
