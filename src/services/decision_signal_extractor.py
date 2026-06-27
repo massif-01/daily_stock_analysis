@@ -39,6 +39,7 @@ def build_decision_signal_payload_from_report(
     trace_id: str,
     query_source: str,
     report_type: str,
+    profile_source: str,
 ) -> Dict[str, Any] | None:
     """Build a DecisionSignal payload from a completed stock analysis report."""
 
@@ -84,6 +85,11 @@ def build_decision_signal_payload_from_report(
         "decision_type": getattr(result, "decision_type", None),
         "report_confidence_level": getattr(result, "confidence_level", None),
         "report_language": getattr(result, "report_language", None),
+        "decision_profile": "balanced",
+        "profile_source": profile_source,
+        "profile_policy_version": "decision-profile-v1",
+        "signal_generation_version": "legacy-report-extractor-v1",
+        "decision_signal_metadata_version": "decision-signal-metadata-v1",
     }
     market_phase_summary = _extract_market_phase_summary(context_snapshot, result)
     if market_phase_summary:
@@ -132,6 +138,7 @@ def extract_and_persist_from_analysis_result(
     trace_id: str,
     query_source: str,
     report_type: str,
+    profile_source: str,
     service: Optional[DecisionSignalService] = None,
 ) -> Dict[str, Any] | None:
     """Best-effort extract and persist a DecisionSignal from an analysis result."""
@@ -145,6 +152,7 @@ def extract_and_persist_from_analysis_result(
             trace_id=trace_id,
             query_source=query_source,
             report_type=report_type,
+            profile_source=profile_source,
         )
         if payload is None:
             return None
